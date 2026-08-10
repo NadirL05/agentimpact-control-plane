@@ -1,0 +1,52 @@
+{
+  "workflows": [
+    {
+      "id": "audit",
+      "name": "Workflow d'audit",
+      "description": "Verifier la conformite et generer des rapports.",
+      "trigger": ["scheduled", "on_demand"],
+      "steps": [
+        "collect:logs_and_metrics",
+        "verify:policies",
+        "generate:audit_report",
+        "notify:operators_on_critical_issues"
+      ]
+    },
+    {
+      "id": "onboarding-agent",
+      "name": "Onboarding agent",
+      "description": "Integrer un nouvel agent dans le control plane.",
+      "trigger": ["operator_request"],
+      "steps": [
+        "create:hermes_profile",
+        "configure:access_and_permissions",
+        "verify:compliance",
+        "activate:agent_and_notify"
+      ]
+    },
+    {
+      "id": "review-changes",
+      "name": "Review & validation des changes",
+      "description": "Valider les changements avant merge.",
+      "trigger": ["pull_request_opened"],
+      "steps": [
+        "run:ci_checks",
+        "review:peer",
+        "review:security_if_policy_or_profile_change",
+        "merge:after_approval"
+      ]
+    },
+    {
+      "id": "deploy",
+      "name": "Workflow de deployment",
+      "description": "Deployer en production de maniere securisee.",
+      "trigger": ["merge_to_main_with_tag", "explicit_request"],
+      "steps": [
+        "validate:prerequisites",
+        "execute:deploy_pipeline",
+        "verify:post_deploy_sanity",
+        "notify:update_dashboard"
+      ]
+    }
+  ]
+}

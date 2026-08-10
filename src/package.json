@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch index.ts",
     "build": "tsc",
-    "lint": "eslint src",
+    "lint": "eslint .",
     "test": "vitest run",
-    "cli:list-registries": "tsx src/cli/list-registries.ts",
-    "api": "tsx src/api/server.ts"
+    "cli:list-registries": "tsx cli/list-registries.ts",
+    "api": "tsx api/server.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
