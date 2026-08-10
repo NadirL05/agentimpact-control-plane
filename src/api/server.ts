@@ -7,6 +7,7 @@ import { logger } from 'hono/logger';
 import { getHermesProfiles } from '../core/hermes-profiles.js';
 import { getPolicies } from '../core/policies.js';
 import { getWorkflows } from '../core/workflows.js';
+import workflowsApi from './workflows.js';
 
 const app = new Hono();
 
@@ -24,6 +25,9 @@ app.get('/', (c) => {
       { method: 'GET', path: '/profiles', description: 'Liste des profils Hermes' },
       { method: 'GET', path: '/policies', description: 'Liste des policies' },
       { method: 'GET', path: '/workflows', description: 'Liste des workflows' },
+      { method: 'GET', path: '/workflows/runs', description: 'Liste des workflow runs' },
+      { method: 'POST', path: '/workflows/:workflowId/run', description: 'Lancer un workflow' },
+      { method: 'GET', path: '/workflows/runs/:runId', description: 'Status d\'un workflow run' },
     ],
   });
 });
@@ -48,6 +52,9 @@ app.get('/workflows', (c) => {
   const workflows = getWorkflows();
   return c.json({ count: workflows.length, items: workflows });
 });
+
+// Workflows API
+app.route('/workflows', workflowsApi);
 
 const port = Number(process.env.PORT) || 3000;
 console.log(`Server starting on port ${port}`);
