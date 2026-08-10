@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — AgentImpact Control Plane</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    header {
+      max-width: 1200px;
+      margin: 0 auto 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.5rem; color: #333; }
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input[type="text"] {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      min-width: 200px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #1d4ed8; }
+    .status {
+      font-size: 13px;
+      color: #666;
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      color: #1f2937;
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 8px;
+    }
+    .item {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .item h3 {
+      font-size: 0.95rem;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+    .item p {
+      font-size: 0.85rem;
+      color: #4b5563;
+      margin-bottom: 6px;
+    }
+    .item .meta {
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+    .item .meta code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+    .empty {
+      text-align: center;
+      color: #9ca3af;
+      padding: 40px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🚀 AgentImpact Control Plane</h1>
+    <div class="controls">
+      <input type="text" id="apiUrl" placeholder="API URL" value="http://localhost:3000" />
+      <button onclick="loadAll()">🔄 Rafraî·¢chir</button>
+    </div>
+    <div class="status" id="status">Prê·¢t</div>
+  </header>
+
+  <main>
+    <section class="card" id="profiles-card">
+      <h2>📋 Profils Hermes</h2>
+      <div id="profiles-content"><div class="empty">Chargement…</div></div>
+    </section>
+
+    <section class="card" id="policies-card">
+      <h2>🔒 Policies</h2>
+      <div id="policies-content"><div class="empty">Chargement…</div></div>
+    </section>
+
+    <section class="card" id="workflows-card">
+      <h2>⚙️ Workflows</h2>
+      <div id="workflows-content"><div class="empty">Chargement…</div></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
