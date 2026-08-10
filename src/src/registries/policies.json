@@ -1,0 +1,46 @@
+{
+  "policies": [
+    {
+      "id": "rbac-hermes-profiles",
+      "name": "RBAC — Profils Hermes",
+      "description": "Chaque utilisateur / agent est associe a un profil Hermes.",
+      "rules": [
+        "assign:hermes_profile",
+        "enforce:capabilities_by_profile",
+        "review:profile_changes"
+      ]
+    },
+    {
+      "id": "secrets-management",
+      "name": "Gestion des secrets",
+      "description": "Les secrets sont stockes dans un gestionnaire dedie.",
+      "rules": [
+        "no_commit_secrets",
+        "rotate:critical_secrets",
+        "use:secret_manager"
+      ]
+    },
+    {
+      "id": "audit-logs",
+      "name": "Audit et logs",
+      "description": "Journalisation systematique des actions sensibles.",
+      "rules": [
+        "log:sensitive_actions",
+        "retain:logs_by_policy",
+        "allow:auditor_read_logs"
+      ]
+    },
+    {
+      "id": "deploy-rules",
+      "name": "Regles de deployment",
+      "description": "Tout deployment doit etre lie a une PR approuvee.",
+      "rules": [
+        "require:pr_for_deploy",
+        "require:security_review_for_prod",
+        "require:automated_tests_passing",
+        "require:operator_approval_for_prod",
+        "enable:rollback_for_critical_deploys"
+      ]
+    }
+  ]
+}
