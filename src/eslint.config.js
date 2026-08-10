@@ -4,10 +4,11 @@ export default tsEslint.config({
   files: ['**/*.ts'],
   languageOptions: {
     parser: tsEslint.parser,
-    project: true,
+    projectService: true,
   },
   rules: {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/no-explicit-any': 'warn',
   },
+  ignores: ['dist', 'node_modules'],
 });
