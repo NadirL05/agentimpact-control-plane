@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflows — AgentImpact</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    header {
+      max-width: 1200px;
+      margin: 0 auto 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.5rem; color: #333; }
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input[type="text"] {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      min-width: 200px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #1d4ed8; }
+    button.secondary { background: #6b7280; }
+    button.secondary:hover { background: #4b5563; }
+    button.success { background: #10b981; }
+    button.success:hover { background: #059669; }
+    .status {
+      font-size: 13px;
+      color: #666;
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      color: #1f2937;
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 8px;
+    }
+    .workflow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .workflow-item {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .workflow-item h3 {
+      font-size: 0.95rem;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+    .workflow-item p {
+      font-size: 0.85rem;
+      color: #4b5563;
+      margin-bottom: 6px;
+    }
+    .workflow-item .meta {
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+    .workflow-item .meta code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+    .run-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .run-item {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .run-item .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .run-item .status-badge {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .status-running { background: #dbeafe; color: #1e40af; }
+    .status-completed { background: #d1fae5; color: #065f46; }
+    .status-failed { background: #fee2e2; color: #991b1b; }
+    .run-item .steps {
+      font-size: 0.8rem;
+      color: #374151;
+    }
+    .run-item .step {
+      padding: 4px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .run-item .step:last-child { border-bottom: none; }
+    .step-status {
+      font-weight: 600;
+    }
+    .step-pending { color: #9ca3af; }
+    .step-running { color: #2563eb; }
+    .step-completed { color: #10b981; }
+    .step-failed { color: #ef4444; }
+    .empty {
+      text-align: center;
+      color: #9ca3af;
+      padding: 40px;
+    }
+    @media (max-width: 768px) {
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚙️ Workflows — AgentImpact</h1>
+    <div class="controls">
+      <input type="text" id="apiUrl" placeholder="API URL" value="http://localhost:3000" />
+      <button onclick="loadAll()">🔄 Rafraî·¢chir</button>
+      <a href="index.html"><button class="secondary">🏠 Accueil</button></a>
+    </div>
+    <div class="status" id="status">Prê·¢t</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>📋 Workflows disponibles</h2>
+      <div id="workflows-content" class="workflow-list"><div class="empty">Chargement…</div></div>
+    </section>
+
+    <section class="card">
+      <h2>🚀 Runs en cours / récents</h2>
+      <div id="runs-content" class="run-list"><div class="empty">Chargement…</div></div>
+    </section>
+  </main>
+
+  <script src="workflows-app.js"></script>
+</body>
+</html>
