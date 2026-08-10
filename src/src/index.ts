@@ -1,12 +1,17 @@
 /**
  * Point d'entré·¢e du control plane AgentImpact.
- *
- * Pour l'instant, ce fichier est un placeholder.
- * Il sera utilisé pour exposer l'API et lancer les services.
  */
+
+import { getHermesProfiles } from './core/hermes-profiles.js';
 
 export function main() {
   console.log('AgentImpact Control Plane — démarrer');
+
+  const profiles = getHermesProfiles();
+  console.log(`Profils Hermes charg és: ${profiles.length}`);
+  for (const p of profiles) {
+    console.log(`- ${p.id} (${p.name})`);
+  }
 }
 
 if (import.meta.vitest == null) {
