@@ -10,6 +10,13 @@ Ce fichier sert de journal d'avancement, jalons et risques.
   - `AGENTS.md`
   - `docs/roadmap-8-semaines.md`
   - `docs/projet-suivi.md`
+  - `docs/architecture.md`
+  - `docs/policies.md`
+  - `docs/workflows.md`
+  - `docs/conventions.md`
+  - `.github/workflows/ci-docs.yml`
+  - `.github/PULL_REQUEST_TEMPLATE.md`
+  - `src/README.md`
 
 ## Jalons
 
@@ -61,6 +68,35 @@ Ce fichier sert de journal d'avancement, jalons et risques.
 ### Notes de suivi
 
 - _A completer lors des points hebdomadaires._
+
+## Semaine 1 — Details operationnels
+
+### Outils retenus
+
+- Repo GitHub : `NadirL05/agentimpact-control-plane`
+- CI : GitHub Actions (lint Markdown)
+- Doc : Markdown + markdownlint
+- Suivi : `docs/projet-suivi.md` + issues GitHub
+
+### Roles / responsables
+
+- Product Owner : _a definir_
+- Tech Lead : _a definir_
+- Hermes-Operator lead : _a definir_
+- Hermes-Auditor lead : _a definir_
+
+### Echeances (exemple)
+
+- J1–J2 : ateliers de cadrage
+- J3 : validation vision + objectifs
+- J4 : repo + CI + conventions en place
+- J5 : profils Hermes initiaux valides
+
+### Premieres decisions d'architecture
+
+- Architecture modulaire : registres + moteur de workflows + dashboard.
+- Langage principal : _a definir (ex. TypeScript / Python / Go)_
+- Hebergement : _a definir (ex. Vercel / Render / infra perso)_
 
 ## Risques et blocages
 
