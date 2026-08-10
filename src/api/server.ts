@@ -3,16 +3,37 @@
  */
 
 import { Hono } from 'hono';
+import { logger } from 'hono/logger';
 import { getHermesProfiles } from '../core/hermes-profiles.js';
 import { getPolicies } from '../core/policies.js';
 import { getWorkflows } from '../core/workflows.js';
 
 const app = new Hono();
 
+// Logging middleware
+app.use('*', logger());
+
+// Endpoint racine - liste des endpoints
+app.get('/', (c) => {
+  return c.json({
+    name: 'AgentImpact Control Plane API',
+    version: '0.1.0',
+    endpoints: [
+      { method: 'GET', path: '/', description: 'Liste des endpoints' },
+      { method: 'GET', path: '/health', description: 'Health check' },
+      { method: 'GET', path: '/profiles', description: 'Liste des profils Hermes' },
+      { method: 'GET', path: '/policies', description: 'Liste des policies' },
+      { method: 'GET', path: '/workflows', description: 'Liste des workflows' },
+    ],
+  });
+});
+
+// Health check
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Registries
 app.get('/profiles', (c) => {
   const profiles = getHermesProfiles();
   return c.json({ count: profiles.length, items: profiles });
