@@ -1,0 +1,66 @@
+{
+  "profiles": [
+    {
+      "id": "hermes-operator",
+      "name": "Hermes-Operator",
+      "description": "Opé·¢rateur principal du control plane.",
+      "capabilities": [
+        "read:profiles",
+        "write:profiles",
+        "read:policies",
+        "write:policies",
+        "trigger:audit",
+        "trigger:review",
+        "read:dashboard",
+        "write:dashboard"
+      ],
+      "limits": {
+        "no_direct_sensitive_data_access": true,
+        "no_policy_core_change_without_review": true
+      }
+    },
+    {
+      "id": "hermes-auditor",
+      "name": "Hermes-Auditor",
+      "description": "Audit et conformité.",
+      "capabilities": [
+        "read:logs",
+        "read:metrics",
+        "read:traces",
+        "generate:audit_reports",
+        "verify:policies"
+      ],
+      "limits": {
+        "no_write_production_config": true,
+        "no_trigger_mutating_workflows": true
+      }
+    },
+    {
+      "id": "hermes-deployer",
+      "name": "Hermes-Deployer",
+      "description": "Dé·¢ploiements et changements.",
+      "capabilities": [
+        "execute:deploy_pipelines",
+        "apply:validated_changes"
+      ],
+      "limits": {
+        "no_self_approval": true,
+        "security_gates_required": true
+      }
+    },
+    {
+      "id": "hermes-viewer",
+      "name": "Hermes-Viewer",
+      "description": "Lecture seule.",
+      "capabilities": [
+        "read:docs",
+        "read:metrics",
+        "read:logs"
+      ],
+      "limits": {
+        "no_write": true,
+        "no_trigger_workflows": true
+      }
+    }
+  ]
+}
