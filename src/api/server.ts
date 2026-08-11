@@ -184,6 +184,137 @@ app.post('/actions', async (c) => {
   }
 });
 
+const APPROVABLE_STATUSES = ['proposed', 'approval_requested'];
+
+async function updateActionStatus(
+  actionId: string,
+  newStatus: 'approved' | 'rejected',
+  actor: string,
+  client: any,
+) {
+  const currentResult = await client.query(
+    `select id, status from agent_actions where id = $1`,
+    [actionId],
+  );
+
+  if (currentResult.rows.length === 0) {
+    throw new Error('Action not found');
+  }
+
+  const currentStatus = currentResult.rows[0].status;
+
+  if (!APPROVABLE_STATUSES.includes(currentStatus)) {
+    throw new Error(`Action cannot be ${newStatus}ed from status ${currentStatus}`);
+  }
+
+  const updateResult = await client.query(
+    `update agent_actions
+     set status = $1,
+         executed_at = now()
+     where id = $2
+     returning id, status, executed_at`,
+    [newStatus, actionId],
+  );
+
+  const updated = updateResult.rows[0];
+
+  await client.query(
+    `insert into agent_audit_events (
+      action_id, event_type, actor, details
+    )
+    values ($1, $2, $3, $4)`,
+    [
+      actionId,
+      newStatus,
+      actor,
+      JSON.stringify({
+        previous_status: currentStatus,
+        source: 'dashboard',
+      }),
+    ],
+  );
+
+  return updated;
+}
+
+app.patch('/actions/:id/approve', async (c) => {
+  const actionId = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const actor = typeof body.actor === 'string' ? body.actor : 'dashboard-operator';
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const updated = await updateActionStatus(actionId, 'approved', actor, client);
+
+    await client.query('commit');
+
+    return c.json({ item: updated });
+  } catch (error) {
+    await client.query('rollback');
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof (error as any).message === 'string'
+    ) {
+      const msg = (error as any).message;
+      if (msg.includes('not found')) {
+        return c.json({ error: 'Action not found.' }, 404);
+      }
+      if (msg.includes('cannot be')) {
+        return c.json({ error: msg }, 409);
+      }
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/actions/:id/reject', async (c) => {
+  const actionId = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const actor = typeof body.actor === 'string' ? body.actor : 'dashboard-operator';
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const updated = await updateActionStatus(actionId, 'rejected', actor, client);
+
+    await client.query('commit');
+
+    return c.json({ item: updated });
+  } catch (error) {
+    await client.query('rollback');
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof (error as any).message === 'string'
+    ) {
+      const msg = (error as any).message;
+      if (msg.includes('not found')) {
+        return c.json({ error: 'Action not found.' }, 404);
+      }
+      if (msg.includes('cannot be')) {
+        return c.json({ error: msg }, 409);
+      }
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 const port = Number(process.env.PORT) || 3000;
 console.log(`Server starting on port ${port}`);
 
