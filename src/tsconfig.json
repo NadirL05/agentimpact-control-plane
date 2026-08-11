@@ -15,6 +15,16 @@
     "sourceMap": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "index.ts",
+    "env.d.ts",
+    "api/**/*.ts",
+    "core/**/*.ts",
+    "cli/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.ts"
+  ]
 }

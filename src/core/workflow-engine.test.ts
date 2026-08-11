@@ -13,7 +13,7 @@ describe('Workflow Engine', () => {
     expect(run.status).toBe('running');
 
     // Attendre la fin de l'exé·¢cution
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const completedRun = getWorkflowRun(run.id);
     expect(completedRun).toBeDefined();
@@ -25,7 +25,7 @@ describe('Workflow Engine', () => {
     const run = await startWorkflow('onboarding-agent');
     expect(run.workflowId).toBe('onboarding-agent');
 
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const completedRun = getWorkflowRun(run.id);
     expect(completedRun!.status).toBe('completed');
@@ -34,13 +34,13 @@ describe('Workflow Engine', () => {
   it('liste les workflow runs', async () => {
     const initialCount = listWorkflowRuns().length;
     await startWorkflow('deploy');
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const runs = listWorkflowRuns();
     expect(runs.length).toBeGreaterThan(initialCount);
   });
 
-  it('echoue si le workflow n'existe pas', async () => {
+  it("echoue si le workflow n'existe pas", async () => {
     await expect(startWorkflow('nonexistent')).rejects.toThrow('Workflow nonexistent not found');
   });
 
@@ -49,7 +49,7 @@ describe('Workflow Engine', () => {
     registerStepHandler('test:custom_step', async () => 'done');
     // Le workflow 'review-changes' a des steps qui existent déjà
     const run = await startWorkflow('review-changes');
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const completedRun = getWorkflowRun(run.id);
     expect(completedRun!.status).toBe('completed');

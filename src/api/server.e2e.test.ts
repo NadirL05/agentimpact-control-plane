@@ -30,14 +30,22 @@ describe('API E2E', () => {
   it('GET /health retourne 200 et status ok', async () => {
     const res = await app.request('/health');
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as {
+      status?: string;
+      count: number;
+      items: unknown[];
+    };
     expect(json.status).toBe('ok');
   });
 
   it('GET /profiles retourne 200 et 4 profils', async () => {
     const res = await app.request('/profiles');
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as {
+      status?: string;
+      count: number;
+      items: unknown[];
+    };
     expect(json.count).toBe(4);
     expect(json.items).toHaveLength(4);
   });
@@ -45,7 +53,11 @@ describe('API E2E', () => {
   it('GET /policies retourne 200 et au moins 4 policies', async () => {
     const res = await app.request('/policies');
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as {
+      status?: string;
+      count: number;
+      items: unknown[];
+    };
     expect(json.count).toBeGreaterThanOrEqual(4);
     expect(json.items.length).toBeGreaterThanOrEqual(4);
   });
@@ -53,7 +65,11 @@ describe('API E2E', () => {
   it('GET /workflows retourne 200 et 4 workflows', async () => {
     const res = await app.request('/workflows');
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as {
+      status?: string;
+      count: number;
+      items: unknown[];
+    };
     expect(json.count).toBe(4);
     expect(json.items).toHaveLength(4);
   });

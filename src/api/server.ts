@@ -9,8 +9,11 @@ import { getHermesProfiles } from '../core/hermes-profiles.js';
 import { getPolicies } from '../core/policies.js';
 import { getWorkflows } from '../core/workflows.js';
 import { pool } from './db.js';
+import leads from './leads.js';
 
 const app = new Hono();
+
+app.route('/leads', leads);
 
 app.use('*', cors({ origin: 'http://localhost:8081' }));
 
@@ -237,36 +240,198 @@ async function updateActionStatus(
   return updated;
 }
 
+async function approveActionWithPayload(
+  actionId: string,
+  approver: string,
+  payloadHash: string,
+  client: any,
+) {
+  const result = await client.query(
+    `select id, profile, intent, payload, payload_hash, risk_level, status
+     from agent_actions
+     where id = $1
+     for update`,
+    [actionId],
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error('Action not found');
+  }
+
+  const action = result.rows[0];
+
+  if (!APPROVABLE_STATUSES.includes(action.status)) {
+    throw new Error(`Action cannot be approved from status ${action.status}`);
+  }
+
+  if (action.payload_hash !== payloadHash) {
+    throw new Error('Payload hash mismatch');
+  }
+
+  await client.query(
+    `insert into agent_approvals (
+      action_id, approver, decision, payload_hash
+    )
+    values ($1, $2, 'approved', $3)`,
+    [actionId, approver, payloadHash],
+  );
+
+  await client.query(
+    `insert into agent_audit_events (
+      action_id, event_type, actor, details
+    )
+    values ($1, 'approved', $2, $3)`,
+    [
+      actionId,
+      approver,
+      JSON.stringify({
+        payload_hash: payloadHash,
+        source: 'approval-api',
+      }),
+    ],
+  );
+
+  let createdLead = null;
+  const shouldCreateLead = action.intent === 'create_lead';
+
+  if (shouldCreateLead) {
+    const lead = action.payload?.lead;
+
+    if (!lead || typeof lead.company_name !== 'string') {
+      throw new Error('Invalid create_lead payload');
+    }
+
+    const leadResult = await client.query(
+      `insert into leads (
+        source, company_name, contact_name, contact_role,
+        website, email, status, priority, pain_point,
+        signal, last_note, owner_profile
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+      )
+      returning id, created_at, company_name, status, priority, owner_profile`,
+      [
+        lead.source ?? null,
+        lead.company_name,
+        lead.contact_name ?? null,
+        lead.contact_role ?? null,
+        lead.website ?? null,
+        lead.email ?? null,
+        lead.status ?? 'new',
+        lead.priority ?? 'medium',
+        lead.pain_point ?? null,
+        lead.signal ?? null,
+        lead.last_note ?? null,
+        lead.owner_profile ?? action.profile,
+      ],
+    );
+
+    createdLead = leadResult.rows[0];
+  }
+
+  const finalStatus = shouldCreateLead ? 'executed' : 'approved';
+
+  const updateResult = await client.query(
+    `update agent_actions
+     set status = $1,
+         executed_at = case when $1 = 'executed' then now() else executed_at end
+     where id = $2
+     returning id, status, executed_at`,
+    [finalStatus, actionId],
+  );
+
+  if (shouldCreateLead) {
+    await client.query(
+      `insert into agent_audit_events (
+        action_id, event_type, actor, details
+      )
+      values ($1, 'executed', $2, $3)`,
+      [
+        actionId,
+        approver,
+        JSON.stringify({
+          payload_hash: payloadHash,
+          effect: 'lead_created',
+          lead_id: createdLead.id,
+        }),
+      ],
+    );
+  }
+
+  return {
+    action: updateResult.rows[0],
+    lead: createdLead,
+  };
+}
+
 app.patch('/actions/:id/approve', async (c) => {
   const actionId = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
-  const actor = typeof body.actor === 'string' ? body.actor : 'dashboard-operator';
+
+  if (
+    typeof body.approver !== 'string' ||
+    body.approver.trim().length === 0 ||
+    typeof body.payload_hash !== 'string' ||
+    body.payload_hash.length !== 64
+  ) {
+    return c.json(
+      {
+        error: 'Approval requires approver and exact payload_hash.',
+      },
+      400,
+    );
+  }
 
   const client = await pool.connect();
 
   try {
     await client.query('begin');
 
-    const updated = await updateActionStatus(actionId, 'approved', actor, client);
+    const result = await approveActionWithPayload(
+      actionId,
+      body.approver,
+      body.payload_hash,
+      client,
+    );
 
     await client.query('commit');
 
-    return c.json({ item: updated });
+    return c.json(
+      {
+        approved: true,
+        item: result.action,
+        lead: result.lead,
+      },
+    );
   } catch (error) {
     await client.query('rollback');
 
     if (
       typeof error === 'object' &&
       error !== null &&
-      'message' in error &&
-      typeof (error as any).message === 'string'
+      'code' in error &&
+      (error as { code?: string }).code === '23505'
     ) {
-      const msg = (error as any).message;
-      if (msg.includes('not found')) {
-        return c.json({ error: 'Action not found.' }, 404);
+      return c.json(
+        {
+          error: 'Approval already exists for this action and payload hash.',
+        },
+        409,
+      );
+    }
+
+    if (error instanceof Error) {
+      if (error.message === 'Action not found') {
+        return c.json({ error: error.message }, 404);
       }
-      if (msg.includes('cannot be')) {
-        return c.json({ error: msg }, 409);
+
+      if (
+        error.message.includes('cannot be approved') ||
+        error.message.includes('Payload hash mismatch') ||
+        error.message.includes('Invalid create_lead payload')
+      ) {
+        return c.json({ error: error.message }, 409);
       }
     }
 
