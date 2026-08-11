@@ -1,43 +1,39 @@
 /**
- * API HTTP simple avec Hono.
+ * API HTTP AgentImpact : control plane + audit PostgreSQL.
  */
 
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
-import { logger } from 'hono/logger';
+import { cors } from 'hono/cors';
 import { getHermesProfiles } from '../core/hermes-profiles.js';
 import { getPolicies } from '../core/policies.js';
 import { getWorkflows } from '../core/workflows.js';
-import workflowsApi from './workflows.js';
+import { pool } from './db.js';
 
 const app = new Hono();
 
-// Logging middleware
-app.use('*', logger());
+app.use('*', cors({ origin: 'http://localhost:8081' }));
 
-// Endpoint racine - liste des endpoints
-app.get('/', (c) => {
-  return c.json({
-    name: 'AgentImpact Control Plane API',
-    version: '0.1.0',
-    endpoints: [
-      { method: 'GET', path: '/', description: 'Liste des endpoints' },
-      { method: 'GET', path: '/health', description: 'Health check' },
-      { method: 'GET', path: '/profiles', description: 'Liste des profils Hermes' },
-      { method: 'GET', path: '/policies', description: 'Liste des policies' },
-      { method: 'GET', path: '/workflows', description: 'Liste des workflows' },
-      { method: 'GET', path: '/workflows/runs', description: 'Liste des workflow runs' },
-      { method: 'POST', path: '/workflows/:workflowId/run', description: 'Lancer un workflow' },
-      { method: 'GET', path: '/workflows/runs/:runId', description: 'Status d\'un workflow run' },
-    ],
-  });
+app.get('/health', async (c) => {
+  try {
+    await pool.query('select 1');
+    return c.json({
+      status: 'ok',
+      database: 'ok',
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    return c.json(
+      {
+        status: 'degraded',
+        database: 'unavailable',
+        timestamp: new Date().toISOString(),
+      },
+      503,
+    );
+  }
 });
 
-// Health check
-app.get('/health', (c) => {
-  return c.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Registries
 app.get('/profiles', (c) => {
   const profiles = getHermesProfiles();
   return c.json({ count: profiles.length, items: profiles });
@@ -53,8 +49,140 @@ app.get('/workflows', (c) => {
   return c.json({ count: workflows.length, items: workflows });
 });
 
-// Workflows API
-app.route('/workflows', workflowsApi);
+app.get('/actions', async (c) => {
+  const requestedLimit = Number(c.req.query('limit') ?? 50);
+  const limit = Number.isInteger(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), 100)
+    : 50;
+
+  const result = await pool.query(
+    `select
+       id, created_at, profile, intent, targets, payload_hash,
+       risk_level, dry_run, status, executed_at, error_message
+     from agent_actions
+     order by created_at desc
+     limit $1`,
+    [limit],
+  );
+
+  return c.json({ count: result.rows.length, items: result.rows });
+});
+
+app.post('/actions', async (c) => {
+  const body = await c.req.json().catch(() => null);
+
+  if (
+    !body ||
+    typeof body.profile !== 'string' ||
+    typeof body.intent !== 'string' ||
+    typeof body.risk_level !== 'string' ||
+    typeof body.payload !== 'object' ||
+    body.payload === null
+  ) {
+    return c.json(
+      {
+        error: 'Invalid action. Required: profile, intent, risk_level, payload.',
+      },
+      400,
+    );
+  }
+
+  const allowedRiskLevels = [
+    'read_only',
+    'reversible_write',
+    'irreversible_write',
+    'sensitive',
+  ];
+
+  if (!allowedRiskLevels.includes(body.risk_level)) {
+    return c.json({ error: 'Invalid risk_level.' }, 400);
+  }
+
+  const targets = Array.isArray(body.targets) ? body.targets : [];
+  const dryRun = body.dry_run !== false;
+
+  const canonicalPayload = {
+    profile: body.profile,
+    intent: body.intent,
+    targets,
+    payload: body.payload,
+    risk_level: body.risk_level,
+    dry_run: dryRun,
+  };
+
+  const payloadHash = createHash('sha256')
+    .update(JSON.stringify(canonicalPayload))
+    .digest('hex');
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const actionResult = await client.query(
+      `insert into agent_actions (
+        profile, intent, targets, payload, payload_hash,
+        risk_level, dry_run, status
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, 'proposed')
+      returning id, created_at, profile, intent, targets, payload_hash,
+                risk_level, dry_run, status`,
+      [
+        body.profile,
+        body.intent,
+        JSON.stringify(targets),
+        JSON.stringify(body.payload),
+        payloadHash,
+        body.risk_level,
+        dryRun,
+      ],
+    );
+
+    const action = actionResult.rows[0];
+
+    await client.query(
+      `insert into agent_audit_events (
+        action_id, event_type, actor, details
+      )
+      values ($1, 'created', $2, $3)`,
+      [
+        action.id,
+        body.profile,
+        JSON.stringify({
+          payload_hash: payloadHash,
+          dry_run: dryRun,
+          source: 'api',
+        }),
+      ],
+    );
+
+    await client.query('commit');
+
+    return c.json({ item: action }, 201);
+  } catch (error) {
+    await client.query('rollback');
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === '23505'
+    ) {
+      return c.json(
+        {
+          error: 'Duplicate action payload.',
+          message: 'This exact action already exists.',
+          payload_hash: payloadHash,
+        },
+        409,
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+});
 
 const port = Number(process.env.PORT) || 3000;
 console.log(`Server starting on port ${port}`);
