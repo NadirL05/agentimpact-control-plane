@@ -8,6 +8,7 @@
  *    ne peut pas etre invente : il pointe une donnee reellement en base.
  */
 
+import { createHash, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { pool } from './db.js';
@@ -101,21 +102,41 @@ app.post('/draft', async (c) => {
   }
 
   const { subject, body } = renderDraft(fiche, lead, channel);
+  const toEmail = lead.email ?? (Array.isArray(lead.contact_work_emails) ? lead.contact_work_emails[0] : null);
+
+  // Un brouillon email n'est envoyable qu'apres approbation de l'action liee
+  // (voir outreach.ts:/send). draft.status seul ne suffit jamais a envoyer.
+  const actionPayload = { lead_id: leadId, channel, to_email: toEmail, subject, body };
+  const payloadHash = createHash('sha256')
+    .update(JSON.stringify({ payload: actionPayload, nonce: randomUUID() }))
+    .digest('hex');
+
+  const action = await pool.query<{ id: string }>(
+    `insert into agent_actions
+       (profile, intent, targets, payload, payload_hash, risk_level, dry_run, status)
+     values ($1, 'outreach_send', $2::jsonb, $3::jsonb, $4, 'sensitive', false, 'proposed')
+     returning id`,
+    [PROFILE, JSON.stringify([leadId]), JSON.stringify(actionPayload), payloadHash],
+  );
+  const actionId = action.rows[0].id;
 
   const inserted = await pool.query<{ id: string }>(
-    `insert into outreach_drafts (lead_id, channel, subject, body, status)
-     values ($1, $2, $3, $4, 'draft')
+    `insert into outreach_drafts (lead_id, channel, subject, body, status, to_email, action_id)
+     values ($1, $2, $3, $4, 'pending_approval', $5, $6)
      returning id`,
-    [leadId, channel, channel === 'email' ? subject : null, body],
+    [leadId, channel, channel === 'email' ? subject : null, body, toEmail, actionId],
   );
+  const draftId = inserted.rows[0].id;
 
   await pool.query(
-    `insert into agent_audit_events (event_type, actor, details)
-     values ('created', $1, $2::jsonb)`,
+    `insert into agent_audit_events (action_id, event_type, actor, details)
+     values ($1, 'created', $2, $3::jsonb)`,
     [
+      actionId,
       PROFILE,
       JSON.stringify({
         stage: 'outreach_draft_created',
+        draft_id: draftId,
         lead_id: leadId,
         channel,
         score: fiche.score,
@@ -129,11 +150,11 @@ app.post('/draft', async (c) => {
       `Brouillon ${channel} préparé pour *${fiche.entreprise}* (priorité ${fiche.priorite}, score ${fiche.score}/100)\n` +
         `Preuve : ${fiche.preuve[0]}\n` +
         `\`\`\`${body.slice(0, 800)}\`\`\`\n` +
-        `_Brouillon non envoyé. Aucune route d'envoi n'existe côté agent._`,
+        `Valider : \`!approve ${actionId}\` puis \`POST /api/outreach/send {"draft_id":"${draftId}"}\`.`,
     );
   }
 
-  return c.json({ ok: true, draft_id: inserted.rows[0].id, fiche, subject, body });
+  return c.json({ ok: true, draft_id: draftId, action_id: actionId, payload_hash: payloadHash, fiche, subject, body });
 });
 
 /** Brouillons en attente de relecture humaine. */
