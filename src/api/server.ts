@@ -2,7 +2,7 @@
  * API HTTP AgentImpact : control plane + audit PostgreSQL.
  */
 
-import { createHash } from 'node:crypto';
+import crypto, { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getHermesProfiles } from '../core/hermes-profiles.js';
@@ -10,12 +10,17 @@ import { getPolicies } from '../core/policies.js';
 import { getWorkflows } from '../core/workflows.js';
 import { pool } from './db.js';
 import leads from './leads.js';
+import missions from './missions.js';
+import fullenrich from './fullenrich.js';
 
 const app = new Hono();
 
-app.route('/leads', leads);
-
+// CORS avant le montage des routes : sinon /leads et /missions y echappent.
 app.use('*', cors({ origin: 'http://localhost:8081' }));
+
+app.route('/leads', leads);
+app.route('/missions', missions);
+app.route('/api/fullenrich', fullenrich);
 
 app.get('/health', async (c) => {
   try {
@@ -117,29 +122,36 @@ app.post('/actions', async (c) => {
     .update(JSON.stringify(canonicalPayload))
     .digest('hex');
 
-  const client = await pool.connect();
+      const client = await pool.connect();
+    
+    try {
+      const payloadHash = crypto
+        .createHash('sha256')
+        .update(JSON.stringify(body.payload || {}))
+        .digest('hex');
 
-  try {
-    await client.query('begin');
-
-    const actionResult = await client.query(
-      `insert into agent_actions (
-        profile, intent, targets, payload, payload_hash,
-        risk_level, dry_run, status
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, 'proposed')
-      returning id, created_at, profile, intent, targets, payload_hash,
-                risk_level, dry_run, status`,
-      [
-        body.profile,
-        body.intent,
-        JSON.stringify(targets),
-        JSON.stringify(body.payload),
-        payloadHash,
-        body.risk_level,
-        dryRun,
-      ],
-    );
+      const actionResult = await client.query(
+        `insert into agent_actions (
+          profile, intent, targets, payload, payload_hash,
+          risk_level, dry_run, status, approval_expires_at
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9
+        )
+        returning id, created_at, profile, intent, targets, payload_hash,
+                  risk_level, dry_run, status, approval_expires_at`,
+        [
+          body.profile,
+          body.intent,
+          JSON.stringify(body.targets),
+          JSON.stringify(body.payload || {}),
+          payloadHash,
+          body.risk_level,
+          body.dry_run,
+          'proposed',
+          new Date(Date.now() + 15 * 60 * 1000), // now() + 15 minutes
+        ]
+      );
 
     const action = actionResult.rows[0];
 
@@ -247,7 +259,7 @@ async function approveActionWithPayload(
   client: any,
 ) {
   const result = await client.query(
-    `select id, profile, intent, payload, payload_hash, risk_level, status
+    `select id, profile, intent, payload, payload_hash, risk_level, status, approval_expires_at
      from agent_actions
      where id = $1
      for update`,
@@ -259,6 +271,18 @@ async function approveActionWithPayload(
   }
 
   const action = result.rows[0];
+
+  if (
+    action.approval_expires_at &&
+    new Date(action.approval_expires_at).getTime() <= Date.now()
+  ) {
+    throw new Error('Approval expired');
+  }
+
+
+  if (action.profile === approver.trim()) {
+    throw new Error('Self approval is not allowed');
+  }
 
   if (!APPROVABLE_STATUSES.includes(action.status)) {
     throw new Error(`Action cannot be approved from status ${action.status}`);
@@ -367,6 +391,14 @@ async function approveActionWithPayload(
 
 app.patch('/actions/:id/approve', async (c) => {
   const actionId = c.req.param('id');
+
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      actionId,
+    )
+  ) {
+    return c.json({ error: 'Invalid action id.' }, 400);
+  }
   const body = await c.req.json().catch(() => ({}));
 
   if (
@@ -429,7 +461,9 @@ app.patch('/actions/:id/approve', async (c) => {
       if (
         error.message.includes('cannot be approved') ||
         error.message.includes('Payload hash mismatch') ||
-        error.message.includes('Invalid create_lead payload')
+        error.message.includes('Self approval is not allowed') ||
+          error.message.includes('Approval expired') ||
+          error.message.includes('Invalid create_lead payload')
       ) {
         return c.json({ error: error.message }, 409);
       }
@@ -477,6 +511,125 @@ app.patch('/actions/:id/reject', async (c) => {
     throw error;
   } finally {
     client.release();
+  }
+});
+
+// POST /api/actions - Créer une action agent
+app.post('/api/actions', async (c) => {
+  try {
+    const body = await c.req.json() as {
+      profile: string;
+      intent: string;
+      targets: string[];
+      payload: Record<string, unknown>;
+      risk_level: 'read' | 'reversible_write' | 'irreversible_write';
+      dry_run: boolean;
+    };
+
+    const client = await pool.connect();
+    
+    try {
+      const payloadHash = crypto
+        .createHash('sha256')
+        .update(JSON.stringify(body.payload || {}))
+        .digest('hex');
+
+      const actionResult = await client.query(
+        `insert into agent_actions (
+          profile, intent, targets, payload, payload_hash,
+          risk_level, dry_run, status, approval_expires_at
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9
+        )
+        returning id, created_at, profile, intent, targets, payload_hash,
+                  risk_level, dry_run, status, approval_expires_at`,
+        [
+          body.profile,
+          body.intent,
+          JSON.stringify(body.targets),
+          JSON.stringify(body.payload || {}),
+          payloadHash,
+          body.risk_level,
+          body.dry_run,
+          'proposed',
+          new Date(Date.now() + 15 * 60 * 1000),
+        ]
+      );
+
+      return c.json({
+        success: true,
+        action: actionResult.rows[0],
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error creating action:', error);
+    return c.json({
+      success: false,
+      error: 'Failed to create action',
+    }, 500);
+  }
+});
+// POST /api/approvals - Valider ou rejeter une action
+app.post('/api/approvals', async (c) => {
+  try {
+    const body = await c.req.json() as {
+      action_id: string;
+      decision: 'approved' | 'rejected';
+      approver: string;
+    };
+
+    const client = await pool.connect();
+    
+    try {
+      // Vérifier que l'action existe et est "proposed"
+      const actionResult = await client.query(
+        'SELECT * FROM agent_actions WHERE id = $1 AND status = $2',
+        [body.action_id, 'proposed']
+      );
+
+      if (actionResult.rows.length === 0) {
+        return c.json({
+          success: false,
+          error: 'Action not found or already processed',
+        }, 404);
+      }
+
+      const action = actionResult.rows[0];
+
+      // Mettre à jour le statut de l'action
+      const updateResult = await client.query(
+        `UPDATE agent_actions 
+         SET status = $1, approved_at = now(), approved_by = $2
+         WHERE id = $3
+         RETURNING id, status, approved_at, approved_by`,
+        [body.decision === 'approved' ? 'approved' : 'rejected', body.approver, body.action_id]
+      );
+
+      // Créer une entrée dans agent_approvals
+      const approvalResult = await client.query(
+        `INSERT INTO agent_approvals (action_id, decision, approver, decided_at)
+         VALUES ($1, $2, $3, now())
+         RETURNING id, action_id, decision, approver, decided_at`,
+        [body.action_id, body.decision, body.approver]
+      );
+
+      return c.json({
+        success: true,
+        action: updateResult.rows[0],
+        approval: approvalResult.rows[0],
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error processing approval:', error);
+    return c.json({
+      success: false,
+      error: 'Failed to process approval',
+    }, 500);
   }
 });
 
