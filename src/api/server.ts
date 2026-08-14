@@ -12,6 +12,12 @@ import { pool } from './db.js';
 import leads from './leads.js';
 import missions from './missions.js';
 import fullenrich from './fullenrich.js';
+import approvals from './approvals.js';
+import briefs from './briefs.js';
+import drive from './drive.js';
+import github from './github.js';
+import growth from './growth.js';
+import clients from './clients.js';
 
 const app = new Hono();
 
@@ -21,6 +27,14 @@ app.use('*', cors({ origin: 'http://localhost:8081' }));
 app.route('/leads', leads);
 app.route('/missions', missions);
 app.route('/api/fullenrich', fullenrich);
+// Remplace l'ancien POST /api/approvals inline : celui-ci verifie le
+// payload_hash, l'expiration, l'auto-approbation et le rejeu.
+app.route('/api/approvals', approvals);
+app.route('/api/briefs', briefs);
+app.route('/api/drive', drive);
+app.route('/api/github', github);
+app.route('/api/growth', growth);
+app.route('/api/clients', clients);
 
 app.get('/health', async (c) => {
   try {
@@ -569,66 +583,6 @@ app.post('/api/actions', async (c) => {
     return c.json({
       success: false,
       error: 'Failed to create action',
-    }, 500);
-  }
-});
-// POST /api/approvals - Valider ou rejeter une action
-app.post('/api/approvals', async (c) => {
-  try {
-    const body = await c.req.json() as {
-      action_id: string;
-      decision: 'approved' | 'rejected';
-      approver: string;
-    };
-
-    const client = await pool.connect();
-    
-    try {
-      // Vérifier que l'action existe et est "proposed"
-      const actionResult = await client.query(
-        'SELECT * FROM agent_actions WHERE id = $1 AND status = $2',
-        [body.action_id, 'proposed']
-      );
-
-      if (actionResult.rows.length === 0) {
-        return c.json({
-          success: false,
-          error: 'Action not found or already processed',
-        }, 404);
-      }
-
-      const action = actionResult.rows[0];
-
-      // Mettre à jour le statut de l'action
-      const updateResult = await client.query(
-        `UPDATE agent_actions 
-         SET status = $1, approved_at = now(), approved_by = $2
-         WHERE id = $3
-         RETURNING id, status, approved_at, approved_by`,
-        [body.decision === 'approved' ? 'approved' : 'rejected', body.approver, body.action_id]
-      );
-
-      // Créer une entrée dans agent_approvals
-      const approvalResult = await client.query(
-        `INSERT INTO agent_approvals (action_id, decision, approver, decided_at)
-         VALUES ($1, $2, $3, now())
-         RETURNING id, action_id, decision, approver, decided_at`,
-        [body.action_id, body.decision, body.approver]
-      );
-
-      return c.json({
-        success: true,
-        action: updateResult.rows[0],
-        approval: approvalResult.rows[0],
-      });
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error('Error processing approval:', error);
-    return c.json({
-      success: false,
-      error: 'Failed to process approval',
     }, 500);
   }
 });
