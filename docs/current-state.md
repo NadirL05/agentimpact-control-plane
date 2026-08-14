@@ -27,6 +27,8 @@
 
 ## Dashboard
 
+- 14 août 2026 : bus de missions v8 validé en succès complet (push token corrigé).
+
 - Projet Vite React dans /opt/agentimpact/dashboard
 - Dev server : <http://localhost:8081>
 - Fonctionnalités :
