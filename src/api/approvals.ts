@@ -14,10 +14,14 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { approvalBlocks, postMessage, slackConfigured } from './slack.js';
+import {
+  APPROVABLE_STATUSES,
+  evaluateApproval,
+  isApprovable,
+} from '../core/approval-rules.js';
 
 const app = new Hono();
 
-const APPROVABLE_STATUSES = ['proposed', 'approval_requested'];
 const APPROVAL_WINDOW_MINUTES = Number(process.env.APPROVAL_WINDOW_MINUTES ?? 15);
 
 const requestSchema = z.object({
@@ -107,7 +111,7 @@ app.post('/request', async (c) => {
 
   if (!action) return c.json({ error: 'action_not_found' }, 404);
 
-  if (!APPROVABLE_STATUSES.includes(action.status)) {
+  if (!isApprovable(action.status)) {
     return c.json(
       { error: 'invalid_status', status: action.status, message: 'Action deja traitee.' },
       409,
@@ -180,63 +184,57 @@ app.post('/', async (c) => {
       return c.json({ error: 'action_not_found' }, 404);
     }
 
-    if (!APPROVABLE_STATUSES.includes(action.status)) {
-      await client.query('rollback');
-      return c.json(
-        { error: 'invalid_status', status: action.status, message: 'Action deja traitee.' },
-        409,
-      );
-    }
+    const verdict = evaluateApproval(
+      {
+        profile: action.profile,
+        status: action.status,
+        payload_hash: action.payload_hash,
+        approval_expires_at: action.approval_expires_at,
+      },
+      { decision, approver, payload_hash: providedHash },
+      Date.now(),
+    );
 
-    const expired =
-      action.approval_expires_at != null &&
-      new Date(action.approval_expires_at).getTime() <= Date.now();
-
-    if (expired) {
-      await client.query(
-        `update agent_actions set status = 'rejected', error_message = 'approval_expired'
-          where id = $1`,
-        [actionId],
-      );
-      await client.query('commit');
-      await logEvent(actionId, 'rejected', approver, {
-        reason: 'approval_expired',
-        expires_at: action.approval_expires_at,
-      });
-      return c.json({ error: 'approval_expired', expires_at: action.approval_expires_at }, 409);
-    }
-
-    // Une approbation porte sur un payload precis : un hash different signifie
-    // que l'action a change depuis la demande.
-    if (decision === 'approved') {
-      if (!providedHash) {
-        await client.query('rollback');
+    if (!verdict.allowed) {
+      // Une fenetre expiree ferme l'action : elle ne doit pas rester ouverte
+      // en attendant qu'on la valide plus tard.
+      if (verdict.reason === 'approval_expired') {
+        await client.query(
+          `update agent_actions set status = 'rejected', error_message = 'approval_expired'
+            where id = $1`,
+          [actionId],
+        );
+        await client.query('commit');
+        await logEvent(actionId, 'rejected', approver, {
+          reason: 'approval_expired',
+          expires_at: action.approval_expires_at,
+        });
         return c.json(
-          {
-            error: 'payload_hash_required',
-            message: 'Une approbation doit porter sur le payload_hash de l action.',
-            expected: action.payload_hash,
-          },
-          400,
+          { error: 'approval_expired', expires_at: action.approval_expires_at },
+          verdict.httpStatus,
         );
       }
 
-      if (providedHash !== action.payload_hash) {
-        await client.query('rollback');
-        await logEvent(actionId, 'blocked_by_policy', approver, {
-          reason: 'payload_hash_mismatch',
-          provided: providedHash,
-        });
-        return c.json({ error: 'payload_hash_mismatch', expected: action.payload_hash }, 409);
+      await client.query('rollback');
+
+      if (
+        verdict.reason === 'payload_hash_mismatch' ||
+        verdict.reason === 'self_approval_forbidden'
+      ) {
+        await logEvent(actionId, 'blocked_by_policy', approver, { reason: verdict.reason });
       }
 
-      if (approver.trim() === action.profile) {
-        await client.query('rollback');
-        await logEvent(actionId, 'blocked_by_policy', approver, {
-          reason: 'self_approval',
-        });
-        return c.json({ error: 'self_approval_forbidden' }, 403);
-      }
+      return c.json(
+        {
+          error: verdict.reason,
+          ...(verdict.reason === 'payload_hash_required' ||
+          verdict.reason === 'payload_hash_mismatch'
+            ? { expected: action.payload_hash }
+            : {}),
+          ...(verdict.reason === 'invalid_status' ? { status: action.status } : {}),
+        },
+        verdict.httpStatus,
+      );
     }
 
     const approvalResult = await client.query(

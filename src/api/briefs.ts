@@ -13,21 +13,22 @@ import { Hono } from 'hono';
 import { pool } from './db.js';
 import { postMessage, slackConfigured } from './slack.js';
 import { todayEvents } from './google.js';
+import {
+  MAX_ITEMS,
+  ageLabel,
+  capSections,
+  renderBrief,
+  topActions,
+  type Section,
+} from '../core/brief-format.js';
 
 const app = new Hono();
 
-const MAX_ITEMS = 10;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPOS = (process.env.GITHUB_REPOS ?? '')
   .split(',')
   .map((r) => r.trim())
   .filter(Boolean);
-
-type Section = {
-  emoji: string;
-  title: string;
-  lines: string[];
-};
 
 type PullRequest = {
   repo: string;
@@ -37,14 +38,6 @@ type PullRequest = {
   draft: boolean;
   ageDays: number;
 };
-
-function ageLabel(from: string | Date): string {
-  const ms = Date.now() - new Date(from).getTime();
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours < 1) return "moins d'1 h";
-  if (hours < 24) return `${hours} h`;
-  return `${Math.floor(hours / 24)} j`;
-}
 
 /** Actions en attente d'une decision humaine : le coeur du brief. */
 async function pendingDecisions(): Promise<string[]> {
@@ -240,53 +233,6 @@ async function connectorHealth(): Promise<string[]> {
   return lines;
 }
 
-/** Top 3 deterministe : priorite au bloquant, puis au risque, puis au business. */
-function topActions(sections: Record<string, string[]>): string[] {
-  const top: string[] = [];
-
-  if (sections.decisions.length > 0) {
-    top.push(`Traiter ${sections.decisions.length} validation(s) en attente`);
-  }
-  if (sections.risks.length > 0) {
-    top.push(`Corriger : ${sections.risks[0].split(' — source')[0]}`);
-  }
-  if (sections.delivery.length > 0) {
-    top.push(`Revoir : ${sections.delivery[0].split(' — source')[0]}`);
-  }
-  if (sections.opportunities.length > 0 && top.length < 3) {
-    top.push(`Exploiter : ${sections.opportunities[0].split(' — source')[0]}`);
-  }
-
-  return top.slice(0, 3);
-}
-
-function renderBrief(sections: Section[], truncated: number): string {
-  const date = new Date().toLocaleDateString('fr-FR', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-
-  const parts = [`*Brief du ${date}*`];
-
-  for (const section of sections) {
-    if (section.lines.length === 0) continue;
-    parts.push(
-      `\n${section.emoji} *${section.title}*\n${section.lines.map((l) => `• ${l}`).join('\n')}`,
-    );
-  }
-
-  if (parts.length === 1) {
-    parts.push('\nRien à signaler. Aucune action en attente, aucun échec sur 24 h.');
-  }
-
-  if (truncated > 0) {
-    parts.push(`\n_${truncated} élément(s) non affiché(s) — plafond de ${MAX_ITEMS}._`);
-  }
-
-  return parts.join('\n');
-}
-
 async function buildBrief() {
   const [decisions, riskLines, opportunityLines, pulls, health, meetingLines] =
     await Promise.all([
@@ -311,17 +257,7 @@ async function buildBrief() {
     delivery: [...delivery, ...health],
   };
 
-  // Plafond global a 10 elements : au-dela, le brief n'est plus lu.
-  let budget = MAX_ITEMS;
-  let truncated = 0;
-  const capped: Record<string, string[]> = {};
-
-  for (const [key, lines] of Object.entries(grouped)) {
-    const kept = lines.slice(0, Math.max(budget, 0));
-    truncated += lines.length - kept.length;
-    budget -= kept.length;
-    capped[key] = kept;
-  }
+  const { capped, truncated } = capSections(grouped);
 
   const sections: Section[] = [
     { emoji: '🟣', title: 'Décisions à prendre aujourd’hui', lines: capped.decisions },

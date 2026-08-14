@@ -14,13 +14,13 @@ import { createHash, randomUUID, timingSafeEqual, createHmac } from 'node:crypto
 import { z } from 'zod';
 import { pool } from './db.js';
 import { postMessage, slackConfigured } from './slack.js';
+import { AGENT_LABEL, hasTestFiles, renderIssueBody } from '../core/github-spec.js';
 
 const app = new Hono();
 
 const TOKEN = process.env.GITHUB_TOKEN;
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 const PROFILE = 'agentimpact-dev';
-const AGENT_LABEL = 'agent-ready';
 const TIMEOUT_MS = 15_000;
 
 const repoPattern = /^[\w.-]+\/[\w.-]+$/;
@@ -66,27 +66,6 @@ async function logEvent(
      values ($1, $2, $3, $4::jsonb)`,
     [actionId, eventType, PROFILE, JSON.stringify({ stage, ...details })],
   );
-}
-
-function renderIssueBody(spec: z.infer<typeof specSchema>): string {
-  const edges = spec.edge_cases ?? [];
-
-  return [
-    '## Besoin',
-    spec.need,
-    '',
-    "## Critères d'acceptation",
-    ...spec.acceptance_criteria.map((criterion) => `- [ ] ${criterion}`),
-    '',
-    '## Cas limites',
-    edges.length > 0
-      ? edges.map((edge) => `- ${edge}`).join('\n')
-      : '- _à compléter avant de lancer le développement_',
-    '',
-    '---',
-    `Spécification préparée par le control plane AgentImpact (profil \`${PROFILE}\`),`,
-    'après validation humaine. Le merge reste manuel.',
-  ].join('\n');
 }
 
 /** Prepare une specification. N'ouvre rien : produit une action a valider. */
@@ -249,11 +228,11 @@ async function inspectPullRequest(repo: string, prNumber: number) {
   if (!filesResponse.ok) return null;
 
   const files = (await filesResponse.json()) as Array<{ filename: string }>;
-  const hasTests = files.some((file) =>
-    /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$/.test(file.filename),
-  );
 
-  return { fileCount: files.length, hasTests };
+  return {
+    fileCount: files.length,
+    hasTests: hasTestFiles(files.map((file) => file.filename)),
+  };
 }
 
 /**

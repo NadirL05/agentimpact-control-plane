@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { pool } from './db.js';
 import { driveGet, driveMove, driveSearch } from './google.js';
 import { postMessage, slackConfigured } from './slack.js';
+import { FOLDER_MIME, buildMovePlan, type MovePlan } from '../core/drive-plan.js';
 
 const app = new Hono();
 
@@ -29,13 +30,6 @@ const proposeSchema = z.object({
 });
 
 const executeSchema = z.object({ action_id: z.string().uuid() });
-
-type MovePlan = {
-  file_id: string;
-  name: string;
-  from_parents: string[];
-  to_parent: string;
-};
 
 async function recordAction(
   intent: string,
@@ -105,7 +99,7 @@ app.post('/propose', async (c) => {
 
   try {
     const folder = await driveGet(destination);
-    if (folder.mimeType !== 'application/vnd.google-apps.folder') {
+    if (folder.mimeType !== FOLDER_MIME) {
       return c.json({ error: 'destination_not_a_folder', mime_type: folder.mimeType }, 400);
     }
     destinationName = folder.name;
@@ -127,16 +121,7 @@ app.post('/propose', async (c) => {
     );
   }
 
-  const moves: MovePlan[] = files
-    .filter((file) => file.mimeType !== 'application/vnd.google-apps.folder')
-    .filter((file) => !(file.parents ?? []).includes(destination))
-    .slice(0, MAX_BATCH)
-    .map((file) => ({
-      file_id: file.id,
-      name: file.name,
-      from_parents: file.parents ?? [],
-      to_parent: destination,
-    }));
+  const moves: MovePlan[] = buildMovePlan(files, destination, MAX_BATCH);
 
   if (moves.length === 0) {
     return c.json({
