@@ -207,3 +207,95 @@ export async function driveMove(
     parents: body.parents ?? [],
   };
 }
+
+// --- Ajouts Gmail (semaine 1-2 phase Growth) : lecture des reponses ---
+// aux campagnes de prospection. Lecture seule ; aucune fonction d'envoi
+// n'est ajoutee ici volontairement (l'envoi passe par Brevo, pas Gmail).
+
+export type GmailMessage = {
+  id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  bodyText: string;
+  internalDate: string;
+};
+
+function decodeBase64Url(data: string): string {
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(normalized, 'base64').toString('utf8');
+}
+
+function extractPlainText(payload: {
+  mimeType?: string;
+  body?: { data?: string };
+  parts?: Array<{ mimeType?: string; body?: { data?: string } }>;
+}): string {
+  if (payload.mimeType === 'text/plain' && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+
+  for (const part of payload.parts ?? []) {
+    if (part.mimeType === 'text/plain' && part.body?.data) {
+      return decodeBase64Url(part.body.data);
+    }
+  }
+
+  // Repli sur le premier data trouve, meme si HTML : mieux qu'un vide.
+  const anyPart = payload.parts?.find((part) => part.body?.data);
+  return anyPart?.body?.data ? decodeBase64Url(anyPart.body.data) : '';
+}
+
+/**
+ * Messages recus depuis `sinceQuery` (syntaxe de recherche Gmail, ex.
+ * "newer_than:1d in:inbox"). Ne consulte que l'inbox : jamais les brouillons
+ * ni les envois.
+ */
+export async function fetchRecentReplies(query: string, limit = 20): Promise<GmailMessage[]> {
+  const listParams = new URLSearchParams({ q: query, maxResults: String(limit) });
+
+  const listResponse = await googleFetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${listParams}`,
+  );
+
+  if (!listResponse.ok) throw new Error(`gmail_list_http_${listResponse.status}`);
+
+  const listBody = (await listResponse.json()) as { messages?: Array<{ id: string }> };
+  const ids = listBody.messages ?? [];
+
+  const messages: GmailMessage[] = [];
+
+  for (const { id } of ids) {
+    const detailResponse = await googleFetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+    );
+    if (!detailResponse.ok) continue;
+
+    const detail = (await detailResponse.json()) as {
+      id: string;
+      snippet?: string;
+      internalDate?: string;
+      payload?: {
+        headers?: Array<{ name: string; value: string }>;
+        mimeType?: string;
+        body?: { data?: string };
+        parts?: Array<{ mimeType?: string; body?: { data?: string } }>;
+      };
+    };
+
+    const headers = detail.payload?.headers ?? [];
+    const from = headers.find((h) => h.name === 'From')?.value ?? '';
+    const subject = headers.find((h) => h.name === 'Subject')?.value ?? '';
+
+    messages.push({
+      id: detail.id,
+      from,
+      subject,
+      snippet: detail.snippet ?? '',
+      bodyText: detail.payload ? extractPlainText(detail.payload) : '',
+      internalDate: detail.internalDate ?? '',
+    });
+  }
+
+  return messages;
+}

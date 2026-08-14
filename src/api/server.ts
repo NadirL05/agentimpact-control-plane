@@ -2,6 +2,12 @@
  * API HTTP AgentImpact : control plane + audit PostgreSQL.
  */
 
+import { setDefaultResultOrder } from 'node:dns';
+// Brevo (et d'autres APIs) bloquent l'IPv6 du VPS par defaut securite compte,
+// alors que l'IPv4 est autorisee : forcer IPv4 en premier evite de dependre
+// d'une whitelist IPv6 en plus de l'IPv4 chez chaque fournisseur externe.
+setDefaultResultOrder('ipv4first');
+
 import crypto, { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -18,6 +24,8 @@ import drive from './drive.js';
 import github from './github.js';
 import growth from './growth.js';
 import clients from './clients.js';
+import outreach from './outreach.js';
+import gmail from './gmail.js';
 
 const app = new Hono();
 
@@ -35,6 +43,8 @@ app.route('/api/drive', drive);
 app.route('/api/github', github);
 app.route('/api/growth', growth);
 app.route('/api/clients', clients);
+app.route('/api/outreach', outreach);
+app.route('/api/gmail', gmail);
 
 app.get('/health', async (c) => {
   try {
