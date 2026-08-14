@@ -36,6 +36,7 @@ Messages en français, courts et explicites.
   - [ ] Doc mise à jour si nécessaire
 
 Revue :
+
 - Au moins 1 approbation requise avant merge.
 - Revue sécurité obligatoire pour les changements de policies / profils Hermes.
 

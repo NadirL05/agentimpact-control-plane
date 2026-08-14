@@ -10,7 +10,7 @@ Dashboard statique qui consomme l'API du control plane.
 npm run api
 ```
 
-2. Ouvrir `dashboard/index.html` dans un navigateur, ou le servir avec un serveur statique :
+1. Ouvrir `dashboard/index.html` dans un navigateur, ou le servir avec un serveur statique :
 
 ```bash
 # Avec Python
@@ -20,7 +20,7 @@ python -m http.server 8080 --directory dashboard
 npx serve dashboard
 ```
 
-3. Dans le dashboard :
+1. Dans le dashboard :
    - URL de l'API : `http://localhost:3000` (par défaut)
    - Cliquer sur **🔄 Rafraî·¢chir**
 

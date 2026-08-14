@@ -28,7 +28,7 @@
 ## Dashboard
 
 - Projet Vite React dans /opt/agentimpact/dashboard
-- Dev server : http://localhost:8081
+- Dev server : <http://localhost:8081>
 - Fonctionnalités :
   - Liste des actions
   - Approve / Reject

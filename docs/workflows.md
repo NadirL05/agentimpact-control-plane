@@ -9,6 +9,7 @@ Ce document d\u00e9crit les workflows core du control plane.
 **D\u00e9clencheur** : planifi\u00e9 (ex. hebdo) ou \u00e0 la demande par Hermes-Auditor.
 
 **\u00c9tapes** :
+
 1. Collecte des logs et m\u00e9triques sur la p\u00e9riode.
 2. V\u00e9rification des policies (RBAC, secrets, d\u00e9ploiements).
 3. G\u00e9n\u00e9ration d'un rapport d'audit.
@@ -21,6 +22,7 @@ Ce document d\u00e9crit les workflows core du control plane.
 **D\u00e9clencheur** : demande d'onboarding par un Hermes-Operator.
 
 **\u00c9tapes** :
+
 1. Cr\u00e9ation du profil Hermes associ\u00e9 \u00e0 l'agent.
 2. Configuration des acc\u00e8s et permissions.
 3. V\u00e9rification de conformit\u00e9 (secrets, policies).
@@ -33,6 +35,7 @@ Ce document d\u00e9crit les workflows core du control plane.
 **D\u00e9clencheur** : ouverture d'une PR.
 
 **\u00c9tapes** :
+
 1. Checks automatiques (CI, lint, tests).
 2. Revue par un pair (Hermes-Operator ou Hermes-Deployer).
 3. Revue s\u00e9curit\u00e9 si changement de policy ou de profil.
@@ -45,6 +48,7 @@ Ce document d\u00e9crit les workflows core du control plane.
 **D\u00e9clencheur** : PR merge sur `main` avec tag de version ou demande explicite.
 
 **\u00c9tapes** :
+
 1. Validation des pr\u00e9requis (tests, revue s\u00e9curit\u00e9 si n\u00e9cessaire).
 2. Ex\u00e9cution du pipeline de d\u00e9ploiement (Hermes-Deployer).
 3. V\u00e9rification post-d\u00e9ploiement (sanity checks).
