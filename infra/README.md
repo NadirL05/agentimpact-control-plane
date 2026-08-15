@@ -25,6 +25,15 @@ au code TypeScript de `src/`.
   `generate-outreach-drafts.sh`) : scripts d'exploitation anterieurs a cette
   reorganisation, non re-audites ligne a ligne au-dela du scan de secrets.
 
+## compose.yml, nginx-demos.conf
+
+`compose.yml` deploye sur le VPS a `/opt/agentimpact/compose.yml`
+(`docker compose up -d`). Inclut le service `demo-static` (nginx, sert
+`/opt/agentimpact/demos/` sur `demo.agentimpact.fr`) — sites de demonstration
+client statiques, expiration automatique par `scripts/expire-demos.sh`
+(cron 4h du matin), sauf reponse du lead entre-temps (table
+`conversations`).
+
 ## hermes-profiles/
 
 `config.yaml` de chaque profil Hermes personnalise (`default` = config
