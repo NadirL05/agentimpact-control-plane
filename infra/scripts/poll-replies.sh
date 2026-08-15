@@ -10,7 +10,16 @@ API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
 
 # newer_than:15m couvre large par rapport a l intervalle du cron (5 min) :
 # une reponse jamais manquee vaut mieux qu un appel Gmail de moins.
-QUERY="in:inbox newer_than:15m"
+#
+# category:primary est deliberement ajoute (2026-08-15) : sans lui, chaque
+# notif Pinterest/Facebook/Instagram/etc atterrissant en boite de reception
+# etait classee (regex, pas cher en soi) PUIS postee sur #tous-agentimpact,
+# ou deux bots avec free_response_channels sur ce canal (main + growth)
+# declenchent un tour LLM complet a chaque message pour juger s ils doivent
+# repondre. Le cout reel n est pas la classification, c est le bruit qui
+# fait tourner ces bots pour rien. category:primary exclut Social/Promotions
+# /Updates/Forums a la source, avant meme le premier appel API.
+QUERY="in:inbox category:primary newer_than:15m"
 
 messages="$(
   curl --silent --show-error --max-time 20 \
