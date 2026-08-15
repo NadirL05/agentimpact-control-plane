@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { pool } from './db.js';
+import { tryAutopilot } from './autopilot.js';
 
 const app = new Hono();
 
@@ -184,14 +185,23 @@ app.post('/', async (c) => {
 
     await client.query('commit');
 
+    // Autopilote scope volontairement etroit : uniquement les missions vers
+    // dev-senior (branche + PR, jamais de merge possible cote GitHub — voir
+    // la protection de branche). Toute autre cible reste manuelle.
+    let autopilot: { engaged: boolean; reason?: string } | null = null;
+    if (body.target_agent === 'dev-senior') {
+      autopilot = await tryAutopilot(action.id, 'create_agent_mission', action.payload_hash, 'read_only');
+    }
+
     return c.json(
       {
         item: missionResult.rows[0],
         action: {
           id: action.id,
           payload_hash: action.payload_hash,
-          status: action.status,
+          status: autopilot?.engaged ? 'approved' : action.status,
         },
+        autopilot,
       },
       201,
     );

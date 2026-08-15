@@ -1,5 +1,5 @@
 /**
- * Circuit de validation humaine (semaine 3 de la roadmap).
+ * Circuit de validation (semaine 3 de la roadmap, + autopilote).
  *
  * Regles tenues ici, pas cote client :
  *  - une approbation porte sur un payload_hash precis, jamais sur "oui vas-y" ;
@@ -8,6 +8,10 @@
  *    agent_approvals(action_id, payload_hash)) ;
  *  - un profil ne peut pas s'auto-approuver ;
  *  - un refus est audite au meme titre qu'une acceptation.
+ *
+ * recordDecision() est le seul chemin d'ecriture d'une decision — humaine via
+ * POST /, ou automatique via autopilot.ts. Meme regles, meme audit, la seule
+ * difference est qui figure comme `approver`.
  */
 
 import { Hono } from 'hono';
@@ -37,7 +41,7 @@ const decisionSchema = z.object({
   reason: z.string().max(2000).optional(),
 });
 
-type ActionRow = {
+export type ActionRow = {
   id: string;
   profile: string;
   intent: string;
@@ -50,7 +54,7 @@ type ActionRow = {
   approval_expires_at: string | null;
 };
 
-async function logEvent(
+export async function logEvent(
   actionId: string,
   eventType: 'created' | 'approval_requested' | 'approved' | 'rejected' | 'blocked_by_policy',
   actor: string,
@@ -61,6 +65,156 @@ async function logEvent(
      values ($1, $2, $3, $4::jsonb)`,
     [actionId, eventType, actor, JSON.stringify(details)],
   );
+}
+
+export type DecisionResult =
+  | { ok: true; httpStatus: 200; action: unknown; approval: unknown }
+  | { ok: false; httpStatus: 404 | 409 | 400 | 403; error: string; details?: Record<string, unknown> };
+
+/**
+ * Enregistre une decision (approuve/refuse), qu'elle vienne d'un humain ou
+ * d'une politique d'autopilote. Transaction unique, verrouillee.
+ */
+export async function recordDecision(params: {
+  actionId: string;
+  decision: 'approved' | 'rejected';
+  approver: string;
+  payloadHash?: string;
+  reason?: string;
+}): Promise<DecisionResult> {
+  const { actionId, decision, approver, payloadHash: providedHash, reason } = params;
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const result = await client.query<ActionRow>(
+      `select id, profile, intent, targets, payload, payload_hash, risk_level,
+              dry_run, status, approval_expires_at
+         from agent_actions
+        where id = $1
+        for update`,
+      [actionId],
+    );
+
+    const action = result.rows[0];
+
+    if (!action) {
+      await client.query('rollback');
+      return { ok: false, httpStatus: 404, error: 'action_not_found' };
+    }
+
+    const verdict = evaluateApproval(
+      {
+        profile: action.profile,
+        status: action.status,
+        payload_hash: action.payload_hash,
+        approval_expires_at: action.approval_expires_at,
+      },
+      { decision, approver, payload_hash: providedHash },
+      Date.now(),
+    );
+
+    if (!verdict.allowed) {
+      if (verdict.reason === 'approval_expired') {
+        await client.query(
+          `update agent_actions set status = 'rejected', error_message = 'approval_expired'
+            where id = $1`,
+          [actionId],
+        );
+        await client.query('commit');
+        await logEvent(actionId, 'rejected', approver, {
+          reason: 'approval_expired',
+          expires_at: action.approval_expires_at,
+        });
+        return {
+          ok: false,
+          httpStatus: verdict.httpStatus,
+          error: 'approval_expired',
+          details: { expires_at: action.approval_expires_at },
+        };
+      }
+
+      await client.query('rollback');
+
+      if (
+        verdict.reason === 'payload_hash_mismatch' ||
+        verdict.reason === 'self_approval_forbidden'
+      ) {
+        await logEvent(actionId, 'blocked_by_policy', approver, { reason: verdict.reason });
+      }
+
+      return {
+        ok: false,
+        httpStatus: verdict.httpStatus,
+        error: verdict.reason,
+        details: {
+          ...(verdict.reason === 'payload_hash_required' || verdict.reason === 'payload_hash_mismatch'
+            ? { expected: action.payload_hash }
+            : {}),
+          ...(verdict.reason === 'invalid_status' ? { status: action.status } : {}),
+        },
+      };
+    }
+
+    const approvalResult = await client.query(
+      `insert into agent_approvals (action_id, approver, decision, reason, payload_hash, expires_at)
+       values ($1, $2, $3, $4, $5, $6)
+       returning id, action_id, approver, decision, decided_at`,
+      [actionId, approver, decision, reason ?? null, action.payload_hash, action.approval_expires_at],
+    );
+
+    const updateResult = await client.query(
+      `update agent_actions
+          set status = $2, approved_at = now(), approved_by = $3
+        where id = $1
+        returning id, status, approved_at, approved_by`,
+      [actionId, decision, approver],
+    );
+
+    await client.query('commit');
+
+    await logEvent(actionId, decision, approver, {
+      payload_hash: action.payload_hash,
+      reason: reason ?? null,
+    });
+
+    if (slackConfigured()) {
+      const verb = decision === 'approved' ? 'validée' : 'refusée';
+      await postMessage(
+        `Action ${verb} par ${approver} — ${action.intent} (\`${actionId}\`)${
+          reason ? ` · ${reason}` : ''
+        }`,
+      );
+    }
+
+    return {
+      ok: true,
+      httpStatus: 200,
+      action: updateResult.rows[0],
+      approval: approvalResult.rows[0],
+    };
+  } catch (error) {
+    await client.query('rollback').catch(() => undefined);
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === '23505'
+    ) {
+      return {
+        ok: false,
+        httpStatus: 409,
+        error: 'approval_already_used',
+        details: { message: 'Cette approbation a deja ete utilisee.' },
+      };
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Actions en attente d'une decision humaine. */
@@ -160,146 +314,19 @@ app.post('/', async (c) => {
     return c.json({ error: 'invalid_body', details: parsed.error.flatten() }, 400);
   }
 
-  const { action_id: actionId, decision, approver, payload_hash: providedHash, reason } =
-    parsed.data;
+  const result = await recordDecision({
+    actionId: parsed.data.action_id,
+    decision: parsed.data.decision,
+    approver: parsed.data.approver,
+    payloadHash: parsed.data.payload_hash,
+    reason: parsed.data.reason,
+  });
 
-  const client = await pool.connect();
-
-  try {
-    await client.query('begin');
-
-    const result = await client.query<ActionRow>(
-      `select id, profile, intent, targets, payload, payload_hash, risk_level,
-              dry_run, status, approval_expires_at
-         from agent_actions
-        where id = $1
-        for update`,
-      [actionId],
-    );
-
-    const action = result.rows[0];
-
-    if (!action) {
-      await client.query('rollback');
-      return c.json({ error: 'action_not_found' }, 404);
-    }
-
-    const verdict = evaluateApproval(
-      {
-        profile: action.profile,
-        status: action.status,
-        payload_hash: action.payload_hash,
-        approval_expires_at: action.approval_expires_at,
-      },
-      { decision, approver, payload_hash: providedHash },
-      Date.now(),
-    );
-
-    if (!verdict.allowed) {
-      // Une fenetre expiree ferme l'action : elle ne doit pas rester ouverte
-      // en attendant qu'on la valide plus tard.
-      if (verdict.reason === 'approval_expired') {
-        await client.query(
-          `update agent_actions set status = 'rejected', error_message = 'approval_expired'
-            where id = $1`,
-          [actionId],
-        );
-        await client.query('commit');
-        await logEvent(actionId, 'rejected', approver, {
-          reason: 'approval_expired',
-          expires_at: action.approval_expires_at,
-        });
-        return c.json(
-          { error: 'approval_expired', expires_at: action.approval_expires_at },
-          verdict.httpStatus,
-        );
-      }
-
-      await client.query('rollback');
-
-      if (
-        verdict.reason === 'payload_hash_mismatch' ||
-        verdict.reason === 'self_approval_forbidden'
-      ) {
-        await logEvent(actionId, 'blocked_by_policy', approver, { reason: verdict.reason });
-      }
-
-      return c.json(
-        {
-          error: verdict.reason,
-          ...(verdict.reason === 'payload_hash_required' ||
-          verdict.reason === 'payload_hash_mismatch'
-            ? { expected: action.payload_hash }
-            : {}),
-          ...(verdict.reason === 'invalid_status' ? { status: action.status } : {}),
-        },
-        verdict.httpStatus,
-      );
-    }
-
-    const approvalResult = await client.query(
-      `insert into agent_approvals (action_id, approver, decision, reason, payload_hash, expires_at)
-       values ($1, $2, $3, $4, $5, $6)
-       returning id, action_id, approver, decision, decided_at`,
-      [
-        actionId,
-        approver,
-        decision,
-        reason ?? null,
-        action.payload_hash,
-        action.approval_expires_at,
-      ],
-    );
-
-    const updateResult = await client.query(
-      `update agent_actions
-          set status = $2, approved_at = now(), approved_by = $3
-        where id = $1
-        returning id, status, approved_at, approved_by`,
-      [actionId, decision, approver],
-    );
-
-    await client.query('commit');
-
-    await logEvent(actionId, decision, approver, {
-      payload_hash: action.payload_hash,
-      reason: reason ?? null,
-    });
-
-    if (slackConfigured()) {
-      const verb = decision === 'approved' ? 'validée' : 'refusée';
-      await postMessage(
-        `Action ${verb} par ${approver} — ${action.intent} (\`${actionId}\`)${
-          reason ? ` · ${reason}` : ''
-        }`,
-      );
-    }
-
-    return c.json({
-      success: true,
-      action: updateResult.rows[0],
-      approval: approvalResult.rows[0],
-    });
-  } catch (error) {
-    await client.query('rollback').catch(() => undefined);
-
-    // Contrainte unique (action_id, payload_hash) : l'approbation est a usage unique.
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === '23505'
-    ) {
-      return c.json(
-        { error: 'approval_already_used', message: 'Cette approbation a deja ete utilisee.' },
-        409,
-      );
-    }
-
-    throw error;
-  } finally {
-    client.release();
+  if (!result.ok) {
+    return c.json({ error: result.error, ...result.details }, result.httpStatus);
   }
+
+  return c.json({ success: true, action: result.action, approval: result.approval });
 });
 
 export default app;
