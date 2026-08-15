@@ -33,6 +33,13 @@ npm run test
 - `src/api/` : API / handlers (à·¢ venir).
 - `src/infra/` : intégrations DB, secrets, logs (à·¢ venir).
 
+## Infra hors code (scripts, config Hermes)
+
+Les scripts operationnels (crons, dispatchers, tests d'integration) et la
+configuration des profils Hermes sont version-controles a la racine du
+depot, sous `infra/` — voir `infra/README.md`. Ils ne font pas partie du
+build TypeScript de `src/` mais sont deployes sur le meme VPS.
+
 ## Prochaines étapes
 
 1. Implé·¢menter le loader du registre Hermes (`src/core/hermes-profiles.ts`).

@@ -1,0 +1,48 @@
+model:
+  default: openai/gpt-5.3-codex
+  provider: openrouter
+  base_url: ''
+fallback_providers:
+- provider: openrouter
+  model: moonshotai/kimi-k3
+# Toolset restreint volontairement : ce profil est lecture/memoire, jamais
+# d'ecriture externe (pas de terminal, pas de fichiers, pas de code execution).
+# 'file' ajoute la lecture des documents deposes dans docs/. L'ecriture est
+# ensuite restreinte a drafts/ + memory/ via HERMES_WRITE_SAFE_ROOT (.env),
+# jamais docs/ : les sources ne doivent pas pouvoir etre modifiees.
+toolsets:
+- web
+- memory
+- file
+- skills
+- todo
+- session_search
+- clarify
+agent:
+  max_turns: 15
+  gateway_timeout: 1800
+  restart_drain_timeout: 180
+  api_max_retries: 3
+  service_tier: ''
+  tool_use_enforcement: auto
+  gateway_timeout_warning: 900
+  gateway_notify_interval: 180
+  gateway_auto_continue_freshness: 3600
+  image_input_mode: auto
+
+terminal:
+  backend: docker
+  docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  docker_network: true
+  # docs/ monte en lecture seule (les sources ne doivent jamais etre
+  # modifiees), drafts/ et memory/ en ecriture (seuls repertoires cibles
+  # de HERMES_WRITE_SAFE_ROOT).
+  docker_volumes:
+  - "/home/hermes/.hermes/profiles/agent-memoire-master/docs:/workspace/docs:ro"
+  - "/home/hermes/.hermes/profiles/agent-memoire-master/drafts:/workspace/drafts"
+  - "/home/hermes/.hermes/profiles/agent-memoire-master/memory:/workspace/memory"
+  cwd: /workspace
+  container_cpu: 1
+  container_memory: 1024
+  container_disk: 5120
+  container_persistent: true
