@@ -1,0 +1,7 @@
+# Garde-fou : aucun .env ne doit jamais entrer ici, meme par erreur.
+.env
+.env.*
+!*.env.example
+*.pem
+*.key
+credentials.json
