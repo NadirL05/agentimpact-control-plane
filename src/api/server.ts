@@ -26,6 +26,7 @@ import growth from './growth.js';
 import clients from './clients.js';
 import outreach from './outreach.js';
 import gmail from './gmail.js';
+import demos from './demos.js';
 
 const app = new Hono();
 
@@ -45,6 +46,7 @@ app.route('/api/growth', growth);
 app.route('/api/clients', clients);
 app.route('/api/outreach', outreach);
 app.route('/api/gmail', gmail);
+app.route('/api/demos', demos);
 
 app.get('/health', async (c) => {
   try {

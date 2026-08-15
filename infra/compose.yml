@@ -1,0 +1,89 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: agentimpact-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentimpact
+      POSTGRES_USER: agentimpact_app
+      # .env ne definit que DB_PASSWORD : POSTGRES_PASSWORD n'existait pas et
+      # un `compose up` aurait reinitialise le mot de passe a vide.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentimpact_app -d agentimpact"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./app/src
+    container_name: agentimpact-api
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: agentimpact
+      PGUSER: agentimpact_app
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans .env}
+      FULLENRICH_API_KEY: ${FULLENRICH_API_KEY:-}
+      FULLENRICH_BASE_URL: ${FULLENRICH_BASE_URL:-https://app.fullenrich.com/api/v2}
+      FULLENRICH_WEBHOOK_URL: ${FULLENRICH_WEBHOOK_URL:-}
+      FULLENRICH_WEBHOOK_TOKEN: ${FULLENRICH_WEBHOOK_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_HOME_CHANNEL: ${SLACK_HOME_CHANNEL:-}
+      APPROVAL_WINDOW_MINUTES: ${APPROVAL_WINDOW_MINUTES:-15}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPOS: ${GITHUB_REPOS:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_SENDER_EMAIL: ${BREVO_SENDER_EMAIL:-contact@go.agentimpact.fr}
+      BREVO_SENDER_NAME: ${BREVO_SENDER_NAME:-Nadir — Agent Impact}
+      BREVO_REPLY_TO: ${BREVO_REPLY_TO:-nadir@agentimpact.fr}
+      BREVO_WEBHOOK_TOKEN: ${BREVO_WEBHOOK_TOKEN:-}
+      OUTREACH_LAUNCH_DATE: ${OUTREACH_LAUNCH_DATE:-}
+      DEMO_TTL_DAYS: ${DEMO_TTL_DAYS:-14}
+      DEMO_PUBLIC_BASE: ${DEMO_PUBLIC_BASE:-https://demo.agentimpact.fr}
+    volumes:
+      # Credentials Google montes en lecture seule : le fichier appartient a
+      # Hermes et ne doit jamais etre reecrit par l'API.
+      - /home/hermes/.hermes/google_token.json:/secrets/google_token.json:ro
+      # Lecture seule : l'API verifie l'existence des fichiers, ne les ecrit
+      # jamais (dev-senior ecrit via son propre montage sandbox).
+      - /opt/agentimpact/demos:/opt/agentimpact/demos:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    # Expose uniquement en local. Le callback FullEnrich passe par le tunnel
+    # cloudflared (/etc/cloudflared/config.yml), restreint au seul chemin
+    # /api/fullenrich/webhook.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  demo-static:
+    image: nginx:alpine
+    container_name: agentimpact-demo-static
+    restart: unless-stopped
+    volumes:
+      - /opt/agentimpact/demos:/usr/share/nginx/html:ro
+      - /opt/agentimpact/nginx-demos.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - web
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.agentimpact-demo.rule: "Host(`demo.agentimpact.fr`)"
+      traefik.http.routers.agentimpact-demo.entrypoints: "websecure"
+      traefik.http.routers.agentimpact-demo.tls: "true"
+      traefik.http.routers.agentimpact-demo.tls.certresolver: "mytlschallenge"
+      traefik.http.services.agentimpact-demo.loadbalancer.server.port: "80"
+
+volumes:
+  postgres_data:
+
+networks:
+  web:
+    external: true
+    name: root_web

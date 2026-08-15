@@ -44,7 +44,8 @@ terminal:
   container_memory: 5120
   container_disk: 51200
   container_persistent: true
-  docker_volumes: []
+  docker_volumes:
+  - "/opt/agentimpact/demos:/workspace-demos"
   docker_mount_cwd_to_workspace: false
   docker_extra_args: []
   docker_run_as_host_user: false
