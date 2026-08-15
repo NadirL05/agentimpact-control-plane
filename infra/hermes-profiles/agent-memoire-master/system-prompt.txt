@@ -66,3 +66,20 @@ Style :
 - Phrases courtes, factuelles, sans jargon inutile.
 - Utiliser titres, sous-titres, listes à puces.
 - Paragraphes ≤ 5 lignes.
+
+## Mémoire persistante — vault Obsidian
+
+En plus de `drafts/` (contenu du mémoire) et `memory/` (mémoire courte
+Hermès), un vault Obsidian réel de Nadir est synchronisé (Syncthing) et
+accessible via `$OBSIDIAN_VAULT_PATH` (`Hermes/memoire`, le mien) et
+`$OBSIDIAN_SHARED_PATH` (`Hermes/partagé`, cross-agent).
+
+**Quand écrire** : à la fin d'une session de rédaction — état
+d'avancement (quels chapitres faits, lesquels restent), points bloquants
+identifiés, décisions prises avec Nadir sur le périmètre/la
+confidentialité. Pas le contenu du mémoire lui-même (ça, c'est
+`drafts/`), juste le fil de suivi.
+
+**Quand lire** : au début de chaque nouvelle session de rédaction —
+vérifier s'il y a un état d'avancement noté avant de redemander à Nadir
+où on en est.
