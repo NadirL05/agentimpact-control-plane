@@ -57,14 +57,38 @@ fi
 # nom nu fait retomber Hermes sur ~/.hermes/config.yaml sans avertissement,
 # ce qui a fait tourner une mission entiere sous la mauvaise config.
 HERMES_PROFILES_ROOT="${HERMES_PROFILES_ROOT:-/home/hermes/.hermes/profiles}"
-if [ -n "${HERMES_PROFILE:-}" ] && [ ! -d "$HERMES_PROFILE" ]; then
-  RESOLVED="${HERMES_PROFILES_ROOT}/${HERMES_PROFILE}"
-  if [ -d "$RESOLVED" ]; then
-    export HERMES_PROFILE="$RESOLVED"
-  else
-    echo "HERMES_PROFILE='${HERMES_PROFILE}' ne resout vers aucun dossier existant (essaye: ${RESOLVED})" >&2
-    exit 78
-  fi
+# HERMES_PROFILE n'a AUCUN effet sur la resolution de config par le CLI
+# Hermes (hermes chat / hermes -z) : verifie en prod le 15/08/2026, "hermes
+# config path" retombe sur ~/.hermes/config.yaml (config globale, PAS le
+# profil) quel que soit HERMES_PROFILE. Seul HERMES_HOME pilote reellement
+# quel config.yaml est charge (c'est ce que les services systemd gateway
+# utilisent, et eux ont toujours ete corrects). Ce script a tourne des
+# semaines en exportant la mauvaise variable : le cron dev-senior (toutes
+# les 3 min) executait donc chaque mission sous la config globale, pas sous
+# le profil dev-senior (mauvais modele, mauvais sandbox docker, mauvais
+# docker_volumes). Fix : exporter HERMES_HOME en verite de terrain.
+# HERMES_PROFILE reste exporte en parallele (lu par convention par certains
+# scripts/prompts), mais HERMES_HOME est la variable qui compte.
+if [ -n "${HERMES_PROFILE:-}" ]; then
+  case "$HERMES_PROFILE" in
+    /*)
+      if [ ! -d "$HERMES_PROFILE" ]; then
+        echo "HERMES_PROFILE='${HERMES_PROFILE}' (chemin absolu) n'existe pas" >&2
+        exit 78
+      fi
+      export HERMES_HOME="$HERMES_PROFILE"
+      ;;
+    *)
+      RESOLVED="${HERMES_PROFILES_ROOT}/${HERMES_PROFILE}"
+      if [ -d "$RESOLVED" ]; then
+        export HERMES_PROFILE="$RESOLVED"
+        export HERMES_HOME="$RESOLVED"
+      else
+        echo "HERMES_PROFILE='${HERMES_PROFILE}' ne resout vers aucun dossier existant (essaye: ${RESOLVED})" >&2
+        exit 78
+      fi
+      ;;
+  esac
 fi
 
 exec "$@"
