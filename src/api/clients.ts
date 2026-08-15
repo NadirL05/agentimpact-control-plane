@@ -304,4 +304,61 @@ app.post('/:clientKey/report', async (c) => {
   return c.json({ ok: true, client_key: clientKey, text, metrics, slack });
 });
 
+/**
+ * Etat reel de l'autopilote, pas une recommandation : quelles politiques
+ * existent, activees ou non, et l'etat de leur coupe-circuit maintenant.
+ */
+app.get('/autopilot', async (c) => {
+  const policies = await pool.query<{
+    policy_key: string;
+    name: string;
+    enabled: boolean;
+    rules: { max_failures_24h?: number; max_rejections_24h?: number; justification?: string; scope?: string };
+    updated_at: string;
+  }>(`select policy_key, name, enabled, rules, updated_at from policies order by policy_key`);
+
+  const items = await Promise.all(
+    policies.rows.map(async (policy) => {
+      const stats = await pool.query<{ failures: string; rejections: string; auto_approved_today: string }>(
+        `select
+           (select count(*) from agent_actions
+             where intent = $1 and status = 'failed' and created_at > now() - interval '24 hours')::text as failures,
+           (select count(*) from agent_actions
+             where intent = $1 and status = 'rejected'
+               and created_at > now() - interval '24 hours'
+               and (error_message is null or error_message <> 'approval_expired'))::text as rejections,
+           (select count(*) from agent_approvals
+             where approver = $2 and decided_at::date = current_date)::text as auto_approved_today`,
+        [policy.policy_key, `policy:${policy.policy_key}`],
+      );
+
+      const failures = Number(stats.rows[0].failures);
+      const rejections = Number(stats.rows[0].rejections);
+      const maxFailures = policy.rules.max_failures_24h ?? 3;
+      const maxRejections = policy.rules.max_rejections_24h ?? 2;
+      const circuitOpen = failures >= maxFailures || rejections >= maxRejections;
+
+      return {
+        policy_key: policy.policy_key,
+        name: policy.name,
+        enabled: policy.enabled,
+        scope: policy.rules.scope ?? null,
+        justification: policy.rules.justification ?? null,
+        circuit_breaker: {
+          open: circuitOpen,
+          failures_24h: failures,
+          max_failures_24h: maxFailures,
+          rejections_24h: rejections,
+          max_rejections_24h: maxRejections,
+        },
+        effectively_engaged: policy.enabled && !circuitOpen,
+        auto_approved_today: Number(stats.rows[0].auto_approved_today),
+        updated_at: policy.updated_at,
+      };
+    }),
+  );
+
+  return c.json({ count: items.length, items });
+});
+
 export default app;
