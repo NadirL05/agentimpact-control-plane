@@ -44,6 +44,7 @@ cerveau de Nadir — tout ce qui compte sur lui, pro ET perso, sans filtrage
 (choix explicite de Nadir le 15/08/2026).
 
 Structure :
+
 - `Profil.md` — identité stable (édité en place, pas de doublon)
 - `Projets/<nom>.md` — un fichier par projet actif, édité en place
 - `Domaines/<nom>.md` — vie perso continue (sport, finances, etc.)
