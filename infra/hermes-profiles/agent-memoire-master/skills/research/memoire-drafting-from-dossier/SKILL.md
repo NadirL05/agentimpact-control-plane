@@ -9,15 +9,19 @@ license: MIT
 # Mémoire drafting from a local dossier
 
 ## When to use
+
 Use when the user asks for a mémoire deliverable (plan, chapter scaffold, synthesis, checklist, BPMN diagram) based on files in a project folder (typically `docs/`) and wants the output written to a project file.
 
 ## Core outcome
+
 Produce a grounded deliverable that:
+
 1. reflects the dossier's actual constraints and facts,
 2. follows the requested structure/format,
 3. is written to the exact target path requested by the user.
 
 ## Workflow
+
 1. **Inventory the corpus first**
    - List files in `docs/` (or user-provided folder) before reading.
    - Identify mixed formats: markdown/text + binary docs (PDF, DOCX, etc.).
@@ -47,7 +51,9 @@ Produce a grounded deliverable that:
    - Confirm completion with path only unless the user requests inline content.
 
 ## Chapter drafting protocol (when user asks for finished prose, not a summary)
+
 When the request is to draft full mémoire chapters from local dossier files:
+
 1. Treat `docs/` + user-specified draft file(s) as the only admissible source base.
 2. Produce final academic prose directly in the target file (do not stop at outline/notes).
 3. If evidence is missing, insert `[À CONFIRMER]` exactly where the fact would be needed; never infer.
@@ -70,19 +76,24 @@ python /workspace/scripts/drive_sync.py drafts/<file>.md
   read-only). It targets a fixed, already-existing Drive folder
   ("Mémoire AxENR - SYSTEKO") — don't create a new folder, don't ask which
   folder, the target is hardcoded in the script.
+
 - It upserts by filename: re-running it after an edit updates the same
   Drive file in place (same link), it never creates a duplicate. Safe to
   run after every single chapter edit, not just once at the end.
+
 - `pip install` only needs to succeed once per container lifetime — if it's
   already installed this run is instant, don't skip it defensively, just run it.
+
 - Output is one line: `UPDATED <name> <id> <link>` or `CREATED <name> <id>
   <link>` — that IS the confirmation, no need to verify further via a
   separate Drive search.
+
 - If the script errors, report the exact error — do not fall back to
   writing ad-hoc Drive API calls, and do not claim success without the
   `UPDATED`/`CREATED` line actually printing.
 
 ## Quality checks before finalizing
+
 - Every major claim is traceable to a dossier document.
 - The output matches the user’s requested structure exactly.
 - Scope is aligned to the chosen case/perimeter; no invented facts.
@@ -104,6 +115,7 @@ Rules going forward, both non-negotiable:
    <file>` via the `terminal` toolset before stating any word count. An
    unverified number in a confirmation message is treated the same as an
    invented fact in the text.
+
 2. **A length target is never a license to invent.** If the real source
    material runs out before the target word count, STOP and report the
    actual count plus what's missing to go further (more docs needed, more
@@ -112,6 +124,7 @@ Rules going forward, both non-negotiable:
    outcome. A longer fabricated one is not — it fails the one rule that
    matters most for this deliverable (no invented data), even if every
    other instruction was followed.
+
 3. **Expand by depth on real material, not by invented specifics.** Legitimate
    ways to lengthen a section: quote more of what a source document
    actually says, explain a mechanism already documented in more procedural
@@ -119,10 +132,12 @@ Rules going forward, both non-negotiable:
    are both real. Illegitimate: invented percentages, case names, ticket
    numbers, dates, or tool names that don't appear in `docs/` verbatim or
    near-verbatim.
+
 4. If genuinely unsure whether a detail came from a source or was
    generated, treat it as invented and either cite it precisely or cut it.
 
 ## Pitfalls
+
 - Treating an old context file as authoritative when a newer cadrage file supersedes it.
 - Skipping PDFs because they are binary in first-pass read.
 - Returning a chat summary without writing the requested file.
@@ -142,18 +157,22 @@ a picture or a flowchart-shaped diagram is not importable there.
 
 1. Root `<bpmn:definitions>` with the standard namespaces (`bpmn`, `bpmndi`,
    `di`, `dc`) — see template below. Do not invent a schema.
+
 2. Every flow-object referenced in `<bpmn:process>` (tasks, gateways, events,
    sequence flows) must have a matching `<bpmndi:BPMNShape>` or
    `<bpmndi:BPMNEdge>` in the `<bpmndi:BPMNPlane>` section, each with real
    `<dc:Bounds>` coordinates. **Skipping the DI section is the #1 failure
    mode** — the XML parses fine but Bizagi shows a blank or auto-reflowed
    canvas, defeating the point.
+
 3. Lay out shapes left-to-right on a simple grid (e.g. x += 150 per step,
    fixed lane y-bands if using pools/lanes) — doesn't need to be pretty,
    needs to be present and non-overlapping.
+
 4. Use a `<bpmn:laneSet>` when the dossier describes multiple actors/systems
    (e.g. Approvisionnement / Transitaire SIFA / Douane / ERP) — this is
    usually the case for a multi-acteurs logistics flow. One lane per actor.
+
 5. Gateways: exclusive (`bpmn:exclusiveGateway`, diamond) for either/or
    decision points described in the source docs. Don't invent branches that
    aren't in the dossier — if the process is linear, keep it linear.
@@ -215,16 +234,19 @@ obstacles for you.
 1. **Reserve corridors.** Leave ≥60px of empty vertical space between shape
    rows/columns specifically for edges to bend through. Don't pack shapes
    edge-to-edge.
+
 2. **Orthogonal routing only.** Horizontal segment at source's mid-y →
    vertical segment at a free x → horizontal segment into target's mid-y.
    No direct diagonal, no long straight line spanning multiple columns
    unless you've confirmed nothing sits between source and target on that y.
+
 3. **Backward/loop flows get their own corridor.** Any edge where the
    target is to the *left* of the source (rework loops, "retour",
    "réappro", etc.) must NOT cut back through the middle of the diagram.
    Route it through a dedicated lane below the lowest pool/lane (or above
    the topmost one) — e.g. `y = <bottom_lane_y + bottom_lane_height + 60>`
    — down from source, straight across at that y, back up into target.
+
 4. **Never let a gateway's outgoing edge run straight through a shape sitting
    between it and the next node in the same y-band.** If two shapes share a
    similar y and an edge needs to pass between them, verify the gap is
@@ -236,9 +258,11 @@ Use the `terminal` toolset (docker sandbox, scoped to `docs:ro` +
 `drafts`/`memory` rw — no other host access). Two checks, both mandatory:
 
 **1. Well-formedness:**
+
 ```bash
 xmllint --noout drafts/diagrams/<nom>.bpmn
 ```
+
 Only catches malformed XML — doesn't catch missing DI or crossing edges.
 
 **2. Edge/shape collision check** — catches the routing problem in section
@@ -335,6 +359,7 @@ Write `.bpmn` files to `drafts/diagrams/<slug>.bpmn` (e.g.
 (avant/après), never overwrite one to "update" the other.
 
 ## References
+
 - See `references/2026-08-15-memoire-plan-from-docs.md` for a concrete dossier-derived checklist and structure cues.
 
 ## Style et structure — modèle KPMG (Margaux Cauchon, ISDBC IAE Aix)
@@ -362,11 +387,13 @@ académique standard, comme dans l'exemple KPMG.
 ### Figures
 
 Chaque schéma/tableau/capture suit ce format exact :
+
 ```
 Figure N : Titre descriptif de la figure
 [image ou tableau]
 Source : <origine réelle — jamais inventée>
 ```
+
 Numérotées en continu sur tout le document (Figure 1, 2, 3...), pas
 par chapitre. Une "Sommaire des figures" en début de document liste
 toutes les figures avec numéro de page.
