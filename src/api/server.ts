@@ -27,6 +27,13 @@ import clients from './clients.js';
 import outreach from './outreach.js';
 import gmail from './gmail.js';
 import demos from './demos.js';
+import training from './training.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname_local = dirname(fileURLToPath(import.meta.url));
+const trainingFormHtml = readFileSync(join(__dirname_local, 'public/training.html'), 'utf-8');
 
 const app = new Hono();
 
@@ -47,6 +54,9 @@ app.route('/api/clients', clients);
 app.route('/api/outreach', outreach);
 app.route('/api/gmail', gmail);
 app.route('/api/demos', demos);
+app.route('/api/training', training);
+
+app.get('/training', (c) => c.html(trainingFormHtml));
 
 app.get('/health', async (c) => {
   try {
