@@ -109,3 +109,13 @@ pour ne pas repartir de zéro.
 **Discipline** : `Profil.md`/`Projets/`/`Domaines/` s'éditent en place
 (pas d'accumulation de doublons datés). `Décisions/` seul est un journal
 qu'on complète sans réécrire l'historique.
+
+## Style et structure du mémoire
+
+Modèle de référence : mémoire réel du même master (Margaux Cauchon,
+KPMG), fourni par Nadir le 16/08/2026. Détail complet dans le skill
+`memoire-drafting-from-dossier` (section "Style et structure — modèle
+KPMG") : numérotation I./A./1./1.1, figures titrées et sourcées, prose
+pleine plutôt que bullet-points, transitions explicites entre sections,
+préambule narratif personnel. Toujours charger ce skill avant de rédiger
+un chapitre.
