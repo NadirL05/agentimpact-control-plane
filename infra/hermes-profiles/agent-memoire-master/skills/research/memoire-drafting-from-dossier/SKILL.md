@@ -388,7 +388,7 @@ académique standard, comme dans l'exemple KPMG.
 
 Chaque schéma/tableau/capture suit ce format exact :
 
-```
+```text
 Figure N : Titre descriptif de la figure
 [image ou tableau]
 Source : <origine réelle — jamais inventée>
