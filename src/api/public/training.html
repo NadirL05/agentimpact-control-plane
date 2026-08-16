@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi sport — Nadir</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07071A; --accent: #818CF8; --text: rgba(255,255,255,0.88);
+    --muted: rgba(255,255,255,0.48); --border: rgba(129,140,248,0.25);
+    --card: rgba(129,140,248,0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'Outfit', sans-serif; padding: 24px 16px 80px;
+    max-width: 480px; margin-inline: auto;
+  }
+  h1 { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 28px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+  select, input, textarea {
+    width: 100%; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; color: var(--text); font-size: 16px;
+    font-family: inherit;
+  }
+  .exercise { border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 12px; }
+  .exercise-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; }
+  .exercise-row input { font-size: 14px; padding: 10px; }
+  button { -webkit-appearance: none; appearance: none; border: none; cursor: pointer; }
+  #add-exercise {
+    width: 100%; margin-top: 12px; padding: 12px; border-radius: 8px;
+    background: var(--card); color: var(--accent); border: 1px dashed var(--border);
+    font-family: 'Outfit'; font-size: 14px;
+  }
+  #submit {
+    width: 100%; margin-top: 24px; padding: 16px; border-radius: 10px;
+    background: var(--accent); color: #07071A; font-family: 'Syne';
+    font-weight: 800; font-size: 16px;
+  }
+  #status { margin-top: 16px; font-size: 14px; text-align: center; min-height: 20px; }
+</style>
+</head>
+<body>
+  <h1>Suivi sport</h1>
+  <div class="sub">Nadir · Upper/Lower split, remigré depuis l'ancien orchestrateur</div>
+
+  <label for="date">Date</label>
+  <input type="date" id="date">
+
+  <label for="day">Séance</label>
+  <select id="day">
+    <option value="upper_a">Upper A</option>
+    <option value="lower_a">Lower A</option>
+    <option value="upper_b">Upper B</option>
+    <option value="lower_b">Lower B</option>
+  </select>
+
+  <label>Exercices</label>
+  <div id="exercises"></div>
+  <button id="add-exercise" type="button">+ Ajouter un exercice</button>
+
+  <label for="notes">Notes (optionnel)</label>
+  <textarea id="notes" rows="3" placeholder="Sensations, douleurs, ajustements..."></textarea>
+
+  <button id="submit" type="button">Enregistrer la séance</button>
+  <div id="status"></div>
+
+<script>
+const STORAGE_KEY = 'training-draft';
+
+function makeInput(type, placeholder, className, value) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.placeholder = placeholder;
+  input.className = className;
+  if (value !== undefined && value !== '') input.value = value;
+  return input;
+}
+
+function exerciseRow(data) {
+  data = data || {};
+  const div = document.createElement('div');
+  div.className = 'exercise';
+  const row = document.createElement('div');
+  row.className = 'exercise-row';
+  row.appendChild(makeInput('text', 'Exercice', 'ex-nom', data.nom));
+  row.appendChild(makeInput('number', 'kg', 'ex-poids', data.poids_kg));
+  row.appendChild(makeInput('number', 'séries', 'ex-series', data.series));
+  row.appendChild(makeInput('text', 'reps', 'ex-reps', data.reps));
+  div.appendChild(row);
+  return div;
+}
+
+const exercisesEl = document.getElementById('exercises');
+document.getElementById('date').valueAsDate = new Date();
+
+function addExercise(data) {
+  exercisesEl.appendChild(exerciseRow(data));
+  saveDraft();
+}
+
+document.getElementById('add-exercise').addEventListener('click', () => addExercise());
+
+function saveDraft() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(collect()));
+}
+
+function collect() {
+  const exercises = [...exercisesEl.querySelectorAll('.exercise')].map((row) => ({
+    nom: row.querySelector('.ex-nom').value,
+    poids_kg: parseFloat(row.querySelector('.ex-poids').value) || undefined,
+    series: parseInt(row.querySelector('.ex-series').value) || undefined,
+    reps: row.querySelector('.ex-reps').value || undefined,
+  })).filter((e) => e.nom);
+
+  return {
+    session_date: document.getElementById('date').value,
+    day_type: document.getElementById('day').value,
+    exercises,
+    notes: document.getElementById('notes').value || undefined,
+  };
+}
+
+// Restaure le brouillon localStorage s'il existe
+const draft = localStorage.getItem(STORAGE_KEY);
+if (draft) {
+  try {
+    const d = JSON.parse(draft);
+    (d.exercises || []).forEach(addExercise);
+  } catch (e) {}
+}
+if (exercisesEl.children.length === 0) addExercise();
+
+document.getElementById('submit').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  const payload = collect();
+
+  if (!payload.exercises.length) {
+    status.textContent = 'Ajoute au moins un exercice.';
+    status.style.color = '#f87171';
+    return;
+  }
+
+  status.textContent = 'Envoi...';
+  status.style.color = 'var(--muted)';
+
+  try {
+    const res = await fetch('/api/training/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    status.textContent = '✅ Séance enregistrée.';
+    status.style.color = '#818CF8';
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (err) {
+    status.textContent = '❌ Erreur — brouillon gardé localement, réessaie.';
+    status.style.color = '#f87171';
+  }
+});
+</script>
+</body>
+</html>
