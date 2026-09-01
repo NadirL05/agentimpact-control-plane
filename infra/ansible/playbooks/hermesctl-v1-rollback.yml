@@ -1,0 +1,27 @@
+---
+# Rollback atomique hermesctl v1
+
+- name: Rollback hermesctl v1
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Arrêter bridge
+      systemd:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      loop:
+        - agentimpact-ctl-bridge.service
+        - agentimpact-ctl-bridge.socket
+
+    - name: Retirer runner du groupe agentimpact-ctl
+      user:
+        name: agentimpact-runner
+        groups: agentimpact-ctl
+        remove: true
+
+    - name: Restaurer image API précédente (tag pre-hermesctl-v1)
+      command: docker compose -f /opt/agentimpact/compose.yml up -d agentimpact-api
+      changed_when: true

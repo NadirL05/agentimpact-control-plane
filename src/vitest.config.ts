@@ -4,7 +4,8 @@ export default defineConfig({
   test: {
     include: [
       'api/**/*.test.ts',
-      'core/**/*.test.ts'
+      'core/**/*.test.ts',
+      'middleware/**/*.test.ts',
     ],
     exclude: [
       'node_modules',

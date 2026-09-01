@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 # Poll les missions pending dont l'action liee vient d'etre approuvee, et les
 # dispatche. Tourne en cron toutes les 2 minutes (voir crontab).
-#
-# Ne declenche jamais un agent directement : POST /:id/dispatch revalide
-# cote API (canDispatch) que l'action est bien approuvee avant de faire quoi
-# que ce soit. Ce script est un simple minuteur, pas une autorite.
 
 set -euo pipefail
 
-API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 pending="$(
-  curl --silent --show-error --max-time 15 "${API}/missions?status=pending&limit=50"
+  "${SCRIPT_DIR}/cp-api.sh" hermes GET "/missions?status=pending&limit=50"
 )"
 
 echo "$pending" | python3 -c "
@@ -23,8 +19,7 @@ for m in approved:
 " | while read -r mission_id; do
   [ -z "$mission_id" ] && continue
   response="$(
-    curl --silent --show-error --max-time 15 -w '\n%{http_code}' \
-      -X POST "${API}/missions/${mission_id}/dispatch"
+    CP_API_STATUS=1 "${SCRIPT_DIR}/cp-api.sh" hermes POST "/missions/${mission_id}/dispatch"
   )"
   status="$(printf '%s' "$response" | tail -n1)"
   body="$(printf '%s' "$response" | sed '$d')"

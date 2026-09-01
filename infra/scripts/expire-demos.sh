@@ -5,13 +5,12 @@
 
 set -euo pipefail
 
-A="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMOS_ROOT=/opt/agentimpact/demos
 
-curl --silent --show-error --max-time 15 "${A}/api/demos" | python3 -c "
+"${SCRIPT_DIR}/cp-api.sh" hermes GET "/api/demos" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-now_expired = []
 for item in data.get('items', []):
     if item['status'] == 'live':
         print(item['slug'])
@@ -20,8 +19,7 @@ for item in data.get('items', []):
 
   # Deleguer la decision (expire / a une reponse / prolonger) a l API,
   # qui seule connait le lien demo <-> lead <-> conversations.
-  curl --silent --show-error --max-time 15 -X POST "${A}/api/demos/${slug}/check-expiry" \
-    -H 'Content-Type: application/json' | python3 -c "
+  "${SCRIPT_DIR}/cp-api.sh" hermes POST "/api/demos/${slug}/check-expiry" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 action = d.get('action')
