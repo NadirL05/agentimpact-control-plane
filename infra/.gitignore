@@ -5,6 +5,7 @@
 *.pem
 *.key
 credentials.json
+*.bak-*
 
 # Artefacts Python (bridge ctl)
 __pycache__/

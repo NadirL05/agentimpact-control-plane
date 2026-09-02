@@ -1,14 +1,12 @@
 model:
-  default: google/gemini-2.5-flash-lite
-  provider: openrouter
+  default: gpt-5.6-luna
+  provider: openai-codex
   base_url: ''
-fallback_providers:
-  - provider: openrouter
-    model: qwen/qwen3.6-flash
+fallback_providers: []
 toolsets:
   - hermes-cli
 agent:
-  max_turns: 8
+  max_turns: 16
   gateway_timeout: 1800
   restart_drain_timeout: 180
   api_max_retries: 3
@@ -95,10 +93,6 @@ prompt_caching:
   cache_ttl: 5m
   long_lived_prefix: true
   long_lived_ttl: 1h
-openrouter:
-  response_cache: true
-  response_cache_ttl: 300
-  min_coding_score: 0.65
 bedrock:
   region: ''
   discovery:
@@ -112,71 +106,71 @@ bedrock:
     trace: disabled
 auxiliary:
   vision:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 120
     download_timeout: 30
   web_extract:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 360
   compression:
-    provider: openrouter
-    model: google/gemini-2.5-flash-lite
+    provider: main
+    model: ''
     base_url: ''
     api_key: ''
     timeout: 120
   session_search:
-    provider: openrouter
-    model: google/gemini-2.5-flash-lite
+    provider: main
+    model: ''
     base_url: ''
     api_key: ''
     timeout: 30
     extra_body: {}
     max_concurrency: 3
   skills_hub:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
   approval:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
   mcp:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
   title_generation:
-    provider: openrouter
-    model: google/gemini-2.5-flash-lite
+    provider: main
+    model: ''
     base_url: ''
     api_key: ''
     timeout: 30
   triage_specifier:
-    provider: openrouter
-    model: google/gemini-2.5-flash-lite
+    provider: main
+    model: ''
     base_url: ''
     api_key: ''
     timeout: 120
   curator:
-    provider: auto
+    provider: main
     model: ''
     base_url: ''
     api_key: ''
     timeout: 600
 display:
   compact: false
-  personality: kawaii
+  personality: none
   resume_display: full
   busy_input_mode: interrupt
   tui_auto_resume_recent: false
@@ -267,8 +261,8 @@ memory:
   user_char_limit: 1375
   provider: ''
 delegation:
-  model: google/gemini-2.5-flash-lite
-  provider: openrouter
+  model: ''
+  provider: main
   base_url: ''
   api_key: ''
   inherit_mcp_toolsets: true
@@ -323,7 +317,7 @@ matrix:
   allowed_rooms: ''
 approvals:
   mode: manual
-  timeout: 60
+  timeout: 180
   cron_mode: deny
   mcp_reload_confirm: true
   destructive_slash_confirm: true
@@ -368,6 +362,17 @@ updates:
   pre_update_backup: false
   backup_keep: 5
 _config_version: 33
+moa:
+  default_preset: default
+  presets:
+    default:
+      reference_models:
+        - provider: openai-codex
+          model: gpt-5.6-luna
+      aggregator:
+        provider: openai-codex
+        model: gpt-5.6-luna
+      enabled: false
 platforms:
   slack:
     reply_to_mode: first
@@ -398,6 +403,30 @@ mcp_servers:
     connect_timeout: 30
     resources: false
     prompts: false
+  brevo:
+    url: https://mcp.brevo.com/v1/brevo/mcp
+    headers:
+      Authorization: Bearer ${BREVO_MCP_TOKEN}
+    enabled: true
+    timeout: 120
+    connect_timeout: 60
+    supports_parallel_tool_calls: false
+    trust: untrusted
+    sampling:
+      enabled: false
+    tools:
+      resources: false
+      prompts: false
+      exclude:
+        - '*send*'
+        - '*delete*'
+        - '*schedule*'
+        - '*import*'
+        - '*export*'
+        - '*whatsapp*'
+        - '*sms*'
+        - '*reinscrib*'
+        - '*blacklist*'
 onboarding:
   seen:
     busy_input_prompt: true
