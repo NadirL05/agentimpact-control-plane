@@ -22,6 +22,22 @@ Branche : `feature/hermesctl-v1-atomic`
 
 Playbook : `infra/ansible/playbooks/hermesctl-v1.yml`
 
+### Permissions des fichiers token
+
+| Fichier | Propriétaire final | Mode | Lu par |
+| --- | --- | --- | --- |
+| `bridge.env` | `agentimpact-ctl:agentimpact-ctl` | `0400` | `agentimpact-ctl-bridge` (systemd) |
+| `hermes.env` | `root:root` | `0600` | API Docker (root conteneur) |
+| `admin.env` | `root:root` | `0600` | API Docker (root conteneur) |
+
+**Preflight** (avant création du compte `agentimpact-ctl`) : `bridge.env` peut être `root:root 0600` ou `root:agentimpact-ctl 0600` — aucune lecture group/other.
+
+**Post-création compte** : le playbook impose `bridge.env` en `agentimpact-ctl:agentimpact-ctl 0400`. Le mode `0600 root:agentimpact-ctl` est incorrect : le groupe ne peut pas lire un fichier `0600` dont le propriétaire est root.
+
+Le service systemd et le playbook utilisent le même chemin : `/etc/agentimpact/tokens/bridge.env` (`EnvironmentFile` dans `agentimpact-ctl-bridge.service`).
+
+Les tâches Ansible n'affichent jamais le contenu des tokens (`stat` uniquement, pas de `slurp`/`cat`).
+
 ## Reconnexion Cursor après ajout au groupe
 
 Linux n'applique pas un nouveau groupe à une session SSH existante.
@@ -34,6 +50,14 @@ Linux n'applique pas un nouveau groupe à une session SSH existante.
 ## Rollback
 
 `infra/ansible/playbooks/hermesctl-v1-rollback.yml`
+
+Le rollback hermesctl-v1 :
+
+- arrête `agentimpact-ctl-bridge.service` et `.socket` ;
+- restaure dist, scripts, sources API et `compose.yml` ;
+- **ne modifie pas** `/etc/agentimpact/tokens/*` (hors bundle, comme les credentials).
+
+Après rollback, `bridge.env` conserve `agentimpact-ctl:agentimpact-ctl 0400` — état correct pour un futur redémarrage du bridge. Aucune action manuelle sur les permissions token n'est requise sauf retour complet à un état pré-hermesctl (hors scope du playbook).
 
 ## Interdictions v1
 

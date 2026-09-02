@@ -47,6 +47,30 @@
       register: token_files
       failed_when: not token_files.results | map(attribute='stat.exists') | list | min
 
+    - name: Vérifier bridge.env pré-déploiement (root, sans lecture group/other)
+      shell: |
+        set -euo pipefail
+        f=/etc/agentimpact/tokens/bridge.env
+        test -f "$f"
+        perms=$(stat -c '%a' "$f")
+        owner=$(stat -c '%U:%G' "$f")
+        other=$((perms % 10))
+        group=$(((perms / 10) % 10))
+        if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
+          echo "unsafe_bridge_preflight:$f:$perms" >&2
+          exit 1
+        fi
+        case "$owner" in
+          root:root|root:agentimpact-ctl) ;;
+          *)
+            echo "unexpected_bridge_owner_preflight:$owner" >&2
+            exit 1
+            ;;
+        esac
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Vérifier permissions sûres tokens et credentials
       shell: |
         set -euo pipefail
@@ -90,6 +114,49 @@
         shell: /usr/sbin/nologin
         create_home: false
         state: present
+
+    - name: Appliquer propriétaire bridge.env pour lecture agentimpact-ctl
+      file:
+        path: /etc/agentimpact/tokens/bridge.env
+        owner: agentimpact-ctl
+        group: agentimpact-ctl
+        mode: "0400"
+
+    - name: Vérifier permissions finales bridge.env
+      shell: |
+        set -euo pipefail
+        f=/etc/agentimpact/tokens/bridge.env
+        test "$(stat -c '%U:%G' "$f")" = "agentimpact-ctl:agentimpact-ctl"
+        test "$(stat -c '%a' "$f")" = "400"
+        perms=$(stat -c '%a' "$f")
+        group=$(((perms / 10) % 10))
+        other=$((perms % 10))
+        if [ "$group" -ge 4 ] || [ "$other" -ge 4 ]; then
+          echo "unsafe_bridge_final:$f:$perms" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Vérifier hermes.env et admin.env restent root:root 0600
+      shell: |
+        set -euo pipefail
+        for f in /etc/agentimpact/tokens/hermes.env /etc/agentimpact/tokens/admin.env; do
+          test -f "$f"
+          test "$(stat -c '%U:%G' "$f")" = "root:root"
+          test "$(stat -c '%a' "$f")" = "600"
+          perms=$(stat -c '%a' "$f")
+          group=$(((perms / 10) % 10))
+          other=$((perms % 10))
+          if [ "$group" -ge 4 ] || [ "$other" -ge 4 ]; then
+            echo "unsafe_api_token:$f:$perms" >&2
+            exit 1
+          fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Vérifier secrets training et dashboard dans .env
       shell: |
