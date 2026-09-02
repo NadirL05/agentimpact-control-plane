@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import unittest
 from pathlib import Path
 
@@ -329,6 +330,77 @@ class ComposeRegressionTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertRegex(content, r"\./app/src/migrations:/migrations:ro")
+
+    def test_db_publishes_loopback_5432_only(self) -> None:
+        content = (Path(__file__).resolve().parents[1] / "compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"127.0.0.1:5432:5432"', content)
+        self.assertNotRegex(content, r'["\']0\.0\.0\.0:5432')
+        self.assertNotRegex(content, r'["\']:::5432')
+        self.assertNotRegex(content, r'["\']5432:5432"')
+
+    def test_api_pghost_uses_compose_service_not_loopback(self) -> None:
+        """L'API conteneurisée reste sur le réseau Docker interne (PGHOST=db)."""
+        content = (Path(__file__).resolve().parents[1] / "compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertRegex(content, r"PGHOST:\s*db")
+        self.assertNotRegex(content, r"PGHOST:\s*127\.0\.0\.1")
+
+    def test_slack_router_env_example_uses_loopback_pghost(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "templates"
+            / "slack-router.env.example"
+        ).read_text(encoding="utf-8")
+        self.assertIn("PGHOST=127.0.0.1", template)
+        self.assertIn("PGPORT=5432", template)
+        self.assertNotRegex(template, r"^PGPASSWORD=", re.MULTILINE)
+
+    def test_compose_config_db_loopback_without_secret_leak(self) -> None:
+        import subprocess
+        import tempfile
+
+        if shutil.which("docker") is None:
+            self.skipTest("Docker CLI indisponible dans cet environnement")
+
+        infra = Path(__file__).resolve().parents[1]
+        compose = infra / "compose.yml"
+        env_file = infra / "test-fixtures" / "compose.config.env.example"
+        full = compose.read_text(encoding="utf-8")
+        db_block = re.search(r"^  db:\n(?:    .+\n)+", full, re.MULTILINE)
+        self.assertIsNotNone(db_block, "bloc service db introuvable dans compose.yml")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            minimal = Path(tmp) / "compose.db-test.yml"
+            minimal.write_text(
+                "services:\n" + db_block.group(0) + "\nvolumes:\n  postgres_data:\n",
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(minimal),
+                    "--env-file",
+                    str(env_file),
+                    "config",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        if proc.returncode != 0:
+            self.skipTest("docker compose config indisponible dans cet environnement")
+        rendered = proc.stdout
+        self.assertIn("host_ip: 127.0.0.1", rendered)
+        self.assertIn('published: "5432"', rendered)
+        self.assertIn("target: 5432", rendered)
+        self.assertNotIn("host_ip: 0.0.0.0", rendered)
+        self.assertNotIn("host_ip: ::", rendered)
 
 
 class GatewayInboxConsumerRegressionTest(unittest.TestCase):
