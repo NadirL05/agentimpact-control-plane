@@ -29,6 +29,7 @@ import gmail from './gmail.js';
 import demos from './demos.js';
 import training from './training.js';
 import proposals from './proposals.js';
+import gatewayInbox from './gateway-inbox.js';
 import dashboardRoutes from './dashboard-routes.js';
 import type { AppEnv } from '../core/hono-env.js';
 import {
@@ -77,6 +78,7 @@ app.route('/api/gmail', gmail);
 app.route('/api/demos', demos);
 app.route('/api/training', training);
 app.route('/api/proposals', proposals);
+app.route('/api/gateway-inbox', gatewayInbox);
 
 app.get('/training', (c) => {
   const secret = trainingSessionSecret();

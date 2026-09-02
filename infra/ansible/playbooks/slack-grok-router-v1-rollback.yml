@@ -1,0 +1,36 @@
+---
+# Rollback routeur Slack v1 + worker Grok — stop + disable (pas de purge credentials)
+
+- name: Rollback slack-grok-router v1
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Activer kill switch Grok
+      file:
+        path: /etc/agentimpact/flags/grokbot.disabled
+        state: touch
+        mode: "0640"
+        owner: root
+        group: agentimpact-slack-router
+
+    - name: Désactiver service routeur
+      systemd:
+        name: agentimpact-slack-router.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Désactiver worker Grok
+      systemd:
+        name: agentimpact-grok-worker.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Désactiver socket worker Grok
+      systemd:
+        name: agentimpact-grok-worker.socket
+        enabled: false
+        state: stopped
+      failed_when: false

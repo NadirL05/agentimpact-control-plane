@@ -21,7 +21,9 @@
     "api/**/*.ts",
     "core/**/*.ts",
     "middleware/**/*.ts",
-    "cli/**/*.ts"
+    "cli/**/*.ts",
+    "slack-router/**/*.ts",
+    "grok-worker/**/*.ts"
   ],
   "exclude": [
     "node_modules",

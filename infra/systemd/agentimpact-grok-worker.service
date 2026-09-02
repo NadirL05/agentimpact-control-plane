@@ -1,0 +1,39 @@
+[Unit]
+Description=AgentImpact Cursor Grok Worker (socket Unix isolé)
+After=network-online.target agentimpact-grok-worker.socket
+Requires=agentimpact-grok-worker.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=cursor-grok-worker
+Group=cursor-grok-worker
+WorkingDirectory=/opt/agentimpact/grokbot/workspace
+
+LoadCredential=cursor-grok-api-key:/etc/agentimpact/credentials/cursor-grok-api-key
+
+Environment=CURSOR_API_KEY_FILE=%d/cursor-grok-api-key
+Environment=GROK_WORKER_SOCKET=/run/agentimpact-grok-worker/grok.sock
+Environment=GROK_AGENT_WRAPPER=/opt/agentimpact/scripts/grok-agent-run.sh
+Environment=GROK_WORKER_RUNTIME_DIR=/run/agentimpact-grok-worker
+EnvironmentFile=-/etc/agentimpact/grok-worker.env
+
+ExecStart=/usr/bin/node /opt/agentimpact/app/dist/grok-worker/server.js
+RuntimeDirectory=agentimpact-grok-worker
+RuntimeDirectoryMode=0750
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=330
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/agentimpact/grokbot/workspace /run/agentimpact-grok-worker
+ReadOnlyPaths=/etc/agentimpact/flags
+
+[Install]
+WantedBy=multi-user.target

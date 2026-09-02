@@ -1,0 +1,42 @@
+[Unit]
+Description=AgentImpact Slack Router (Socket Mode)
+After=network-online.target agentimpact-grok-worker.service postgresql.service
+Wants=network-online.target
+Requires=agentimpact-grok-worker.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=agentimpact-slack-router
+Group=agentimpact-slack-router
+SupplementaryGroups=agentimpact-grok-client
+WorkingDirectory=/opt/agentimpact/app
+
+# Tokens Slack uniquement — jamais CURSOR_API_KEY côté routeur
+LoadCredential=slack-bot-token:/etc/agentimpact/credentials/slack-router-bot-token
+LoadCredential=slack-app-token:/etc/agentimpact/credentials/slack-router-app-token
+
+Environment=SLACK_BOT_TOKEN_FILE=%d/slack-bot-token
+Environment=SLACK_APP_TOKEN_FILE=%d/slack-app-token
+Environment=GROK_WORKER_SOCKET=/run/agentimpact-grok-worker/grok.sock
+EnvironmentFile=-/etc/agentimpact/slack-router.env
+
+ExecStart=/usr/bin/node /opt/agentimpact/app/dist/slack-router/daemon.js
+RuntimeDirectory=agentimpact-slack-router
+RuntimeDirectoryMode=0750
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agentimpact-slack-router
+ReadOnlyPaths=/etc/agentimpact/flags /run/agentimpact-grok-worker
+
+[Install]
+WantedBy=multi-user.target

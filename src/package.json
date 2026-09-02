@@ -9,10 +9,15 @@
     "lint": "eslint .",
     "test": "vitest run",
     "cli:list-registries": "tsx cli/list-registries.ts",
-    "api": "tsx api/server.ts"
+    "api": "tsx api/server.ts",
+    "slack-router": "tsx slack-router/daemon.ts",
+    "grok-worker": "tsx grok-worker/server.ts",
+    "lint:md": "markdownlint-cli2 --config ../.markdownlint-cli2.jsonc \"../docs/**/*.md\""
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
+    "@slack/socket-mode": "^2.0.4",
+    "@slack/web-api": "^7.9.1",
     "hono": "^4.8.0",
     "pg": "^8.23.0",
     "zod": "^3.24.0"
@@ -24,6 +29,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "markdownlint-cli2": "^0.17.2"
   }
 }

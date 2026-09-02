@@ -18,6 +18,8 @@ const BRIDGE_RULES: RouteRule[] = [
   { method: 'GET', pattern: /^\/api\/approvals\/pending$/ },
   { method: 'POST', pattern: /^\/api\/proposals$/ },
   { method: 'GET', pattern: /^\/api\/proposals\/[0-9a-f-]{36}$/i },
+  { method: 'POST', pattern: /^\/api\/gateway-inbox\/claim$/ },
+  { method: 'POST', pattern: /^\/api\/gateway-inbox\/[0-9a-f-]{36}\/complete$/i },
 ];
 
 const HERMES_RULES: RouteRule[] = [
