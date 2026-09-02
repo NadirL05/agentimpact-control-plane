@@ -8,4 +8,9 @@ export { createMemoryRateLimitStore, type RateLimitStore } from './rate-limit.js
 export { isGrokKillSwitchActive } from './kill-switch.js';
 export { buildGrokSpawnSpec, assertNoSecretsInArgv } from './grok-executor.js';
 export { routeSlackMessage, type RouterConfig, type RouterStores } from './router.js';
+export {
+  parseSlackNativeAgentUserIds,
+  extractSlackMentionUserIds,
+  messageMentionsNativeAgent,
+} from './native-agent-mentions.js';
 export { formatSafeLog } from './logger.js';

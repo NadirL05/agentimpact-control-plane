@@ -1,10 +1,16 @@
 import { threadKey } from '../../core/slack-router/event-filter.js';
 import type { SlackMessageEvent, SlackRouteTarget } from '../../core/slack-router/types.js';
 import type { PersistencePrepareResult, RouterPersistence } from './persistence.js';
-import { getSlackRouterPool, type PgQueryable } from './pg-pool.js';
+import { getSlackRouterPool } from './pg-pool.js';
+
+export type SqlQueryResult = { rowCount: number | null; rows: Array<{ owner?: SlackRouteTarget }> };
+
+export type SqlClient = {
+  query(sql: string, params?: unknown[]): Promise<SqlQueryResult>;
+};
 
 export async function prepareDispatchTx(
-  client: PgQueryable,
+  client: SqlClient,
   event: SlackMessageEvent,
   candidate: SlackRouteTarget,
   isRoot: boolean,
@@ -33,7 +39,7 @@ export async function prepareDispatchTx(
     );
   }
 
-  const ownerRow = await client.query<{ owner: SlackRouteTarget }>(
+  const ownerRow = await client.query(
     `SELECT owner FROM slack_thread_owners WHERE thread_key = $1`,
     [tKey],
   );
@@ -43,6 +49,9 @@ export async function prepareDispatchTx(
   }
 
   const owner = ownerRow.rows[0]!.owner;
+  if (!owner) {
+    return { status: 'unowned_thread' };
+  }
   return { status: 'ready', owner, thread_key: tKey };
 }
 
@@ -54,7 +63,17 @@ export function createPostgresPersistence(): RouterPersistence {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const result = await prepareDispatchTx(client, event, candidate, isRoot);
+        const result = await prepareDispatchTx(
+          {
+            query: async (sql, params) => {
+              const result = await client.query(sql, params);
+              return { rowCount: result.rowCount, rows: result.rows };
+            },
+          },
+          event,
+          candidate,
+          isRoot,
+        );
         if (result.status === 'deduplicated') {
           await client.query('ROLLBACK');
           return result;
@@ -89,7 +108,7 @@ export function createPostgresPersistence(): RouterPersistence {
 
 /** Expose la logique SQL pour tests sans Postgres réel. */
 export function createPostgresPersistenceWithQueryable(
-  connect: () => Promise<PgQueryable & { release?: () => void }>,
+  connect: () => Promise<SqlClient & { release?: () => void }>,
 ): RouterPersistence {
   return {
     async prepare(event, candidate, isRoot) {

@@ -1,5 +1,5 @@
-/** Agent backend cible pour un fil Slack. */
-export type SlackRouteTarget = 'hermes' | 'grok' | 'codex' | 'ana' | 'devin';
+/** Agent backend cible pour un fil Slack. `native` = app Slack officielle (Cursor, Codex, …). */
+export type SlackRouteTarget = 'hermes' | 'grok' | 'codex' | 'ana' | 'devin' | 'native';
 
 export type SlackRouteDecision = {
   target: SlackRouteTarget;

@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { parseSlackNativeAgentUserIds } from '../core/slack-router/native-agent-mentions.js';
 import { readOptionalSecret, readRequiredSecret } from '../core/read-secret-env.js';
 
 export type SlackRouterEnvConfig = {
   nadirUserId: string;
+  nativeAgentUserIds: ReadonlySet<string>;
   botToken: string;
   appToken: string;
   controlPlaneUrl: string;
@@ -49,8 +51,15 @@ export function loadSlackRouterConfig(): SlackRouterEnvConfig {
   }
   readRequiredSecret('PGPASSWORD_FILE', 'postgres_password', 'PGPASSWORD');
 
+  const isProduction = process.env.NODE_ENV === 'production';
+  const nativeAgentUserIds = parseSlackNativeAgentUserIds(
+    process.env.SLACK_NATIVE_AGENT_USER_IDS,
+    { requireNonEmpty: isProduction },
+  );
+
   return {
     nadirUserId,
+    nativeAgentUserIds,
     botToken: readSecretFile(process.env.SLACK_BOT_TOKEN_FILE, 'slack_bot_token'),
     appToken: readSecretFile(process.env.SLACK_APP_TOKEN_FILE, 'slack_app_token'),
     controlPlaneUrl: process.env.CONTROL_PLANE_URL?.trim() || 'http://127.0.0.1:3000',

@@ -1,6 +1,7 @@
 import { workspaceEventKey, type DedupStore } from './dedup.js';
 import { isHumanSlackMessage, threadKey } from './event-filter.js';
 import { isGrokKillSwitchActive } from './kill-switch.js';
+import { messageMentionsNativeAgent } from './native-agent-mentions.js';
 import { parseRoute } from './parse-route.js';
 import type { RateLimitStore } from './rate-limit.js';
 import { resolveThreadOwner, type ThreadOwnerStore } from './thread-ownership.js';
@@ -13,6 +14,7 @@ import { GROK_DEFAULTS } from './types.js';
 
 export type RouterConfig = {
   nadirUserId: string;
+  nativeAgentUserIds: ReadonlySet<string>;
   killSwitchPath?: string;
   /** Sources internes (cron, alertes) — Grok jamais auto sur erreur cron. */
   blockedAutoGrokSources?: Set<string>;
@@ -47,7 +49,19 @@ export function routeSlackMessage(
 
   const tKey = threadKey(event);
   const root = isRootMessage(event);
-  const parsed = parseRoute(event.text ?? '');
+  const text = event.text ?? '';
+
+  const existingOwner = stores.threadOwners.get(tKey);
+  if (existingOwner === 'native') {
+    return { action: 'ignore', reason: 'native_agent_thread' };
+  }
+
+  if (root && messageMentionsNativeAgent(text, config.nativeAgentUserIds)) {
+    stores.threadOwners.set(tKey, 'native');
+    return { action: 'ignore', reason: 'native_agent_thread' };
+  }
+
+  const parsed = parseRoute(text);
 
   if (parsed.target === 'devin') {
     if (event.user !== config.nadirUserId) {
@@ -67,6 +81,10 @@ export function routeSlackMessage(
 
   if (ownerResult === 'unowned_thread') {
     return { action: 'ignore', reason: 'thread_unowned' };
+  }
+
+  if (ownerResult === 'native') {
+    return { action: 'ignore', reason: 'native_agent_thread' };
   }
 
   const target: SlackRouteTarget = ownerResult;

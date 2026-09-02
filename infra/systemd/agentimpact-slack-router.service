@@ -24,6 +24,7 @@ Environment=SLACK_APP_TOKEN_FILE=%d/slack-app-token
 Environment=PGPASSWORD_FILE=%d/slack-router-db-password
 Environment=SLACK_ROUTER_BRIDGE_TOKEN_FILE=%d/slack-router-bridge-token
 Environment=GROK_WORKER_SOCKET=/run/agentimpact-grok-worker/grok.sock
+Environment=NODE_ENV=production
 EnvironmentFile=-/etc/agentimpact/slack-router.env
 
 ExecStart=/usr/bin/node /opt/agentimpact/app/dist/slack-router/daemon.js
