@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Consumer inbox gateway Hermès/Ana — localhost + token bridge uniquement."""
+"""Consumer inbox gateway Hermès/Ana — localhost + token bridge uniquement.
+
+Résilience réseau : URLError / timeout ne quittent pas la boucle --loop.
+Backoff borné 1–30 s entre tentatives.
+
+Item resté en status ``processing`` : si le traitement Hermès réussit mais
+l'appel ``/complete`` échoue (transport), l'item n'est pas marqué done/failed.
+Il reste ``processing`` jusqu'à intervention manuelle ou expiration côté API.
+Aucune double exécution Hermès sur reprise : le claim suivant prend un autre
+item pending (FOR UPDATE SKIP LOCKED côté API).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +17,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -26,6 +37,10 @@ REJECTED_TARGETS = frozenset({"devin", "codex", "grok"})
 
 _SHUTDOWN = False
 _IN_FLIGHT = False
+
+
+class TransportError(Exception):
+    """Erreur réseau/API indisponible — la boucle long-running doit continuer."""
 
 
 def inbox_target() -> str:
@@ -78,6 +93,8 @@ def api_post(path: str, body: dict | None = None, token: str = "") -> tuple[int,
         except json.JSONDecodeError:
             payload = {"error": "upstream_error"}
         return exc.code, payload
+    except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError, OSError):
+        raise TransportError("transport_error") from None
 
 
 def run_hermes(prompt: str) -> str:
@@ -102,14 +119,35 @@ def run_hermes(prompt: str) -> str:
     return lines[-1] if lines else "Réponse Hermès vide."
 
 
+def _try_complete_error(item_id: str, token: str, error_code: str) -> str:
+    """Tente de marquer failed ; retourne outcome si transport bloque."""
+    try:
+        complete_status, _ = api_post(
+            f"/api/gateway-inbox/{item_id}/complete",
+            {"error_code": error_code[:120]},
+            token=token,
+        )
+        if complete_status != 200:
+            return "failed"
+        return "failed"
+    except TransportError:
+        sys.stderr.write("complete transport_error after hermes failure\n")
+        return "transport_error"
+
+
 def process_once(token: str) -> str:
-    """Retourne 'empty', 'processed', 'failed', 'shutdown'."""
+    """Retourne empty, processed, failed, transport_error ou shutdown."""
     global _IN_FLIGHT
     target = inbox_target()
     if _SHUTDOWN:
         return "shutdown"
 
-    status, payload = api_post("/api/gateway-inbox/claim", {"target": target}, token=token)
+    try:
+        status, payload = api_post("/api/gateway-inbox/claim", {"target": target}, token=token)
+    except TransportError:
+        sys.stderr.write("claim transport_error\n")
+        return "transport_error"
+
     if status == 204:
         return "empty"
     if status != 200 or "item" not in payload:
@@ -121,46 +159,34 @@ def process_once(token: str) -> str:
     item_target = item.get("target", "")
     if item_target != target:
         sys.stderr.write(f"target_mismatch expected={target} got={item_target}\n")
-        api_post(
-            f"/api/gateway-inbox/{item_id}/complete",
-            {"error_code": "target_mismatch"},
-            token=token,
-        )
-        return "failed"
+        return _try_complete_error(item_id, token, "target_mismatch")
 
     if _SHUTDOWN:
-        api_post(
-            f"/api/gateway-inbox/{item_id}/complete",
-            {"error_code": "consumer_shutdown"},
-            token=token,
-        )
-        return "shutdown"
+        return _try_complete_error(item_id, token, "consumer_shutdown")
 
     _IN_FLIGHT = True
     try:
         text = run_hermes(item["prompt"])
         if _SHUTDOWN:
-            api_post(
+            return _try_complete_error(item_id, token, "consumer_shutdown")
+        try:
+            complete_status, _ = api_post(
                 f"/api/gateway-inbox/{item_id}/complete",
-                {"error_code": "consumer_shutdown"},
+                {"text": text[:4000]},
                 token=token,
             )
-            return "shutdown"
-        complete_status, _ = api_post(
-            f"/api/gateway-inbox/{item_id}/complete",
-            {"text": text[:4000]},
-            token=token,
-        )
+        except TransportError:
+            sys.stderr.write("complete transport_error after hermes success\n")
+            return "transport_error"
         if complete_status != 200:
+            sys.stderr.write(f"complete failed status={complete_status}\n")
             return "failed"
         return "processed"
+    except TransportError:
+        sys.stderr.write("complete transport_error\n")
+        return "transport_error"
     except Exception as exc:
-        api_post(
-            f"/api/gateway-inbox/{item_id}/complete",
-            {"error_code": str(exc)[:120]},
-            token=token,
-        )
-        return "failed"
+        return _try_complete_error(item_id, token, str(exc))
     finally:
         _IN_FLIGHT = False
 
@@ -174,6 +200,17 @@ def validate_target() -> int:
         sys.stderr.write("GATEWAY_INBOX_TARGET must be hermes or ana\n")
         return 2
     return 0
+
+
+def sleep_backoff(seconds: float) -> bool:
+    """Dort par tranches ; retourne False si SIGTERM reçu."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if _SHUTDOWN:
+            return False
+        remaining = deadline - time.monotonic()
+        time.sleep(min(0.5, max(remaining, 0.0)))
+    return True
 
 
 def run_once() -> int:
@@ -204,18 +241,22 @@ def run_loop() -> int:
 
     sleep_sec = LOOP_MIN_SLEEP_SEC
     while not _SHUTDOWN:
-        outcome = process_once(token)
+        try:
+            outcome = process_once(token)
+        except Exception:
+            sys.stderr.write("unexpected consumer error\n")
+            outcome = "transport_error"
+
         if outcome == "shutdown":
             return 0
-        if outcome == "empty":
-            time.sleep(sleep_sec)
-            sleep_sec = min(sleep_sec * 2, LOOP_MAX_SLEEP_SEC)
-            continue
         if outcome == "processed":
             sleep_sec = LOOP_MIN_SLEEP_SEC
             continue
-        time.sleep(sleep_sec)
-        sleep_sec = min(sleep_sec * 2, LOOP_MAX_SLEEP_SEC)
+        if outcome in ("empty", "failed", "transport_error"):
+            if not sleep_backoff(sleep_sec):
+                return 0
+            sleep_sec = min(sleep_sec * 2, LOOP_MAX_SLEEP_SEC)
+            continue
 
     return 0
 

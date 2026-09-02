@@ -14,7 +14,7 @@ WorkingDirectory=/opt/agentimpact
 LoadCredential=gateway-bridge-token:/etc/agentimpact/credentials/gateway-inbox-bridge-token
 
 Environment=GATEWAY_INBOX_TARGET=hermes
-Environment=HERMES_PROFILE=default
+Environment=HERMES_PROFILE=nadir-operator
 Environment=CONTROL_PLANE_URL=http://127.0.0.1:3000
 Environment=SLACK_ROUTER_BRIDGE_TOKEN_FILE=%d/gateway-bridge-token
 EnvironmentFile=-/etc/agentimpact/gateway-inbox.env

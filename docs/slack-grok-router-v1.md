@@ -84,7 +84,7 @@ Profils consumer :
 
 | Target | `GATEWAY_INBOX_TARGET` | `HERMES_PROFILE` |
 | --- | --- | --- |
-| Hermès | `hermes` | `default` |
+| Hermès | `hermes` | `nadir-operator` (→ Hermès interne `default`) |
 | Ana | `ana` | `agentimpact-growth` |
 
 ## Devin v1

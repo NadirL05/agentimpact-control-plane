@@ -128,6 +128,12 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
     def test_migration_002_uses_compose_service_db(self) -> None:
         self.assertIn('docker compose -f "{{ repo_root }}/compose.yml" exec -T db', self.content)
         self.assertIn("002_slack_router.sql", self.content)
+        self.assertIn("ON_ERROR_STOP=1", self.content)
+        self.assertRegex(
+            self.content,
+            r'exec -T db\s*\\\n\s*psql -v ON_ERROR_STOP=1',
+        )
+        self.assertIn('< "{{ repo_root }}/app/src/migrations/002_slack_router.sql"', self.content)
         self.assertNotRegex(self.content, r"psql\s+-h\s+127\.0\.0\.1")
         self.assertNotRegex(self.content, r"environment:\s*\n\s*PGPASSWORD")
 
@@ -221,6 +227,20 @@ class SystemdRegressionTest(unittest.TestCase):
             self.assertIn("LoadCredential=gateway-bridge-token", content)
             self.assertIn("Restart=on-failure", content)
             self.assertNotIn("state: started", content)
+
+    def test_inbox_hermes_uses_nadir_operator_profile(self) -> None:
+        content = (self.SYSTEMD / "agentimpact-gateway-inbox-hermes.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("HERMES_PROFILE=nadir-operator", content)
+        self.assertNotIn("HERMES_PROFILE=default", content)
+
+    def test_inbox_ana_uses_agentimpact_growth_profile(self) -> None:
+        content = (self.SYSTEMD / "agentimpact-gateway-inbox-ana.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("HERMES_PROFILE=agentimpact-growth", content)
+        self.assertNotIn("HERMES_PROFILE=default", content)
 
 
 class ComposeRegressionTest(unittest.TestCase):
