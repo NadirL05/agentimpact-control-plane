@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { readOptionalSecret, readRequiredSecret } from '../core/read-secret-env.js';
 
 export type SlackRouterEnvConfig = {
   nadirUserId: string;
@@ -41,18 +42,22 @@ export function loadSlackRouterConfig(): SlackRouterEnvConfig {
     throw new Error('invalid_slack_nadir_user_id');
   }
 
-  for (const pgVar of ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD'] as const) {
+  for (const pgVar of ['PGHOST', 'PGDATABASE', 'PGUSER'] as const) {
     if (!process.env[pgVar]?.trim()) {
       throw new Error(`missing_required_env:${pgVar}`);
     }
   }
+  readRequiredSecret('PGPASSWORD_FILE', 'postgres_password', 'PGPASSWORD');
 
   return {
     nadirUserId,
     botToken: readSecretFile(process.env.SLACK_BOT_TOKEN_FILE, 'slack_bot_token'),
     appToken: readSecretFile(process.env.SLACK_APP_TOKEN_FILE, 'slack_app_token'),
     controlPlaneUrl: process.env.CONTROL_PLANE_URL?.trim() || 'http://127.0.0.1:3000',
-    bridgeToken: process.env.SLACK_ROUTER_BRIDGE_TOKEN?.trim() || '',
+    bridgeToken: readOptionalSecret(
+      'SLACK_ROUTER_BRIDGE_TOKEN_FILE',
+      'SLACK_ROUTER_BRIDGE_TOKEN',
+    ),
     grokWorkerSocket:
       process.env.GROK_WORKER_SOCKET?.trim() || '/run/agentimpact-grok-worker/grok.sock',
     healthPort: Number(process.env.SLACK_ROUTER_HEALTH_PORT ?? 9120),

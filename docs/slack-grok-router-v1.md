@@ -70,9 +70,13 @@ Transaction atomique avant délégation agent : dedup + ownership en une transac
 Pas d'URL HTTP fictive. Mécanisme :
 
 1. Routeur insère dans `slack_gateway_inbox` (target `hermes` ou `ana`).
-2. Consumer `infra/scripts/gateway-inbox-consumer.py` (systemd timer côté gateway) :
+2. Consumers long-running `gateway-inbox-consumer.py --loop` (systemd) :
+   - `agentimpact-gateway-inbox-hermes.service` (profil `default`)
+   - `agentimpact-gateway-inbox-ana.service` (profil `agentimpact-growth`)
+   - Token bridge via LoadCredential (`gateway-inbox-bridge-token`)
+   - Backoff borné 1–30 s, arrêt propre SIGTERM
    - `POST /api/gateway-inbox/claim` (token bridge, localhost)
-   - Exécute Hermès via `run-with-profile.sh` + profil (`default` / `agentimpact-growth`)
+   - Exécute Hermès via `run-with-profile.sh` + profil
    - `POST /api/gateway-inbox/:id/complete`
 3. Routeur poll Postgres jusqu'à réponse ou timeout (fail-closed).
 
@@ -93,9 +97,22 @@ Wrapper `grok-agent-run.sh` : prompt via fichier éphémère puis argument posit
 **Mitigation** : processus court (timeout 300s), worker isolé, permissions socket strictes.  
 **Limite** : visible dans `/proc/<pid>/cmdline` pendant l'exécution — pas de contournement sans API stdin Cursor.
 
+## Build hôte requis
+
+Les services systemd lisent `/opt/agentimpact/app/dist/` sur l'hôte.
+Le playbook `hermesctl-v1.yml` exécute `npm ci && npm run build` en tant que
+`agentimpact-runner` après sync du code — indépendamment du build conteneur API.
+
+## Prérequis Grok
+
+Voir `docs/grok-worker-prerequisites.md` — CLI Cursor installé manuellement,
+jamais téléchargé par le playbook.
+
 ## Rollback
 
-Playbook `slack-grok-router-v1-rollback.yml` : kill switch + stop routeur + stop worker + stop socket.
+Playbook `slack-grok-router-v1-rollback.yml` : kill switch + stop services +
+restauration bundle (dist, scripts, unités, tmpfiles, configs). Tables SQL et
+credentials préservés.
 
 ## Tests
 

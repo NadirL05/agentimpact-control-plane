@@ -157,9 +157,16 @@ function startServer(apiKey: string): net.Server {
     });
   });
 
-  server.listen(SOCKET_PATH, () => {
-    process.stdout.write(`grok-worker listening path=${SOCKET_PATH}\n`);
-  });
+  const listenFds = Number(process.env.LISTEN_FDS ?? 0);
+  if (listenFds >= 1) {
+    server.listen({ fd: 3 }, () => {
+      process.stdout.write(`grok-worker listening fd=3 socket_activation\n`);
+    });
+  } else {
+    server.listen(SOCKET_PATH, () => {
+      process.stdout.write(`grok-worker listening path=${SOCKET_PATH}\n`);
+    });
+  }
 
   return server;
 }

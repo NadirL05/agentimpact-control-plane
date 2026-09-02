@@ -1,6 +1,6 @@
 ---
 # Déploiement atomique hermesctl v1
-# Ordre critique : tokens + scripts AVANT activation auth fail-closed API.
+# Ordre critique : tokens + sauvegarde + sync + build hôte + migration + API + bridge.
 
 - name: Deploy hermesctl v1 (atomic)
   hosts: localhost
@@ -13,8 +13,30 @@
     rollback_bundle_dir: /var/lib/agentimpact/rollback/hermesctl-v1
     rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
     rollback_api_src_dir: "{{ rollback_bundle_dir }}/app-src"
+    rollback_dist_dir: "{{ rollback_bundle_dir }}/app-dist"
     rollback_compose_file: "{{ rollback_bundle_dir }}/compose.yml"
+    rollback_pg_backup_dir: "{{ rollback_bundle_dir }}/pg-backup"
+    host_build_user: hermes
+    app_owner: hermes
+    app_group: hermes
+    build_staging_dir: /var/lib/agentimpact/build-staging/hermesctl-v1
+    min_disk_mb: 1024
   tasks:
+    - name: Vérifier compose.yml lisible par root
+      stat:
+        path: "{{ repo_root }}/compose.yml"
+      register: compose_stat
+      failed_when: not compose_stat.stat.exists or not compose_stat.stat.readable
+
+    - name: Vérifier services api et db dans compose
+      shell: |
+        set -euo pipefail
+        grep -qE '^\s+db:' "{{ repo_root }}/compose.yml"
+        grep -qE '^\s+api:' "{{ repo_root }}/compose.yml"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Vérifier tokens présents (fichiers, pas affichage)
       stat:
         path: "/etc/agentimpact/tokens/{{ item }}.env"
@@ -24,6 +46,35 @@
         - admin
       register: token_files
       failed_when: not token_files.results | map(attribute='stat.exists') | list | min
+
+    - name: Vérifier permissions sûres tokens et credentials
+      shell: |
+        set -euo pipefail
+        for f in /etc/agentimpact/tokens/*.env /etc/agentimpact/credentials/*; do
+          [ -e "$f" ] || continue
+          perms=$(stat -c '%a' "$f")
+          other=$((perms % 10))
+          group=$(((perms / 10) % 10))
+          if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
+            echo "unsafe_permissions:$f:$perms" >&2
+            exit 1
+          fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Vérifier espace disque suffisant
+      shell: |
+        set -euo pipefail
+        avail=$(df -BM --output=avail "{{ repo_root }}" | tail -1 | tr -dc '0-9')
+        if [ "$avail" -lt {{ min_disk_mb }} ]; then
+          echo "insufficient_disk_mb:${avail}" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Créer groupe système agentimpact-ctl
       group:
@@ -55,6 +106,12 @@
         state: directory
         mode: "0750"
 
+    - name: Créer répertoire sauvegarde PostgreSQL
+      file:
+        path: "{{ rollback_pg_backup_dir }}"
+        state: directory
+        mode: "0750"
+
     - name: Vérifier scripts existants avant sauvegarde
       stat:
         path: "{{ repo_root }}/scripts"
@@ -64,6 +121,11 @@
       stat:
         path: "{{ repo_root }}/app/src"
       register: existing_api_src
+
+    - name: Vérifier dist existant avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/app/dist"
+      register: existing_dist
 
     - name: Vérifier compose.yml existant avant sauvegarde
       stat:
@@ -88,6 +150,15 @@
       delegate_to: localhost
       when: existing_api_src.stat.exists
 
+    - name: Sauvegarder dist pre-hermesctl-v1
+      synchronize:
+        src: "{{ repo_root }}/app/dist/"
+        dest: "{{ rollback_dist_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_dist.stat.exists
+
     - name: Sauvegarder compose.yml pre-hermesctl-v1
       copy:
         src: "{{ repo_root }}/compose.yml"
@@ -95,6 +166,41 @@
         remote_src: true
         mode: "0644"
       when: existing_compose.stat.exists
+
+    - name: Sauvegarde PostgreSQL pre-migration 001
+      shell: |
+        set -euo pipefail
+        stamp=$(date -u +%Y%m%d%H%M%S)
+        dump="{{ rollback_pg_backup_dir }}/pre-001-${stamp}.dump"
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          pg_dump -U agentimpact_app -d agentimpact --format=custom \
+          > "$dump"
+        chmod 0600 "$dump"
+        echo "$dump" > "{{ rollback_pg_backup_dir }}/latest-001.path"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      register: pg_backup_001
+
+    - name: Enregistrer chemin sauvegarde PostgreSQL 001 (sans contenu)
+      debug:
+        msg: "pg_backup_001={{ pg_backup_001.stdout_lines[-1] | default('unknown') }}"
+
+    - name: Vérifier sauvegarde PostgreSQL non vide
+      shell: |
+        set -euo pipefail
+        latest=$(ls -t "{{ rollback_pg_backup_dir }}"/*.dump 2>/dev/null | head -1)
+        test -n "$latest"
+        test -s "$latest"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Synchroniser compose.yml
+      copy:
+        src: "{{ work_src }}/infra/compose.yml"
+        dest: "{{ repo_root }}/compose.yml"
+        mode: "0644"
 
     - name: Synchroniser migrations SQL vers app/src/migrations
       synchronize:
@@ -108,11 +214,82 @@
         dest: "{{ repo_root }}/app/src/"
         delete: false
 
-    - name: Synchroniser compose.yml
-      copy:
-        src: "{{ work_src }}/infra/compose.yml"
-        dest: "{{ repo_root }}/compose.yml"
-        mode: "0644"
+    - name: Propriétaire app/src hermes (sans node_modules hôte)
+      file:
+        path: "{{ repo_root }}/app/src"
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        recurse: true
+
+    - name: Supprimer node_modules hôte sous app/src si présent
+      file:
+        path: "{{ repo_root }}/app/src/node_modules"
+        state: absent
+
+    - name: Créer répertoire staging build
+      file:
+        path: "{{ build_staging_dir }}"
+        state: directory
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "0750"
+
+    - name: Synchroniser sources vers staging build
+      synchronize:
+        src: "{{ work_src }}/src/"
+        dest: "{{ build_staging_dir }}/"
+        delete: false
+
+    - name: Propriétaire staging build hermes
+      file:
+        path: "{{ build_staging_dir }}"
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        recurse: true
+
+    - name: Build Node dans staging (hermes, indépendant du conteneur API)
+      become: true
+      become_user: "{{ host_build_user }}"
+      shell: |
+        set -euo pipefail
+        cd "{{ build_staging_dir }}"
+        npm ci
+        npm run build
+        test -f dist/slack-router/daemon.js
+        test -f dist/grok-worker/server.js
+        if find node_modules -xdev \( -type d -o -type f \) -perm -0002 | grep -q .; then
+          echo "world_writable_node_modules" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Installer dist staging vers app/dist
+      synchronize:
+        src: "{{ build_staging_dir }}/dist/"
+        dest: "{{ repo_root }}/app/dist/"
+        delete: false
+
+    - name: Propriétaire app/dist hermes
+      file:
+        path: "{{ repo_root }}/app/dist"
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        recurse: true
+
+    - name: Vérifier ownership et permissions app/dist
+      shell: |
+        set -euo pipefail
+        test "$(stat -c '%U:%G' '{{ repo_root }}/app/dist')" = "{{ app_owner }}:{{ app_group }}"
+        test ! -d "{{ repo_root }}/app/src/node_modules"
+        if find "{{ repo_root }}/app/dist" -xdev \( -type d -o -type f \) -perm -0002 | grep -q .; then
+          echo "world_writable_dist" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Appliquer migration SQL proposals (stdin via service db)
       shell: |
@@ -156,6 +333,10 @@
         src: "{{ work_src }}/infra/systemd/agentimpact-ctl.conf"
         dest: /etc/tmpfiles.d/agentimpact-ctl.conf
         mode: "0644"
+
+    - name: Appliquer tmpfiles agentimpact-ctl
+      command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-ctl.conf
+      changed_when: false
 
     - name: Redémarrer API (auth fail-closed) — après sync code + tokens + scripts
       command: docker compose -f {{ repo_root }}/compose.yml up -d --build api

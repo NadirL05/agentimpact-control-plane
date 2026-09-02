@@ -2,6 +2,7 @@
 Description=AgentImpact Cursor Grok Worker (socket Unix isolé)
 After=network-online.target agentimpact-grok-worker.socket
 Requires=agentimpact-grok-worker.socket
+TriggeredBy=agentimpact-grok-worker.socket
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -33,7 +34,4 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/opt/agentimpact/grokbot/workspace /run/agentimpact-grok-worker
-ReadOnlyPaths=/etc/agentimpact/flags
-
-[Install]
-WantedBy=multi-user.target
+ReadOnlyPaths=/etc/agentimpact/flags /opt/agentimpact/app/dist
