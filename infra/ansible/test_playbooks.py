@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import unittest
 from pathlib import Path
 
@@ -358,9 +359,11 @@ class ComposeRegressionTest(unittest.TestCase):
         self.assertNotRegex(template, r"^PGPASSWORD=", re.MULTILINE)
 
     def test_compose_config_db_loopback_without_secret_leak(self) -> None:
-        import re
         import subprocess
         import tempfile
+
+        if shutil.which("docker") is None:
+            self.skipTest("Docker CLI indisponible dans cet environnement")
 
         infra = Path(__file__).resolve().parents[1]
         compose = infra / "compose.yml"
