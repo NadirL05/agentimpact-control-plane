@@ -45,6 +45,10 @@ A redeployer sur le VPS : copier vers `/home/hermes/.hermes/config.yaml` ou
 `/home/hermes/.hermes/profiles/<nom>/config.yaml`, puis
 `systemctl restart hermes-gateway.service`.
 
+MCP Brevo (profil `agentimpact-growth` uniquement) : voir
+[docs/brevo-mcp-growth.md](../docs/brevo-mcp-growth.md) et
+`infra/scripts/deploy-brevo-mcp-growth.sh`.
+
 ## agentimpact-profiles/
 
 `.env.example` (gabarits) des 5 profils AgentImpact
