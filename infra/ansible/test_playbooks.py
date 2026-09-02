@@ -281,6 +281,10 @@ class SystemdRegressionTest(unittest.TestCase):
         self.assertNotIn("Requires=agentimpact-grok-worker.service", router)
         self.assertIn("SocketGroup=agentimpact-grok-client", socket)
 
+    def test_router_sets_node_env_production(self) -> None:
+        content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
+        self.assertIn("Environment=NODE_ENV=production", content)
+
     def test_router_loadcredential_secrets(self) -> None:
         content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
         self.assertIn("LoadCredential=slack-router-db-password", content)
@@ -356,6 +360,7 @@ class ComposeRegressionTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("PGHOST=127.0.0.1", template)
         self.assertIn("PGPORT=5432", template)
+        self.assertIn("SLACK_NATIVE_AGENT_USER_IDS", template)
         self.assertNotRegex(template, r"^PGPASSWORD=", re.MULTILINE)
 
     def test_compose_config_db_loopback_without_secret_leak(self) -> None:

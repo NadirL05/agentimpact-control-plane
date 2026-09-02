@@ -14,7 +14,7 @@ create table if not exists slack_thread_owners (
   team_id text not null,
   channel_id text not null,
   thread_root_ts text not null,
-  owner text not null check (owner in ('hermes', 'grok', 'codex', 'ana', 'devin')),
+  owner text not null check (owner in ('hermes', 'grok', 'codex', 'ana', 'devin', 'native')),
   assigned_at timestamptz not null default now(),
   constraint slack_thread_owners_root_unique unique (team_id, channel_id, thread_root_ts)
 );

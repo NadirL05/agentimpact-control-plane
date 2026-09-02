@@ -89,6 +89,7 @@ export async function handleSlackEnvelope(
 
   const dispatch = await dispatchSlackMessage(message, stores, {
     nadirUserId: deps.config.nadirUserId,
+    nativeAgentUserIds: deps.config.nativeAgentUserIds,
     killSwitchPath: deps.config.killSwitchPath,
     blockedAutoGrokSources: new Set(['cron', 'infra-alert', 'mission-notify']),
   });

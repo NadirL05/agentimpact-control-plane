@@ -1,5 +1,6 @@
 import { isHumanSlackMessage, threadKey } from '../core/slack-router/event-filter.js';
 import { isGrokKillSwitchActive } from '../core/slack-router/kill-switch.js';
+import { messageMentionsNativeAgent } from '../core/slack-router/native-agent-mentions.js';
 import { parseRoute } from '../core/slack-router/parse-route.js';
 import type { RateLimitStore } from '../core/slack-router/rate-limit.js';
 import type {
@@ -12,6 +13,7 @@ import type { RouterPersistence } from './stores/persistence.js';
 
 export type DispatchConfig = {
   nadirUserId: string;
+  nativeAgentUserIds: ReadonlySet<string>;
   killSwitchPath?: string;
   blockedAutoGrokSources?: Set<string>;
 };
@@ -35,9 +37,22 @@ export async function dispatchSlackMessage(
     return { action: 'ignore', reason: 'not_human_message' };
   }
 
-  const parsed = parseRoute(event.text ?? '');
   const root = isRootMessage(event);
   const tKey = threadKey(event);
+  const text = event.text ?? '';
+
+  if (root && messageMentionsNativeAgent(text, config.nativeAgentUserIds)) {
+    const nativePrep = await stores.persistence.prepare(event, 'native', true);
+    if (nativePrep.status === 'deduplicated') {
+      return { action: 'deduplicated', event_id: event.event_id };
+    }
+    if (nativePrep.status === 'storage_error') {
+      return { action: 'reject', reason: 'storage_unavailable', thread_key: tKey };
+    }
+    return { action: 'ignore', reason: 'native_agent_thread' };
+  }
+
+  const parsed = parseRoute(text);
 
   if (parsed.target === 'devin') {
     if (event.user !== config.nadirUserId) {
@@ -58,6 +73,10 @@ export async function dispatchSlackMessage(
   }
   if (prep.status === 'unowned_thread') {
     return { action: 'ignore', reason: 'thread_unowned' };
+  }
+
+  if (prep.owner === 'native') {
+    return { action: 'ignore', reason: 'native_agent_thread' };
   }
 
   const target: SlackRouteTarget = prep.owner;

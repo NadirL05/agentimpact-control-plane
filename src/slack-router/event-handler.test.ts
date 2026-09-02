@@ -15,6 +15,7 @@ import { dispatchSlackMessage } from './dispatch.js';
 function testConfig(overrides: Partial<SlackRouterEnvConfig> = {}): SlackRouterEnvConfig {
   return {
     nadirUserId: 'UNADIR001',
+    nativeAgentUserIds: new Set<string>(),
     botToken: 'xoxb-test',
     appToken: 'xapp-test',
     controlPlaneUrl: 'http://127.0.0.1:3000',
@@ -27,6 +28,13 @@ function testConfig(overrides: Partial<SlackRouterEnvConfig> = {}): SlackRouterE
     grokRateChannelMax: 20,
     grokRateChannelWindowMs: 60_000,
     ...overrides,
+  };
+}
+
+function dispatchCfg(config: SlackRouterEnvConfig) {
+  return {
+    nadirUserId: config.nadirUserId,
+    nativeAgentUserIds: config.nativeAgentUserIds,
   };
 }
 
@@ -142,10 +150,10 @@ describe('persistance et dispatch', () => {
       ts: '1.0',
     };
 
-    const first = await dispatchSlackMessage(event, stores, { nadirUserId: config.nadirUserId });
+    const first = await dispatchSlackMessage(event, stores, dispatchCfg(config));
     expect(first.action).toBe('delegate');
 
-    const second = await dispatchSlackMessage(event, stores, { nadirUserId: config.nadirUserId });
+    const second = await dispatchSlackMessage(event, stores, dispatchCfg(config));
     expect(second.action).toBe('deduplicated');
   });
 
@@ -163,14 +171,14 @@ describe('persistance et dispatch', () => {
       text: 'bonjour',
       ts: '10.0',
     };
-    await dispatchSlackMessage(root, stores, { nadirUserId: config.nadirUserId });
+    await dispatchSlackMessage(root, stores, dispatchCfg(config));
 
     const reroute = {
       ...root,
       event_id: 'E-reroute',
       text: 'ROUTE GROK: test',
     };
-    const result = await dispatchSlackMessage(reroute, stores, { nadirUserId: config.nadirUserId });
+    const result = await dispatchSlackMessage(reroute, stores, dispatchCfg(config));
     expect(result.action).toBe('delegate');
     if (result.action === 'delegate') {
       expect(result.target).toBe('hermes');
@@ -194,7 +202,7 @@ describe('persistance et dispatch', () => {
         ts: '1.0',
       },
       stores,
-      { nadirUserId: config.nadirUserId },
+      dispatchCfg(config),
     );
     expect(result.action).toBe('reject');
     if (result.action === 'reject') {
@@ -225,5 +233,130 @@ describe('kill switch et concurrence Grok', () => {
 
     expect(posts[0]).toContain('kill switch');
     unlinkSync(flag);
+  });
+});
+
+const NATIVE_IDS = new Set(['UCURSOR01', 'UCODEX001', 'UDEVIN001']);
+
+describe('apps Slack natives', () => {
+  it('ignore un fil @Cursor sans appeler Hermès/Grok/Codex/Ana', async () => {
+    const posts: string[] = [];
+    const hermesExecute = vi.fn();
+    const grokExecute = vi.fn();
+    const codexExecute = vi.fn();
+    const anaExecute = vi.fn();
+    const config = testConfig({ nativeAgentUserIds: NATIVE_IDS });
+    const stores = createTestDispatchStores(config);
+
+    await handleSlackEnvelope(
+      envelope('E-cursor', 'Peux-tu demander à <@UCURSOR01|Cursor> ?'),
+      stores,
+      {
+        config,
+        metrics: createMetrics(),
+        poster: {
+          postThreadReply: async (_c, _t, text) => {
+            posts.push(text);
+          },
+        },
+        logLine: () => undefined,
+        relays: [
+          { target: 'hermes' as const, execute: hermesExecute },
+          { target: 'grok' as const, execute: grokExecute },
+          { target: 'codex' as const, execute: codexExecute },
+          { target: 'ana' as const, execute: anaExecute },
+        ],
+      },
+    );
+
+    expect(posts).toHaveLength(0);
+    expect(hermesExecute).not.toHaveBeenCalled();
+    expect(grokExecute).not.toHaveBeenCalled();
+    expect(codexExecute).not.toHaveBeenCalled();
+    expect(anaExecute).not.toHaveBeenCalled();
+  });
+
+  it('ignore les follow-ups persistants après redémarrage simulé', async () => {
+    const persistence = createMemoryPersistence();
+    const config = testConfig({ nativeAgentUserIds: NATIVE_IDS });
+    const stores = { ...createTestDispatchStores(config), persistence };
+
+    const root = {
+      type: 'message' as const,
+      event_id: 'E-native-root',
+      team_id: 'T1',
+      channel: 'C1',
+      user: 'U1',
+      text: 'Question pour <@UCODEX001|Codex>',
+      ts: '50.0',
+    };
+    const rootResult = await dispatchSlackMessage(root, stores, dispatchCfg(config));
+    expect(rootResult).toMatchObject({ action: 'ignore', reason: 'native_agent_thread' });
+
+    const follow = {
+      ...root,
+      event_id: 'E-native-follow',
+      text: 'suite humaine',
+      ts: '50.1',
+      thread_ts: '50.0',
+    };
+    const followResult = await dispatchSlackMessage(follow, stores, dispatchCfg(config));
+    expect(followResult).toMatchObject({ action: 'ignore', reason: 'native_agent_thread' });
+
+    const replay = await dispatchSlackMessage(root, stores, dispatchCfg(config));
+    expect(replay.action).toBe('deduplicated');
+  });
+
+  it('ROUTE GROK normal reste fonctionnel hors fil natif', async () => {
+    const posts: string[] = [];
+    const config = testConfig({ nativeAgentUserIds: NATIVE_IDS });
+    const stores = createTestDispatchStores(config);
+    const grokExecute = vi.fn(async () => ({ ok: true as const, text: 'grok ok' }));
+
+    await handleSlackEnvelope(envelope('E-grok-ok', 'ROUTE GROK: test KPI'), stores, {
+      config,
+      metrics: createMetrics(),
+      poster: {
+        postThreadReply: async (_c, _t, text) => {
+          posts.push(text);
+        },
+      },
+      logLine: () => undefined,
+      relays: [{ target: 'grok' as const, execute: grokExecute }],
+    });
+
+    expect(grokExecute).toHaveBeenCalledOnce();
+    expect(posts[0]).toBe('grok ok');
+  });
+
+  it('racine <@NATIVE_ID> + ROUTE GROK : ignore, aucun Grok, aucune réponse Slack', async () => {
+    const posts: string[] = [];
+    const grokExecute = vi.fn();
+    const hermesExecute = vi.fn();
+    const config = testConfig({ nativeAgentUserIds: NATIVE_IDS });
+    const stores = createTestDispatchStores(config);
+
+    await handleSlackEnvelope(
+      envelope('E-native-grok', 'ROUTE GROK: aide <@UCURSOR01|Cursor>'),
+      stores,
+      {
+        config,
+        metrics: createMetrics(),
+        poster: {
+          postThreadReply: async (_c, _t, text) => {
+            posts.push(text);
+          },
+        },
+        logLine: () => undefined,
+        relays: [
+          { target: 'hermes' as const, execute: hermesExecute },
+          { target: 'grok' as const, execute: grokExecute },
+        ],
+      },
+    );
+
+    expect(posts).toHaveLength(0);
+    expect(grokExecute).not.toHaveBeenCalled();
+    expect(hermesExecute).not.toHaveBeenCalled();
   });
 });
