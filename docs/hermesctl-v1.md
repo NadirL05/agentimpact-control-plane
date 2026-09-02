@@ -6,7 +6,7 @@ Client lecture + proposition pour Cursor (`agentimpact-runner`) via bridge Unix 
 
 Worktree Git canonique :
 
-```
+```text
 /opt/agentimpact/runner/worktrees/hermesctl-v1-atomic
 ```
 

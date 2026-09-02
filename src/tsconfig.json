@@ -20,6 +20,7 @@
     "env.d.ts",
     "api/**/*.ts",
     "core/**/*.ts",
+    "middleware/**/*.ts",
     "cli/**/*.ts"
   ],
   "exclude": [
