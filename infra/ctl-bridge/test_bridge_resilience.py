@@ -45,6 +45,8 @@ class BridgeResilienceTest(unittest.TestCase):
         self.assertEqual(body["proposed_by"], "agentimpact-runner")
 
     def _run_client_exchange(self, payload: bytes) -> dict:
+        if not payload.endswith(b"\n"):
+            payload = payload + b"\n"
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "bridge.sock")
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -74,6 +76,48 @@ class BridgeResilienceTest(unittest.TestCase):
         response = self._run_client_exchange(payload)
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "INVALID_PARAMS")
+
+    def test_handle_client_rejects_non_object_json(self) -> None:
+        response = self._run_client_exchange(json.dumps([1, 2, 3]).encode("utf-8") + b"\n")
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "PROTOCOL_ERROR")
+
+    def test_handle_client_accepts_fragmented_request(self) -> None:
+        payload = json.dumps(
+            {"v": 1, "id": "frag", "cmd": "health", "params": {}},
+        ).encode("utf-8") + b"\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bridge.sock")
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(path)
+            server.listen(1)
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(path)
+            conn, _ = server.accept()
+            mid = len(payload) // 2
+            client.sendall(payload[:mid])
+            client.sendall(payload[mid:])
+            with mock.patch.object(bridge, "peer_credentials", return_value=(1, 1001, 1001)):
+                with mock.patch.object(bridge, "upstream_request", return_value=(200, {"status": "ok"})):
+                    bridge.handle_client(conn)
+            response = client.recv(65536)
+            client.close()
+            conn.close()
+            server.close()
+            parsed = json.loads(response.decode("utf-8").strip())
+            self.assertTrue(parsed["ok"])
+
+    def test_read_request_line_rejects_oversized_without_newline(self) -> None:
+        class FakeConn:
+            def __init__(self) -> None:
+                self.sent = b"x" * (bridge.MAX_REQUEST_BYTES + 1)
+
+            def recv(self, n: int) -> bytes:
+                chunk = self.sent[:n]
+                self.sent = self.sent[n:]
+                return chunk
+
+        self.assertIsNone(bridge.read_request_line(FakeConn()))  # type: ignore[arg-type]
 
 
     def test_handle_client_read_timeout(self) -> None:

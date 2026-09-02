@@ -10,7 +10,10 @@
     repo_root: /opt/agentimpact
     # playbook_dir = .../infra/ansible/playbooks → racine dépôt = ../../../
     work_src: "{{ playbook_dir }}/../../../"
-    rollback_scripts_dir: /var/lib/agentimpact/rollback/hermesctl-v1-scripts
+    rollback_bundle_dir: /var/lib/agentimpact/rollback/hermesctl-v1
+    rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
+    rollback_api_src_dir: "{{ rollback_bundle_dir }}/app-src"
+    rollback_compose_file: "{{ rollback_bundle_dir }}/compose.yml"
   tasks:
     - name: Vérifier tokens présents (fichiers, pas affichage)
       stat:
@@ -37,9 +40,18 @@
         create_home: false
         state: present
 
-    - name: Créer répertoire rollback scripts
+    - name: Vérifier secrets training et dashboard dans .env
+      shell: |
+        set -euo pipefail
+        grep -qE '^TRAINING_FORM_TOKEN=.+' "{{ repo_root }}/.env"
+        grep -qE '^DASHBOARD_ACCESS_TOKEN=.+' "{{ repo_root }}/.env"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Créer répertoire rollback bundle hermesctl-v1
       file:
-        path: "{{ rollback_scripts_dir }}"
+        path: "{{ rollback_bundle_dir }}"
         state: directory
         mode: "0750"
 
@@ -47,6 +59,16 @@
       stat:
         path: "{{ repo_root }}/scripts"
       register: existing_scripts
+
+    - name: Vérifier sources API existantes avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/app/src"
+      register: existing_api_src
+
+    - name: Vérifier compose.yml existant avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/compose.yml"
+      register: existing_compose
 
     - name: Sauvegarder scripts pre-hermesctl-v1
       synchronize:
@@ -56,6 +78,23 @@
         delete: false
       delegate_to: localhost
       when: existing_scripts.stat.exists
+
+    - name: Sauvegarder sources API pre-hermesctl-v1
+      synchronize:
+        src: "{{ repo_root }}/app/src/"
+        dest: "{{ rollback_api_src_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_api_src.stat.exists
+
+    - name: Sauvegarder compose.yml pre-hermesctl-v1
+      copy:
+        src: "{{ repo_root }}/compose.yml"
+        dest: "{{ rollback_compose_file }}"
+        remote_src: true
+        mode: "0644"
+      when: existing_compose.stat.exists
 
     - name: Synchroniser migrations SQL vers app/src/migrations
       synchronize:

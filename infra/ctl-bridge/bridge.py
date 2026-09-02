@@ -145,7 +145,7 @@ def handle_command(
     path = spec.path_template
     if cmd == "missions.show":
         path = path.format(id=params["id"])
-    elif cmd == "missions.list":
+    elif cmd in ("missions.list", "approvals.pending"):
         path = build_query_path(cmd, path, params)
 
     body = spec.build_body(params, peer_uid) if spec.build_body else None
@@ -168,6 +168,26 @@ def handle_command(
         }, status_code
 
     return True, None, payload, status_code
+
+
+def read_request_line(conn: socket.socket) -> bytes | None:
+    """Lit jusqu'au newline, EOF, timeout ou dépassement de taille."""
+    buf = bytearray()
+    while True:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > MAX_REQUEST_BYTES:
+            return None
+        newline = buf.find(b"\n")
+        if newline != -1:
+            return bytes(buf[:newline])
+    if not buf:
+        return b""
+    if len(buf) > MAX_REQUEST_BYTES:
+        return None
+    return bytes(buf)
 
 
 def handle_client(conn: socket.socket) -> None:
@@ -197,7 +217,7 @@ def handle_client(conn: socket.socket) -> None:
             )
             return
 
-        raw = conn.recv(MAX_REQUEST_BYTES + 1)
+        raw = read_request_line(conn)
     except socket.timeout:
         resp = error_response(req_id or "unknown", "READ_TIMEOUT", "read timeout", uid, 0)
         conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
@@ -217,8 +237,13 @@ def handle_client(conn: socket.socket) -> None:
         return
 
     try:
-        if len(raw) > MAX_REQUEST_BYTES:
+        if raw is None:
             resp = error_response("unknown", "PAYLOAD_TOO_LARGE", "request too large", uid, 0)
+            conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+            return
+
+        if len(raw) == 0:
+            resp = error_response("unknown", "PROTOCOL_ERROR", "empty request", uid, 0)
             conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
             return
 
@@ -226,6 +251,11 @@ def handle_client(conn: socket.socket) -> None:
             message = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             resp = error_response("unknown", "PROTOCOL_ERROR", "invalid json", uid, 0)
+            conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+            return
+
+        if not isinstance(message, dict):
+            resp = error_response("unknown", "PROTOCOL_ERROR", "invalid json envelope", uid, 0)
             conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
             return
 

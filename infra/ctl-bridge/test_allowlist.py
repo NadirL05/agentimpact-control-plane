@@ -77,6 +77,14 @@ class AllowlistTest(unittest.TestCase):
         self.assertIn("status=in%20progress", path)
         self.assertIn("limit=10", path)
 
+    def test_build_query_path_approvals_limit(self) -> None:
+        path = build_query_path(
+            "approvals.pending",
+            "/api/approvals/pending",
+            {"limit": 25},
+        )
+        self.assertEqual(path, "/api/approvals/pending?limit=25")
+
 
 if __name__ == "__main__":
     unittest.main()

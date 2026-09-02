@@ -76,6 +76,8 @@ const BEARER_EXEMPT: RouteRule[] = [
   { method: 'POST', pattern: /^\/api\/outreach\/webhook\/brevo$/ },
   { method: 'POST', pattern: /^\/api\/training\/log$/ },
   { method: 'GET', pattern: /^\/training$/ },
+  { method: 'POST', pattern: /^\/dashboard\/login$/ },
+  { method: 'GET', pattern: /^\/dashboard\// },
 ];
 
 export function isBearerExempt(method: string, path: string): boolean {

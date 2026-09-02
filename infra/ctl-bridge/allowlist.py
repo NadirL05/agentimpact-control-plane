@@ -123,10 +123,16 @@ def _validate_params(cmd: str, params: dict[str, Any]) -> str | None:
 
 
 def build_query_path(cmd: str, path: str, params: dict[str, Any]) -> str:
-    if cmd != "missions.list":
+    if cmd not in ("missions.list", "approvals.pending"):
         return path
+
+    query_keys = (
+        ("status", "target_agent", "limit", "offset")
+        if cmd == "missions.list"
+        else ("limit",)
+    )
     query: list[str] = []
-    for key in ("status", "target_agent", "limit", "offset"):
+    for key in query_keys:
         if key not in params or params[key] is None:
             continue
         value = params[key]

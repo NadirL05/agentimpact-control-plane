@@ -16,9 +16,11 @@ describe('auth-scopes second review', () => {
     ).toBe(true);
   });
 
-  it('exempte Brevo et training/log avec auth dédiée', () => {
+  it('exempte Brevo, training/log et dashboard avec auth dédiée', () => {
     expect(isBearerExempt('POST', '/api/outreach/webhook/brevo')).toBe(true);
     expect(isBearerExempt('POST', '/api/training/log')).toBe(true);
     expect(isBearerExempt('POST', '/api/training/week')).toBe(false);
+    expect(isBearerExempt('POST', '/dashboard/login')).toBe(true);
+    expect(isBearerExempt('GET', '/dashboard/login.html')).toBe(true);
   });
 });

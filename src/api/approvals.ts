@@ -218,16 +218,20 @@ export async function recordDecision(params: {
   }
 }
 
+import { parseApprovalPagination } from '../core/approval-pagination.js';
+
 /** Actions en attente d'une decision humaine. */
 app.get('/pending', async (c) => {
+  const { limit } = parseApprovalPagination(c.req.query('limit'));
+
   const result = await pool.query(
     `select id, created_at, profile, intent, targets, payload_hash, risk_level,
             dry_run, status, approval_expires_at
        from agent_actions
       where status = any($1)
       order by created_at desc
-      limit 50`,
-    [APPROVABLE_STATUSES],
+      limit $2`,
+    [APPROVABLE_STATUSES, limit],
   );
 
   const now = Date.now();

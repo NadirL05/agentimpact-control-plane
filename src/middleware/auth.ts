@@ -10,6 +10,19 @@ import {
 } from '../core/auth-scopes.js';
 import type { AppEnv } from '../core/hono-env.js';
 import { constantTimeEqualString } from '../core/secure-compare.js';
+import { hasValidDashboardSession } from '../core/dashboard-session.js';
+
+const DASHBOARD_READ_ROUTES: Array<{ method: string; pattern: RegExp }> = [
+  { method: 'GET', pattern: /^\/profiles$/ },
+  { method: 'GET', pattern: /^\/policies$/ },
+  { method: 'GET', pattern: /^\/workflows$/ },
+];
+
+function isDashboardReadRoute(method: string, path: string): boolean {
+  return DASHBOARD_READ_ROUTES.some(
+    (r) => r.method === method.toUpperCase() && r.pattern.test(path),
+  );
+}
 
 export type TokenConfig = Record<AuthScope, string>;
 
@@ -56,6 +69,14 @@ export function createBearerAuthMiddleware(config: TokenConfig) {
     const method = c.req.method;
 
     if (isBearerExempt(method, path)) {
+      return next();
+    }
+
+    if (
+      isDashboardReadRoute(method, path) &&
+      hasValidDashboardSession(c.req.header('Cookie'))
+    ) {
+      c.set('authScope', 'hermes');
       return next();
     }
 
