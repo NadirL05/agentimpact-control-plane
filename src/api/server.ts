@@ -69,7 +69,11 @@ app.route('/api/demos', demos);
 app.route('/api/training', training);
 app.route('/api/proposals', proposals);
 
-app.get('/training', (c) => c.html(trainingFormHtml));
+app.get('/training', (c) => {
+  const token = process.env.TRAINING_FORM_TOKEN ?? '';
+  const html = trainingFormHtml.replaceAll('__TRAINING_FORM_TOKEN__', token);
+  return c.html(html);
+});
 
 app.get('/health', async (c) => {
   try {

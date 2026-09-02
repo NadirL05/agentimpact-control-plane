@@ -65,6 +65,12 @@ describe('auth scopes', () => {
 
   it('exempte les webhooks signés', () => {
     expect(isWebhookExempt('POST', '/api/github/webhook')).toBe(true);
+    expect(isWebhookExempt('POST', '/api/outreach/webhook/brevo')).toBe(true);
     expect(isWebhookExempt('GET', '/health')).toBe(false);
+  });
+
+  it('refuse hermes sur POST /api/approvals', () => {
+    expect(isRouteAllowed('hermes', 'POST', '/api/approvals')).toBe(false);
+    expect(isRouteAllowed('admin', 'POST', '/api/approvals')).toBe(true);
   });
 });

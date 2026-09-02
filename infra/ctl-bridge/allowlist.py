@@ -31,15 +31,18 @@ class HandlerSpec:
 
 def _proposal_body(params: dict[str, Any], peer_uid: int) -> dict[str, Any]:
     """Identité dérivée exclusivement de SO_PEERCRED (peer_uid), jamais du client."""
-    return {
+    body: dict[str, Any] = {
         "title": params["title"],
         "instruction": params["instruction"],
         "target_agent": params.get("target_agent", "dev-senior"),
         "priority": params.get("priority", "normal"),
-        "source_url": params.get("source_url"),
         "proposed_by_uid": peer_uid,
         "proposed_by": PEER_IDENTITY.get(peer_uid, f"uid:{peer_uid}"),
     }
+    source_url = params.get("source_url")
+    if source_url is not None:
+        body["source_url"] = source_url
+    return body
 
 
 HANDLERS: dict[str, HandlerSpec] = {

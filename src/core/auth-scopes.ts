@@ -28,8 +28,6 @@ const HERMES_RULES: RouteRule[] = [
   { method: 'POST', pattern: /^\/missions$/ },
   { method: 'POST', pattern: /^\/missions\/[0-9a-f-]{36}\/dispatch$/i },
   { method: 'PATCH', pattern: /^\/missions\/[0-9a-f-]{36}\/result$/i },
-  { method: 'PATCH', pattern: /^\/actions\/[0-9a-f-]{36}\/(approve|reject)$/i },
-  { method: 'POST', pattern: /^\/api\/approvals$/ },
   { method: 'POST', pattern: /^\/api\/approvals\/request$/ },
   { method: 'GET', pattern: /^\/leads$/ },
   { method: 'POST', pattern: /^\/leads$/ },
@@ -48,10 +46,9 @@ const HERMES_RULES: RouteRule[] = [
   { method: 'GET', pattern: /^\/workflows$/ },
   { method: 'GET', pattern: /^\/api\/outreach\// },
   { method: 'POST', pattern: /^\/api\/outreach\// },
-  { method: 'GET', pattern: /^\/api\/demos\// },
-  { method: 'POST', pattern: /^\/api\/demos\// },
-  { method: 'GET', pattern: /^\/api\/training\// },
-  { method: 'POST', pattern: /^\/api\/training\// },
+  { method: 'GET', pattern: /^\/api\/demos$/ },
+  { method: 'POST', pattern: /^\/api\/demos\/[^/]+\/check-expiry$/ },
+  { method: 'GET', pattern: /^\/api\/training\/week$/ },
   { method: 'GET', pattern: /^\/api\/gmail\// },
   { method: 'POST', pattern: /^\/api\/gmail\// },
   { method: 'POST', pattern: /^\/api\/github\/spec$/ },
@@ -61,6 +58,7 @@ const HERMES_RULES: RouteRule[] = [
 
 const ADMIN_RULES: RouteRule[] = [
   ...HERMES_RULES,
+  { method: 'POST', pattern: /^\/api\/approvals$/ },
   { method: 'POST', pattern: /^\/api\/proposals\/[0-9a-f-]{36}\/promote$/i },
   { method: 'POST', pattern: /^\/api\/proposals\/[0-9a-f-]{36}\/reject$/i },
 ];
@@ -71,16 +69,23 @@ const SCOPE_RULES: Record<AuthScope, RouteRule[]> = {
   admin: ADMIN_RULES,
 };
 
-/** Routes avec mécanisme d'auth propre (signature webhook, etc.). */
-const WEBHOOK_EXEMPT: RouteRule[] = [
+/** Routes avec mécanisme d'auth propre (signature webhook, token formulaire, etc.). */
+const BEARER_EXEMPT: RouteRule[] = [
   { method: 'POST', pattern: /^\/api\/github\/webhook$/ },
   { method: 'POST', pattern: /^\/api\/fullenrich\/webhook$/ },
+  { method: 'POST', pattern: /^\/api\/outreach\/webhook\/brevo$/ },
+  { method: 'POST', pattern: /^\/api\/training\/log$/ },
   { method: 'GET', pattern: /^\/training$/ },
 ];
 
-export function isWebhookExempt(method: string, path: string): boolean {
+export function isBearerExempt(method: string, path: string): boolean {
   const m = method.toUpperCase() as HttpMethod;
-  return WEBHOOK_EXEMPT.some((r) => r.method === m && r.pattern.test(path));
+  return BEARER_EXEMPT.some((r) => r.method === m && r.pattern.test(path));
+}
+
+/** @deprecated Utiliser isBearerExempt */
+export function isWebhookExempt(method: string, path: string): boolean {
+  return isBearerExempt(method, path);
 }
 
 export function isRouteAllowed(scope: AuthScope, method: string, path: string): boolean {

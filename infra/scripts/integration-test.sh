@@ -52,6 +52,20 @@ api_code() {
   fi
 }
 
+admin_code() {
+  local method=$1 path=$2
+  shift 2
+  if [ $# -ge 1 ]; then
+    local body_file
+    body_file=$(mktemp)
+    printf '%s' "$1" >"$body_file"
+    CP_API_STATUS=1 "${SCRIPT_DIR}/cp-api.sh" admin "$method" "$path" "$body_file" | tail -n1
+    rm -f "$body_file"
+  else
+    CP_API_STATUS=1 "${SCRIPT_DIR}/cp-api.sh" admin "$method" "$path" | tail -n1
+  fi
+}
+
 public_code() {
   curl -s -o /dev/null -w '%{http_code}' -m 15 "$@"
 }
@@ -90,7 +104,7 @@ cleanup() {
   local cleaned=0
   for id in "${created_actions[@]:-}"; do
     [ -z "$id" ] && continue
-    api_json POST "/api/approvals" "{\"action_id\":\"$id\",\"decision\":\"rejected\",\"approver\":\"integration-cleanup\",\"reason\":\"fin de suite\"}" >/dev/null
+    admin_code POST "/api/approvals" "{\"action_id\":\"$id\",\"decision\":\"rejected\",\"reason\":\"fin de suite\"}" >/dev/null
     cleaned=$((cleaned + 1))
   done
   echo "  $cleaned action(s) de test refusee(s)"
@@ -117,15 +131,15 @@ for item in json.load(sys.stdin).get('items', []):
         print(item['payload_hash']); break")
 
   check "approbation sans hash refusee" "400" \
-    "$(api_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\",\"approver\":\"suite\"}")"
+    "$(admin_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\"}")"
   check "hash errone refuse" "409" \
-    "$(api_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\",\"approver\":\"suite\",\"payload_hash\":\"deadbeefdeadbeef\"}")"
-  check "auto-approbation refusee" "403" \
-    "$(api_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\",\"approver\":\"integration-suite\",\"payload_hash\":\"$HASH\"}")"
+    "$(admin_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\",\"payload_hash\":\"deadbeefdeadbeef\"}")"
+  check "hermes ne peut pas approuver" "403" \
+    "$(api_code POST "/api/approvals" "{\"action_id\":\"$ACTION\",\"decision\":\"approved\",\"payload_hash\":\"$HASH\"}")"
   check "action inconnue" "404" \
-    "$(api_code POST "/api/approvals" '{"action_id":"00000000-0000-0000-0000-000000000000","decision":"rejected","approver":"suite"}')"
+    "$(admin_code POST "/api/approvals" '{"action_id":"00000000-0000-0000-0000-000000000000","decision":"rejected"}')"
   check "uuid malforme" "400" \
-    "$(api_code POST "/api/approvals" '{"action_id":"pas-un-uuid","decision":"rejected","approver":"suite"}')"
+    "$(admin_code POST "/api/approvals" '{"action_id":"pas-un-uuid","decision":"rejected"}')"
 fi
 
 # --- 3. brief ----------------------------------------------------------------

@@ -26,6 +26,7 @@ ALLOWED_PEER_UIDS = {
 BRIDGE_VERSION = os.environ.get("BRIDGE_VERSION", "1.0.0")
 API_BASE = os.environ.get("CONTROL_PLANE_URL", "")
 BRIDGE_TOKEN = os.environ.get("CTL_BRIDGE_TOKEN", "")
+READ_TIMEOUT_SECONDS = float(os.environ.get("BRIDGE_READ_TIMEOUT_SECONDS", "30"))
 
 
 def systemd_listen_fd() -> int:
@@ -171,6 +172,7 @@ def handle_command(
 
 def handle_client(conn: socket.socket) -> None:
     started = time.monotonic()
+    conn.settimeout(READ_TIMEOUT_SECONDS)
     pid, uid, gid = peer_credentials(conn)
     req_id = ""
     cmd = ""
@@ -196,6 +198,25 @@ def handle_client(conn: socket.socket) -> None:
             return
 
         raw = conn.recv(MAX_REQUEST_BYTES + 1)
+    except socket.timeout:
+        resp = error_response(req_id or "unknown", "READ_TIMEOUT", "read timeout", uid, 0)
+        conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+        log_request(
+            peer_uid=uid,
+            peer_pid=pid,
+            peer_gid=gid,
+            request_id=req_id or "unknown",
+            cmd=cmd or "(timeout)",
+            params={},
+            ok=False,
+            error_code="READ_TIMEOUT",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            upstream_status=None,
+        )
+        conn.close()
+        return
+
+    try:
         if len(raw) > MAX_REQUEST_BYTES:
             resp = error_response("unknown", "PAYLOAD_TOO_LARGE", "request too large", uid, 0)
             conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))

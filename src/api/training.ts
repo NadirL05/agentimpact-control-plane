@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { postMessage, slackConfigured } from './slack.js';
+import { verifyTrainingFormToken } from '../core/training-form-auth.js';
 
 const app = new Hono();
 
@@ -33,6 +34,10 @@ const logSchema = z.object({
 });
 
 app.post('/log', async (c) => {
+  if (!verifyTrainingFormToken(c.req.header('X-Training-Form-Token'))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
   const parsed = logSchema.safeParse(await c.req.json().catch(() => null));
 
   if (!parsed.success) {

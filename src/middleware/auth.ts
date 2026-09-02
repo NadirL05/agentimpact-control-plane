@@ -2,29 +2,21 @@
  * Middleware Bearer — comparaison en temps constant, aucun token dans les logs.
  */
 
-import { timingSafeEqual } from 'node:crypto';
 import type { Context, Next } from 'hono';
 import {
   type AuthScope,
+  isBearerExempt,
   isRouteAllowed,
-  isWebhookExempt,
 } from '../core/auth-scopes.js';
+import { constantTimeEqualString } from '../core/secure-compare.js';
 
 export type TokenConfig = Record<AuthScope, string>;
+
+export { constantTimeEqualString };
 
 function normalizePath(path: string): string {
   const q = path.indexOf('?');
   return q === -1 ? path : path.slice(0, q);
-}
-
-export function constantTimeEqualString(a: string, b: string): boolean {
-  const left = Buffer.from(a, 'utf8');
-  const right = Buffer.from(b, 'utf8');
-  if (left.length !== right.length) {
-    timingSafeEqual(left, left);
-    return false;
-  }
-  return timingSafeEqual(left, right);
 }
 
 export function loadTokenConfig(): TokenConfig {
@@ -62,7 +54,7 @@ export function createBearerAuthMiddleware(config: TokenConfig) {
     const path = normalizePath(c.req.path);
     const method = c.req.method;
 
-    if (isWebhookExempt(method, path)) {
+    if (isBearerExempt(method, path)) {
       return next();
     }
 

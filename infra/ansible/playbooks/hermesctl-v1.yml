@@ -22,6 +22,21 @@
       register: token_files
       failed_when: not token_files.results | map(attribute='stat.exists') | list | min
 
+    - name: Créer groupe système agentimpact-ctl
+      group:
+        name: agentimpact-ctl
+        system: true
+        state: present
+
+    - name: Créer compte système agentimpact-ctl
+      user:
+        name: agentimpact-ctl
+        group: agentimpact-ctl
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
     - name: Créer répertoire rollback scripts
       file:
         path: "{{ rollback_scripts_dir }}"
@@ -48,10 +63,23 @@
         dest: "{{ repo_root }}/app/src/migrations/"
         delete: false
 
-    - name: Appliquer migration SQL proposals (stdin, fichier monté dans le conteneur)
+    - name: Synchroniser code API vers app/src
+      synchronize:
+        src: "{{ work_src }}/src/"
+        dest: "{{ repo_root }}/app/src/"
+        delete: false
+
+    - name: Synchroniser compose.yml
+      copy:
+        src: "{{ work_src }}/infra/compose.yml"
+        dest: "{{ repo_root }}/compose.yml"
+        mode: "0644"
+
+    - name: Appliquer migration SQL proposals (stdin via service db)
       shell: |
         set -euo pipefail
-        docker exec -i agentimpact-db psql -U agentimpact_app -d agentimpact \
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          psql -U agentimpact_app -d agentimpact \
           < "{{ repo_root }}/app/src/migrations/001_cursor_proposals.sql"
       args:
         executable: /bin/bash
@@ -90,8 +118,8 @@
         dest: /etc/tmpfiles.d/agentimpact-ctl.conf
         mode: "0644"
 
-    - name: Redémarrer API (auth fail-closed) — après tokens + scripts
-      command: docker compose -f {{ repo_root }}/compose.yml up -d --build agentimpact-api
+    - name: Redémarrer API (auth fail-closed) — après sync code + tokens + scripts
+      command: docker compose -f {{ repo_root }}/compose.yml up -d --build api
       changed_when: true
 
     - name: Activer socket bridge

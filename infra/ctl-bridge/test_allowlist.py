@@ -58,6 +58,16 @@ class AllowlistTest(unittest.TestCase):
         self.assertEqual(body["proposed_by_uid"], 1001)
         self.assertEqual(body["proposed_by"], "agentimpact-runner")
 
+    def test_proposal_body_omits_absent_source_url(self) -> None:
+        body = _proposal_body(
+            {
+                "title": "Titre valide",
+                "instruction": "Instruction assez longue pour passer.",
+            },
+            1001,
+        )
+        self.assertNotIn("source_url", body)
+
     def test_build_query_path_urlencodes_values(self) -> None:
         path = build_query_path(
             "missions.list",

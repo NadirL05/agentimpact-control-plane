@@ -3,16 +3,17 @@ import { Hono } from 'hono';
 import { pool } from './db.js';
 import { tryAutopilot } from './autopilot.js';
 import { canDispatch } from '../core/mission-rules.js';
+import { parseMissionPagination } from '../core/mission-pagination.js';
 
 const app = new Hono();
 
 const priorities = ['low', 'medium', 'high', 'critical'] as const;
 
 app.get('/', async (c) => {
-  const requestedLimit = Number(c.req.query('limit') ?? 50);
-  const limit = Number.isInteger(requestedLimit)
-    ? Math.min(Math.max(requestedLimit, 1), 100)
-    : 50;
+  const { limit, offset } = parseMissionPagination(
+    c.req.query('limit'),
+    c.req.query('offset'),
+  );
 
   const targetAgent = c.req.query('target_agent') ?? null;
   const status = c.req.query('status') ?? null;
@@ -43,11 +44,11 @@ app.get('/', async (c) => {
      where ($1::text is null or m.target_agent = $1)
        and ($2::text is null or m.status = $2)
      order by m.created_at desc
-     limit $3`,
-    [targetAgent, status, limit],
+     limit $3 offset $4`,
+    [targetAgent, status, limit, offset],
   );
 
-  return c.json({ count: result.rows.length, items: result.rows });
+  return c.json({ count: result.rows.length, items: result.rows, limit, offset });
 });
 
 app.get('/:id', async (c) => {

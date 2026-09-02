@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { pool } from './db.js';
 import { brevoConfigured, sendTransactional } from './brevo.js';
 import { canSend, classifyReply } from '../core/outreach-guards.js';
+import { constantTimeEqualString } from '../core/secure-compare.js';
 import { postMessage, slackConfigured } from './slack.js';
 
 const app = new Hono();
@@ -175,9 +176,12 @@ app.post('/send', async (c) => {
  */
 app.post('/webhook/brevo', async (c) => {
   const secret = process.env.BREVO_WEBHOOK_TOKEN;
-  if (secret) {
-    const provided = c.req.query('token') ?? '';
-    if (provided !== secret) return c.json({ error: 'unauthorized' }, 401);
+  if (!secret) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const provided = c.req.query('token') ?? '';
+  if (!constantTimeEqualString(provided, secret)) {
+    return c.json({ error: 'unauthorized' }, 401);
   }
 
   const events = await c.req.json().catch(() => null);

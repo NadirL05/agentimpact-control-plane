@@ -5,6 +5,8 @@ import { pool } from './db.js';
 
 const app = new Hono();
 
+const APPROVAL_WINDOW_MINUTES = Number(process.env.APPROVAL_WINDOW_MINUTES ?? 15);
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -13,7 +15,7 @@ const createSchema = z.object({
   instruction: z.string().min(10).max(8000),
   target_agent: z.literal('dev-senior'),
   priority: z.enum(['low', 'normal', 'high']).default('normal'),
-  source_url: z.string().url().startsWith('https://').max(500).optional(),
+  source_url: z.string().url().startsWith('https://').max(500).nullish(),
   proposed_by_uid: z.number().int().nonnegative(),
   proposed_by: z.string().min(1).max(128).default('agentimpact-runner'),
 });
@@ -167,10 +169,10 @@ app.post('/:id/promote', async (c) => {
     const actionResult = await client.query(
       `insert into agent_actions (
          profile, intent, targets, payload, payload_hash,
-         risk_level, dry_run, status
+         risk_level, dry_run, status, approval_expires_at
        )
-       values ($1, $2, $3, $4, $5, $6, true, 'proposed')
-       returning id, payload_hash, status`,
+       values ($1, $2, $3, $4, $5, $6, true, 'proposed', now() + ($7 || ' minutes')::interval)
+       returning id, payload_hash, status, approval_expires_at`,
       [
         'agentimpact-dev',
         'create_agent_mission',
@@ -178,6 +180,7 @@ app.post('/:id/promote', async (c) => {
         JSON.stringify(missionPayload),
         payloadHash,
         'reversible_write',
+        String(APPROVAL_WINDOW_MINUTES),
       ],
     );
 

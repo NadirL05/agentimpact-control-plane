@@ -151,7 +151,10 @@ document.getElementById('submit').addEventListener('click', async () => {
   try {
     const res = await fetch('/api/training/log', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Training-Form-Token': '__TRAINING_FORM_TOKEN__',
+      },
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text());

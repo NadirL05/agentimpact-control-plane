@@ -15,10 +15,27 @@ class PlaybookRegressionTest(unittest.TestCase):
         self.assertIn('work_src: "{{ playbook_dir }}/../../../"', content)
         self.assertNotIn("infra/infra/", content)
 
-    def test_migration_uses_stdin_not_missing_container_path(self) -> None:
+    def test_migration_uses_compose_service_db(self) -> None:
         content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
-        self.assertIn("docker exec -i agentimpact-db psql", content)
-        self.assertNotIn("-f /migrations/001_cursor_proposals.sql", content)
+        self.assertIn('docker compose -f "{{ repo_root }}/compose.yml" exec -T db', content)
+        self.assertNotIn("agentimpact-db", content)
+
+    def test_creates_agentimpact_ctl_user_before_systemd(self) -> None:
+        content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
+        user_idx = content.index("Créer compte système agentimpact-ctl")
+        socket_idx = content.index("Installer unités systemd")
+        self.assertLess(user_idx, socket_idx)
+
+    def test_syncs_api_and_compose_before_rebuild(self) -> None:
+        content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
+        sync_api_idx = content.index("Synchroniser code API vers app/src")
+        rebuild_idx = content.index("Redémarrer API (auth fail-closed)")
+        self.assertLess(sync_api_idx, rebuild_idx)
+
+    def test_uses_compose_service_api_not_container_name(self) -> None:
+        content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
+        self.assertIn("up -d --build api", content)
+        self.assertNotIn("agentimpact-api", content)
 
     def test_rollback_restores_scripts_before_api(self) -> None:
         content = (PLAYBOOKS / "hermesctl-v1-rollback.yml").read_text(encoding="utf-8")
@@ -31,6 +48,11 @@ class PlaybookRegressionTest(unittest.TestCase):
         self.assertIn("gpasswd -d agentimpact-runner agentimpact-ctl", content)
         self.assertNotRegex(content, r"user:\s*\n\s*name:\s*agentimpact-runner\s*\n\s*groups:.*\n\s*remove:\s*true")
 
+    def test_rollback_uses_compose_service_api(self) -> None:
+        content = (PLAYBOOKS / "hermesctl-v1-rollback.yml").read_text(encoding="utf-8")
+        self.assertIn("up -d api", content)
+        self.assertNotIn("agentimpact-api", content)
+
 
 class ComposeRegressionTest(unittest.TestCase):
     def test_api_loads_tokens_via_env_file(self) -> None:
@@ -41,6 +63,7 @@ class ComposeRegressionTest(unittest.TestCase):
         self.assertIn("/etc/agentimpact/tokens/bridge.env", content)
         self.assertIn("/etc/agentimpact/tokens/hermes.env", content)
         self.assertIn("/etc/agentimpact/tokens/admin.env", content)
+        self.assertIn("TRAINING_FORM_TOKEN:", content)
 
     def test_db_mounts_migrations_volume(self) -> None:
         content = (Path(__file__).resolve().parents[1] / "compose.yml").read_text(

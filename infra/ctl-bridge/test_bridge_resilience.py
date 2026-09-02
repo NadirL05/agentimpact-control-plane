@@ -76,5 +76,27 @@ class BridgeResilienceTest(unittest.TestCase):
         self.assertEqual(response["error"]["code"], "INVALID_PARAMS")
 
 
+    def test_handle_client_read_timeout(self) -> None:
+        class SlowSocket:
+            def settimeout(self, _seconds: float) -> None:
+                return None
+
+            def setsockopt(self, *args):  # noqa: ANN002, ANN003
+                return None
+
+            def recv(self, _n: int) -> bytes:
+                raise socket.timeout()
+
+            def sendall(self, _data: bytes) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        with mock.patch.object(bridge, "peer_credentials", return_value=(1, 1001, 1001)):
+            with mock.patch.object(bridge, "READ_TIMEOUT_SECONDS", 0.01):
+                bridge.handle_client(SlowSocket())  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     unittest.main()

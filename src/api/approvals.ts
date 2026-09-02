@@ -23,6 +23,7 @@ import {
   evaluateApproval,
   isApprovable,
 } from '../core/approval-rules.js';
+import { resolveHumanApprover } from '../core/approval-identity.js';
 
 const app = new Hono();
 
@@ -36,7 +37,6 @@ const requestSchema = z.object({
 const decisionSchema = z.object({
   action_id: z.string().uuid(),
   decision: z.enum(['approved', 'rejected']),
-  approver: z.string().min(1),
   payload_hash: z.string().min(8).optional(),
   reason: z.string().max(2000).optional(),
 });
@@ -306,8 +306,14 @@ app.post('/request', async (c) => {
   });
 });
 
-/** Enregistre la decision humaine. */
+/** Enregistre la decision humaine (scope admin uniquement, identité serveur). */
 app.post('/', async (c) => {
+  const scope = c.get('authScope') as string | undefined;
+  const approver = resolveHumanApprover(scope);
+  if (!approver) {
+    return c.json({ error: 'forbidden' }, 403);
+  }
+
   const parsed = decisionSchema.safeParse(await c.req.json().catch(() => null));
 
   if (!parsed.success) {
@@ -317,7 +323,7 @@ app.post('/', async (c) => {
   const result = await recordDecision({
     actionId: parsed.data.action_id,
     decision: parsed.data.decision,
-    approver: parsed.data.approver,
+    approver,
     payloadHash: parsed.data.payload_hash,
     reason: parsed.data.reason,
   });
