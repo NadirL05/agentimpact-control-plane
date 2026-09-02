@@ -29,6 +29,7 @@ import gmail from './gmail.js';
 import demos from './demos.js';
 import training from './training.js';
 import proposals from './proposals.js';
+import type { AppEnv } from '../core/hono-env.js';
 import {
   createBearerAuthMiddleware,
   loadTokenConfig,
@@ -40,7 +41,7 @@ import { dirname, join } from 'node:path';
 const __dirname_local = dirname(fileURLToPath(import.meta.url));
 const trainingFormHtml = readFileSync(join(__dirname_local, 'public/training.html'), 'utf-8');
 
-const app = new Hono();
+const app = new Hono<AppEnv>();
 
 const tokenConfig =
   process.env.SKIP_AUTH === '1' ? null : loadTokenConfig();

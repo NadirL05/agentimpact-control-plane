@@ -8,6 +8,7 @@ import {
   isBearerExempt,
   isRouteAllowed,
 } from '../core/auth-scopes.js';
+import type { AppEnv } from '../core/hono-env.js';
 import { constantTimeEqualString } from '../core/secure-compare.js';
 
 export type TokenConfig = Record<AuthScope, string>;
@@ -50,7 +51,7 @@ function extractBearer(header: string | undefined): string | null {
 }
 
 export function createBearerAuthMiddleware(config: TokenConfig) {
-  return async (c: Context, next: Next) => {
+  return async (c: Context<AppEnv>, next: Next) => {
     const path = normalizePath(c.req.path);
     const method = c.req.method;
 

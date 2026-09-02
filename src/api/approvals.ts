@@ -24,8 +24,9 @@ import {
   isApprovable,
 } from '../core/approval-rules.js';
 import { resolveHumanApprover } from '../core/approval-identity.js';
+import type { AppEnv } from '../core/hono-env.js';
 
-const app = new Hono();
+const app = new Hono<AppEnv>();
 
 const APPROVAL_WINDOW_MINUTES = Number(process.env.APPROVAL_WINDOW_MINUTES ?? 15);
 
@@ -308,7 +309,7 @@ app.post('/request', async (c) => {
 
 /** Enregistre la decision humaine (scope admin uniquement, identité serveur). */
 app.post('/', async (c) => {
-  const scope = c.get('authScope') as string | undefined;
+  const scope = c.get('authScope');
   const approver = resolveHumanApprover(scope);
   if (!approver) {
     return c.json({ error: 'forbidden' }, 403);
