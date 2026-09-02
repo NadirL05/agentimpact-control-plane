@@ -1,0 +1,106 @@
+# Routeur Slack AgentImpact v1
+
+Worktree : `/opt/agentimpact/runner/worktrees/slack-grok-router-v1`  
+Branche : `feature/slack-grok-router-v1` (non commitée)
+
+## Architecture deux services
+
+```mermaid
+flowchart LR
+  subgraph router [agentimpact-slack-router]
+    SM[Socket Mode]
+    PG[(PostgreSQL)]
+    SOCK[Client Unix Grok]
+  end
+
+  subgraph worker [agentimpact-grok-worker]
+    WS[Socket Unix serveur]
+    AGENT[agent CLI fixe]
+    KEY[LoadCredential CURSOR_API_KEY]
+  end
+
+  subgraph gateways [Gateways Hermès]
+    HC[Hermès consumer]
+    AC[Ana consumer]
+  end
+
+  SM --> PG
+  SM --> SOCK
+  SOCK --> WS
+  KEY --> AGENT
+  WS --> AGENT
+  PG --> HC
+  PG --> AC
+```
+
+### Utilisateurs systemd
+
+| Service | User | Group | Secrets |
+|---------|------|-------|---------|
+| `agentimpact-slack-router` | `agentimpact-slack-router` | `agentimpact-slack-router` + `agentimpact-grok-client` | Tokens Slack uniquement |
+| `agentimpact-grok-worker` | `cursor-grok-worker` | `cursor-grok-worker` | `CURSOR_API_KEY` via LoadCredential |
+
+**Le routeur ne charge jamais `CURSOR_API_KEY`** — garde `assertRouterHasNoCursorKeyEnv()` au démarrage.
+
+### Socket Unix Grok
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Chemin | `/run/agentimpact-grok-worker/grok.sock` |
+| Owner | `cursor-grok-worker` |
+| Group | `agentimpact-grok-client` |
+| Mode | `0660` |
+| Protocole | JSON ligne `{ v, id, prompt }` → `{ v, id, ok, text? }` |
+
+Options agent **fixées côté worker** : `cursor-grok-4.6-medium`, mode `ask`, `single-turn`, timeout 300s, concurrence max 1.
+
+## Persistance PostgreSQL (migration 002)
+
+| Table | Rôle |
+|-------|------|
+| `slack_event_dedup` | PK `(team_id, event_id)` — dedup survive redémarrage |
+| `slack_thread_owners` | PK `thread_key`, UNIQUE `(team_id, channel_id, thread_root_ts)` — ownership immuable |
+| `slack_gateway_inbox` | Inbox Hermès/Ana — pending → processing → done/failed |
+| `slack_router_runs` | Audit |
+
+Transaction atomique avant délégation agent : dedup + ownership en une transaction ; fail-closed si Postgres indisponible.
+
+## Relais Hermès / Ana (inbox réelle)
+
+Pas d'URL HTTP fictive. Mécanisme :
+
+1. Routeur insère dans `slack_gateway_inbox` (target `hermes` ou `ana`).
+2. Consumer `infra/scripts/gateway-inbox-consumer.py` (systemd timer côté gateway) :
+   - `POST /api/gateway-inbox/claim` (token bridge, localhost)
+   - Exécute Hermès via `run-with-profile.sh` + profil (`default` / `agentimpact-growth`)
+   - `POST /api/gateway-inbox/:id/complete`
+3. Routeur poll Postgres jusqu'à réponse ou timeout (fail-closed).
+
+Profils consumer :
+
+| Target | `GATEWAY_INBOX_TARGET` | `HERMES_PROFILE` |
+|--------|------------------------|------------------|
+| Hermès | `hermes` | `default` |
+| Ana | `ana` | `agentimpact-growth` |
+
+## Devin v1
+
+`ESCALADE DEVIN` → **« Escalade non configurée. »** — aucun lancement Devin.
+
+## Prompt `/proc`
+
+Wrapper `grok-agent-run.sh` : prompt via fichier éphémère puis argument positionnel.  
+**Mitigation** : processus court (timeout 300s), worker isolé, permissions socket strictes.  
+**Limite** : visible dans `/proc/<pid>/cmdline` pendant l'exécution — pas de contournement sans API stdin Cursor.
+
+## Rollback
+
+Playbook `slack-grok-router-v1-rollback.yml` : kill switch + stop routeur + stop worker + stop socket.
+
+## Tests
+
+```bash
+cd src && npm run build && npm run lint && npm test
+npm run lint:md   # depuis src/
+ansible-playbook ... --syntax-check
+```

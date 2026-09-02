@@ -1,0 +1,87 @@
+---
+# Déploiement routeur Slack + worker Grok v1 (sans démarrage automatique)
+
+- name: Deploy slack-grok-router v1
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    work_src: "{{ playbook_dir }}/../../../"
+  tasks:
+    - name: Créer groupe agentimpact-grok-client
+      group:
+        name: agentimpact-grok-client
+        system: true
+        state: present
+
+    - name: Créer groupe agentimpact-slack-router
+      group:
+        name: agentimpact-slack-router
+        system: true
+        state: present
+
+    - name: Créer utilisateur agentimpact-slack-router
+      user:
+        name: agentimpact-slack-router
+        groups: agentimpact-grok-client
+        append: true
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Vérifier credentials routeur Slack
+      stat:
+        path: "/etc/agentimpact/credentials/{{ item }}"
+      loop:
+        - slack-router-bot-token
+        - slack-router-app-token
+      register: router_cred_files
+      failed_when: not router_cred_files.results | map(attribute='stat.exists') | list | min
+
+    - name: Vérifier credential Grok worker
+      stat:
+        path: /etc/agentimpact/credentials/cursor-grok-api-key
+      register: grok_cred
+      failed_when: not grok_cred.stat.exists
+
+    - name: Installer unités systemd routeur et worker Grok
+      copy:
+        src: "{{ work_src }}/infra/systemd/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - agentimpact-slack-router.service
+        - agentimpact-grok-worker.service
+        - agentimpact-grok-worker.socket
+
+    - name: Installer tmpfiles.d routeur
+      copy:
+        src: "{{ work_src }}/infra/systemd/agentimpact-slack-router.tmpfiles.conf"
+        dest: /etc/tmpfiles.d/agentimpact-slack-router.conf
+        mode: "0644"
+
+    - name: Installer scripts wrapper et inbox consumer
+      copy:
+        src: "{{ work_src }}/infra/scripts/{{ item.src }}"
+        dest: "/opt/agentimpact/scripts/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: grok-agent-run.sh, dest: grok-agent-run.sh, mode: "0750" }
+        - { src: gateway-inbox-consumer.py, dest: gateway-inbox-consumer.py, mode: "0750" }
+
+    - name: Appliquer migration 002 slack router
+      command: psql -v ON_ERROR_STOP=1 -f {{ work_src }}/src/migrations/002_slack_router.sql
+      environment:
+        PGHOST: "{{ lookup('env', 'PGHOST') | default('127.0.0.1', true) }}"
+        PGDATABASE: "{{ lookup('env', 'PGDATABASE') | default('agentimpact', true) }}"
+        PGUSER: "{{ lookup('env', 'PGUSER') | default('agentimpact_app', true) }}"
+      changed_when: false
+
+    - name: Appliquer tmpfiles
+      command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
+      changed_when: false
+
+    - name: Recharger systemd (sans start)
+      command: systemctl daemon-reload
+      changed_when: false
