@@ -52,6 +52,16 @@ flowchart LR
 | Mode | `0660` |
 | Protocole | JSON ligne `{ v, id, prompt }` → `{ v, id, ok, text? }` |
 
+#### Source d'autorité pour `/run/agentimpact-grok-worker`
+
+| Couche | Rôle |
+| --- | --- |
+| **`agentimpact-grok-worker.socket`** | **Autorité runtime** — crée le répertoire (`DirectoryMode=0750`), le socket (`SocketMode=0660`, `SocketUser`/`SocketGroup`) et conserve le descripteur ouvert pour les connexions successives du routeur. |
+| `agentimpact-slack-router.tmpfiles.conf` | Amorçage au boot uniquement — mêmes owner/group/mode (`0750 cursor-grok-worker agentimpact-grok-client`) ; ne remplace pas l'unité socket une fois systemd actif. |
+| `agentimpact-grok-worker.service` | **Sans `RuntimeDirectory`** — le worker consomme le socket via activation (`TriggeredBy=agentimpact-grok-worker.socket`) et ne doit jamais reprendre la propriété du répertoire (évite un groupe `cursor-grok-worker` qui bloquerait `agentimpact-slack-router`). |
+
+Le routeur dépend uniquement de `agentimpact-grok-worker.socket` (`Requires=`, pas le service worker) et accède au socket via `SupplementaryGroups=agentimpact-grok-client`.
+
 Options agent **fixées côté worker** : `cursor-grok-4.6-medium`, mode `ask`, `single-turn`, timeout 300s, concurrence max 1.
 
 ## Persistance PostgreSQL (migration 002)

@@ -213,6 +213,73 @@ class SystemdRegressionTest(unittest.TestCase):
         self.assertIn("TriggeredBy=agentimpact-grok-worker.socket", service)
         self.assertNotIn("[Install]", service)
 
+    def test_grok_socket_group_is_grok_client(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        self.assertIn("SocketGroup=agentimpact-grok-client", socket)
+
+    def test_grok_socket_mode_is_0660(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        self.assertIn("SocketMode=0660", socket)
+        self.assertNotIn("SocketMode=0777", socket)
+        self.assertNotIn("SocketMode=0666", socket)
+
+    def test_grok_runtime_directory_mode_owner_and_group_only(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        tmpfiles = (
+            self.SYSTEMD / "agentimpact-slack-router.tmpfiles.conf"
+        ).read_text(encoding="utf-8")
+        self.assertIn("DirectoryMode=0750", socket)
+        self.assertNotIn("DirectoryMode=0755", socket)
+        self.assertNotIn("DirectoryMode=0777", socket)
+        self.assertRegex(
+            tmpfiles,
+            r"d /run/agentimpact-grok-worker 0750 cursor-grok-worker agentimpact-grok-client",
+        )
+
+    def test_grok_worker_service_does_not_claim_runtime_directory(self) -> None:
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        self.assertNotIn("RuntimeDirectory=", service)
+        self.assertNotIn("RuntimeDirectoryMode=", service)
+        self.assertIn("Requires=agentimpact-grok-worker.socket", service)
+
+    def test_grok_runtime_directory_authority_is_socket_unit(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        tmpfiles = (
+            self.SYSTEMD / "agentimpact-slack-router.tmpfiles.conf"
+        ).read_text(encoding="utf-8")
+        self.assertIn("ListenStream=/run/agentimpact-grok-worker/grok.sock", socket)
+        self.assertIn("SocketUser=cursor-grok-worker", socket)
+        self.assertIn("SocketGroup=agentimpact-grok-client", socket)
+        self.assertNotIn("RuntimeDirectory=", service)
+        self.assertRegex(
+            tmpfiles,
+            r"d /run/agentimpact-grok-worker 0750 cursor-grok-worker agentimpact-grok-client",
+        )
+
+    def test_grok_socket_supports_repeated_router_connections(self) -> None:
+        """Socket activation garde le descripteur ; le worker ne reprend pas le répertoire."""
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        router = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
+        self.assertIn("Service=agentimpact-grok-worker.service", socket)
+        self.assertIn("SocketGroup=agentimpact-grok-client", socket)
+        self.assertNotIn("RuntimeDirectory=", service)
+        self.assertIn("SupplementaryGroups=agentimpact-grok-client", router)
+        self.assertIn("ReadOnlyPaths=/etc/agentimpact/flags /run/agentimpact-grok-worker", router)
+
+    def test_grok_worker_restart_preserves_router_socket_access(self) -> None:
+        """Redémarrage worker : socket inchangé (unité socket), groupe client conservé."""
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        router = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
+        self.assertIn("Restart=on-failure", service)
+        self.assertNotIn("RuntimeDirectory=", service)
+        self.assertIn("TriggeredBy=agentimpact-grok-worker.socket", service)
+        self.assertIn("Requires=agentimpact-grok-worker.socket", router)
+        self.assertNotIn("Requires=agentimpact-grok-worker.service", router)
+        self.assertIn("SocketGroup=agentimpact-grok-client", socket)
+
     def test_router_loadcredential_secrets(self) -> None:
         content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
         self.assertIn("LoadCredential=slack-router-db-password", content)
