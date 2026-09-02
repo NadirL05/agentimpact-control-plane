@@ -36,7 +36,7 @@ flowchart LR
 ### Utilisateurs systemd
 
 | Service | User | Group | Secrets |
-|---------|------|-------|---------|
+| --- | --- | --- | --- |
 | `agentimpact-slack-router` | `agentimpact-slack-router` | `agentimpact-slack-router` + `agentimpact-grok-client` | Tokens Slack uniquement |
 | `agentimpact-grok-worker` | `cursor-grok-worker` | `cursor-grok-worker` | `CURSOR_API_KEY` via LoadCredential |
 
@@ -45,7 +45,7 @@ flowchart LR
 ### Socket Unix Grok
 
 | Paramètre | Valeur |
-|-----------|--------|
+| --- | --- |
 | Chemin | `/run/agentimpact-grok-worker/grok.sock` |
 | Owner | `cursor-grok-worker` |
 | Group | `agentimpact-grok-client` |
@@ -57,7 +57,7 @@ Options agent **fixées côté worker** : `cursor-grok-4.6-medium`, mode `ask`, 
 ## Persistance PostgreSQL (migration 002)
 
 | Table | Rôle |
-|-------|------|
+| --- | --- |
 | `slack_event_dedup` | PK `(team_id, event_id)` — dedup survive redémarrage |
 | `slack_thread_owners` | PK `thread_key`, UNIQUE `(team_id, channel_id, thread_root_ts)` — ownership immuable |
 | `slack_gateway_inbox` | Inbox Hermès/Ana — pending → processing → done/failed |
@@ -79,7 +79,7 @@ Pas d'URL HTTP fictive. Mécanisme :
 Profils consumer :
 
 | Target | `GATEWAY_INBOX_TARGET` | `HERMES_PROFILE` |
-|--------|------------------------|------------------|
+| --- | --- | --- |
 | Hermès | `hermes` | `default` |
 | Ana | `ana` | `agentimpact-growth` |
 
