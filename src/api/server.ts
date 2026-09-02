@@ -28,17 +28,38 @@ import outreach from './outreach.js';
 import gmail from './gmail.js';
 import demos from './demos.js';
 import training from './training.js';
+import proposals from './proposals.js';
+import dashboardRoutes from './dashboard-routes.js';
+import type { AppEnv } from '../core/hono-env.js';
+import {
+  createBearerAuthMiddleware,
+  loadTokenConfig,
+} from '../middleware/auth.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import {
+  issueSignedSessionToken,
+  sessionCookieHeader,
+} from '../core/signed-session.js';
+import { trainingSessionSecret } from '../core/training-form-auth.js';
 
 const __dirname_local = dirname(fileURLToPath(import.meta.url));
 const trainingFormHtml = readFileSync(join(__dirname_local, 'public/training.html'), 'utf-8');
 
-const app = new Hono();
+const app = new Hono<AppEnv>();
 
-// CORS avant le montage des routes : sinon /leads et /missions y echappent.
-app.use('*', cors({ origin: 'http://localhost:8081' }));
+const tokenConfig =
+  process.env.SKIP_AUTH === '1' ? null : loadTokenConfig();
+
+// CORS pour dev local (dashboard Vite :8081) ; le dashboard servi par l'API est same-origin.
+app.use('*', cors({ origin: 'http://localhost:8081', credentials: true }));
+
+if (tokenConfig) {
+  app.use('*', createBearerAuthMiddleware(tokenConfig));
+}
+
+app.route('/dashboard', dashboardRoutes);
 
 app.route('/leads', leads);
 app.route('/missions', missions);
@@ -55,8 +76,21 @@ app.route('/api/outreach', outreach);
 app.route('/api/gmail', gmail);
 app.route('/api/demos', demos);
 app.route('/api/training', training);
+app.route('/api/proposals', proposals);
 
-app.get('/training', (c) => c.html(trainingFormHtml));
+app.get('/training', (c) => {
+  const secret = trainingSessionSecret();
+  if (!secret) {
+    return c.text('Training indisponible — TRAINING_FORM_TOKEN non configuré.', 503);
+  }
+
+  const token = issueSignedSessionToken('training', secret);
+  c.header(
+    'Set-Cookie',
+    sessionCookieHeader('ai_training', token, '/api/training', 30 * 60),
+  );
+  return c.html(trainingFormHtml);
+});
 
 app.get('/health', async (c) => {
   try {
@@ -609,15 +643,17 @@ app.post('/api/actions', async (c) => {
   }
 });
 
+export { app };
+
 const port = Number(process.env.PORT) || 3000;
-console.log(`Server starting on port ${port}`);
 
-export default { port, handler: app.fetch };
-
-if (import.meta.vitest == null) {
+if (import.meta.vitest == null && process.env.NODE_ENV !== 'test') {
+  console.log(`Server starting on port ${port}`);
   const { serve } = await import('@hono/node-server');
   serve({
     fetch: app.fetch,
     port,
   });
 }
+
+export default { port, handler: app.fetch };

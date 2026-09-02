@@ -2,16 +2,18 @@ import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { pool } from './db.js';
 import { tryAutopilot } from './autopilot.js';
+import { canDispatch } from '../core/mission-rules.js';
+import { parseMissionPagination } from '../core/mission-pagination.js';
 
 const app = new Hono();
 
 const priorities = ['low', 'medium', 'high', 'critical'] as const;
 
 app.get('/', async (c) => {
-  const requestedLimit = Number(c.req.query('limit') ?? 50);
-  const limit = Number.isInteger(requestedLimit)
-    ? Math.min(Math.max(requestedLimit, 1), 100)
-    : 50;
+  const { limit, offset } = parseMissionPagination(
+    c.req.query('limit'),
+    c.req.query('offset'),
+  );
 
   const targetAgent = c.req.query('target_agent') ?? null;
   const status = c.req.query('status') ?? null;
@@ -42,11 +44,55 @@ app.get('/', async (c) => {
      where ($1::text is null or m.target_agent = $1)
        and ($2::text is null or m.status = $2)
      order by m.created_at desc
-     limit $3`,
-    [targetAgent, status, limit],
+     limit $3 offset $4`,
+    [targetAgent, status, limit, offset],
   );
 
-  return c.json({ count: result.rows.length, items: result.rows });
+  return c.json({ count: result.rows.length, items: result.rows, limit, offset });
+});
+
+app.get('/:id', async (c) => {
+  const missionId = c.req.param('id');
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      missionId,
+    )
+  ) {
+    return c.json({ error: 'Invalid mission id.' }, 400);
+  }
+
+  const result = await pool.query(
+    `select
+       m.id,
+       m.created_at,
+       m.updated_at,
+       m.action_id,
+       m.target_agent,
+       m.source_type,
+       m.source_id,
+       m.source_url,
+       m.title,
+       m.payload,
+       m.priority,
+       m.status,
+       m.dry_run,
+       m.requires_human_validation,
+       m.result,
+       m.processed_at,
+       m.error_message,
+       a.payload_hash,
+       a.status as action_status
+     from agent_missions m
+     join agent_actions a on a.id = m.action_id
+     where m.id = $1`,
+    [missionId],
+  );
+
+  if (result.rows.length === 0) {
+    return c.json({ error: 'Mission not found.' }, 404);
+  }
+
+  return c.json({ item: result.rows[0] });
 });
 
 app.post('/', async (c) => {
@@ -189,7 +235,8 @@ app.post('/', async (c) => {
     // dev-senior (branche + PR, jamais de merge possible cote GitHub — voir
     // la protection de branche). Toute autre cible reste manuelle.
     let autopilot: { engaged: boolean; reason?: string } | null = null;
-    if (body.target_agent === 'dev-senior') {
+    const skipAutopilot = body.source_type === 'cursor-hermesctl';
+    if (body.target_agent === 'dev-senior' && !skipAutopilot) {
       autopilot = await tryAutopilot(action.id, 'create_agent_mission', action.payload_hash, 'read_only');
     }
 
@@ -223,6 +270,75 @@ app.post('/', async (c) => {
       );
     }
 
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/:id/dispatch', async (c) => {
+  const missionId = c.req.param('id');
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      missionId,
+    )
+  ) {
+    return c.json({ error: 'Invalid mission id.' }, 400);
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const currentResult = await client.query(
+      `select m.id, m.status as mission_status, a.status as action_status
+       from agent_missions m
+       join agent_actions a on a.id = m.action_id
+       where m.id = $1
+       for update`,
+      [missionId],
+    );
+
+    if (currentResult.rows.length === 0) {
+      await client.query('rollback');
+      return c.json({ error: 'Mission not found.' }, 404);
+    }
+
+    const row = currentResult.rows[0];
+    const verdict = canDispatch(row.mission_status, row.action_status);
+
+    if (!verdict.allowed) {
+      await client.query('rollback');
+      return c.json(
+        { error: verdict.reason, httpStatus: verdict.httpStatus },
+        verdict.httpStatus,
+      );
+    }
+
+    const updated = await client.query(
+      `update agent_missions
+       set status = 'in_progress', updated_at = now()
+       where id = $1
+       returning *`,
+      [missionId],
+    );
+
+    await client.query(
+      `insert into agent_audit_events (action_id, event_type, actor, details)
+       select action_id, 'dispatched', 'dispatch-missions', $2::jsonb
+       from agent_missions where id = $1`,
+      [
+        missionId,
+        JSON.stringify({ mission_id: missionId, source: 'dispatch-api' }),
+      ],
+    );
+
+    await client.query('commit');
+
+    return c.json({ item: updated.rows[0], status: 'in_progress' });
+  } catch (error) {
+    await client.query('rollback');
     throw error;
   } finally {
     client.release();

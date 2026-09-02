@@ -10,8 +10,12 @@ function setStatus(msg) {
 }
 
 async function fetchJson(path) {
-  const url = apiUrlInput.value.trim().replace(/\/$/, '') + path;
-  const res = await fetch(url);
+  const base = apiUrlInput.value.trim().replace(/\/$/, '') || window.location.origin;
+  const res = await fetch(base + path, { credentials: 'include' });
+  if (res.status === 401) {
+    window.location.href = '/dashboard/login.html';
+    throw new Error('unauthorized');
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -68,28 +72,25 @@ function escapeHtml(str) {
 async function loadAll() {
   try {
     setStatus('Chargement…');
-    
+
     const [profiles, policies, workflows] = await Promise.all([
       fetchJson('/profiles').catch(() => ({ count: 0, items: [] })),
       fetchJson('/policies').catch(() => ({ count: 0, items: [] })),
       fetchJson('/workflows').catch(() => ({ count: 0, items: [] })),
     ]);
 
-    // Profils
     if (profiles.count > 0) {
       profilesContent.innerHTML = profiles.items.map(renderProfile).join('');
     } else {
       profilesContent.innerHTML = '<div class="empty">Aucun profil</div>';
     }
 
-    // Policies
     if (policies.count > 0) {
       policiesContent.innerHTML = policies.items.map(renderPolicy).join('');
     } else {
       policiesContent.innerHTML = '<div class="empty">Aucune policy</div>';
     }
 
-    // Workflows
     if (workflows.count > 0) {
       workflowsContent.innerHTML = workflows.items.map(renderWorkflow).join('');
     } else {
@@ -105,5 +106,4 @@ async function loadAll() {
   }
 }
 
-// Charger au démarrage
 loadAll();

@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # newer_than:15m couvre large par rapport a l intervalle du cron (5 min) :
 # une reponse jamais manquee vaut mieux qu un appel Gmail de moins.
@@ -20,10 +20,10 @@ API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
 # fait tourner ces bots pour rien. category:primary exclut Social/Promotions
 # /Updates/Forums a la source, avant meme le premier appel API.
 QUERY="in:inbox category:primary newer_than:15m"
+ENCODED_QUERY="$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$QUERY")"
 
 messages="$(
-  curl --silent --show-error --max-time 20 \
-    -G "${API}/api/gmail/replies" --data-urlencode "q=${QUERY}"
+  "${SCRIPT_DIR}/cp-api.sh" hermes GET "/api/gmail/replies?q=${ENCODED_QUERY}"
 )"
 
 echo "$messages" | python3 -c "
@@ -42,10 +42,9 @@ for m in data.get('items', []):
     }))
 " | while read -r payload; do
   [ -z "$payload" ] && continue
-  curl --silent --show-error --max-time 15 \
-    -X POST "${API}/api/outreach/conversations/inbound" \
-    -H 'Content-Type: application/json' \
-    -d "$payload" | python3 -c "
+  body_file=$(mktemp)
+  printf '%s' "$payload" >"$body_file"
+  "${SCRIPT_DIR}/cp-api.sh" hermes POST "/api/outreach/conversations/inbound" "$body_file" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 if d.get('deduplicated'):
@@ -53,4 +52,5 @@ if d.get('deduplicated'):
 else:
     print('conversation classee:', d.get('classification'))
 "
+  rm -f "$body_file"
 done

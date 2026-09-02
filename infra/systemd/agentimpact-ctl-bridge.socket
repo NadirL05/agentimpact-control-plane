@@ -1,0 +1,14 @@
+[Unit]
+Description=hermesctl bridge Unix socket
+Before=agentimpact-ctl-bridge.service
+
+[Socket]
+ListenStream=/run/agentimpact/hermesctl.sock
+SocketUser=agentimpact-ctl
+SocketGroup=agentimpact-ctl
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+
+[Install]
+WantedBy=sockets.target

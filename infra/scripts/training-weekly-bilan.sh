@@ -2,12 +2,12 @@
 # Bilan hebdo sport (vendredi 17h UTC) — remigre depuis l'orchestrateur legacy.
 set -euo pipefail
 
-API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOKEN="$(grep SLACK_BOT_TOKEN /opt/agentimpact/.env | cut -d= -f2)"
 CHANNEL="$(grep SLACK_HOME_CHANNEL /opt/agentimpact/.env | cut -d= -f2)"
 
 TEXT="$(
-  curl --silent --show-error --max-time 15 "${API}/api/training/week" | python3 -c "
+  "${SCRIPT_DIR}/cp-api.sh" hermes GET "/api/training/week" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 items = data.get('items', [])

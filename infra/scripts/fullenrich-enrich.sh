@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-API_BASE="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "Usage: $(basename "$0") <lead_uuid> [--dry-run]" >&2
@@ -37,13 +37,12 @@ if ! [[ "$LEAD_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
   exit 65
 fi
 
+body_file=$(mktemp)
+printf '{"lead_id":"%s","dry_run":%s}' "$LEAD_ID" "$DRY_RUN" >"$body_file"
 response="$(
-  curl --silent --show-error --max-time 30 \
-    -w '\n%{http_code}' \
-    -X POST "${API_BASE}/api/fullenrich/enrich" \
-    -H 'Content-Type: application/json' \
-    -d "{\"lead_id\":\"${LEAD_ID}\",\"dry_run\":${DRY_RUN}}"
+  CP_API_STATUS=1 "${SCRIPT_DIR}/cp-api.sh" hermes POST "/api/fullenrich/enrich" "$body_file"
 )"
+rm -f "$body_file"
 
 body="$(printf '%s' "$response" | sed '$d')"
 status="$(printf '%s' "$response" | tail -n1)"

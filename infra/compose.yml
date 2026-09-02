@@ -11,6 +11,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./app/src/migrations:/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agentimpact_app -d agentimpact"]
       interval: 10s
@@ -47,6 +48,12 @@ services:
       OUTREACH_LAUNCH_DATE: ${OUTREACH_LAUNCH_DATE:-}
       DEMO_TTL_DAYS: ${DEMO_TTL_DAYS:-14}
       DEMO_PUBLIC_BASE: ${DEMO_PUBLIC_BASE:-https://demo.agentimpact.fr}
+      TRAINING_FORM_TOKEN: ${TRAINING_FORM_TOKEN:?TRAINING_FORM_TOKEN manquant dans .env}
+      DASHBOARD_ACCESS_TOKEN: ${DASHBOARD_ACCESS_TOKEN:?DASHBOARD_ACCESS_TOKEN manquant dans .env}
+    env_file:
+      - /etc/agentimpact/tokens/bridge.env
+      - /etc/agentimpact/tokens/hermes.env
+      - /etc/agentimpact/tokens/admin.env
     volumes:
       # Credentials Google montes en lecture seule : le fichier appartient a
       # Hermes et ne doit jamais etre reecrit par l'API.

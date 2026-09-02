@@ -152,6 +152,7 @@ document.getElementById('submit').addEventListener('click', async () => {
     const res = await fetch('/api/training/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text());

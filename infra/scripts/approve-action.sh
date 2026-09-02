@@ -1,23 +1,14 @@
 #!/usr/bin/env bash
-# Enregistre une decision humaine sur une action agent, via le control plane.
-#
-# Passe par l'API et non par SQL direct : c'est l'API qui verifie le
-# payload_hash, l'expiration, l'auto-approbation et le rejeu. Ecrire en base
-# directement contournerait ces garde-fous.
-#
-# Usage :
-#   approve-action.sh <action_id> approve <approbateur> [raison]
-#   approve-action.sh <action_id> reject  <approbateur> [raison]
-#   approve-action.sh --pending
+# Enregistre une decision humaine sur une action agent, via le control plane (admin).
 
 set -euo pipefail
 
-API_BASE="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  approve-action.sh <action_id> approve|reject <approbateur> [raison]
+  approve-action.sh <action_id> approve|reject [raison]
   approve-action.sh --pending
 USAGE
   exit 64
@@ -26,17 +17,16 @@ USAGE
 [ $# -ge 1 ] || usage
 
 if [ "$1" = '--pending' ]; then
-  curl --silent --show-error --max-time 15 "${API_BASE}/api/approvals/pending"
+  "${SCRIPT_DIR}/cp-api.sh" hermes GET '/api/approvals/pending'
   echo
   exit 0
 fi
 
-[ $# -ge 3 ] || usage
+[ $# -ge 2 ] || usage
 
 ACTION_ID="$1"
 VERB="$2"
-APPROVER="$3"
-REASON="${4:-}"
+REASON="${3:-}"
 
 case "$VERB" in
   approve) DECISION=approved ;;
@@ -49,10 +39,8 @@ if ! [[ "$ACTION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
   exit 65
 fi
 
-# Le hash est relu sur l'action : la decision porte sur le payload courant.
-# Si l'action a change depuis la demande, l'API rejette (payload_hash_mismatch).
 PAYLOAD_HASH="$(
-  curl --silent --show-error --max-time 15 "${API_BASE}/api/approvals/pending" |
+  "${SCRIPT_DIR}/cp-api.sh" hermes GET '/api/approvals/pending' |
     python3 -c "
 import json, sys
 action_id = sys.argv[1]
@@ -65,31 +53,31 @@ for item in data.get('items', []):
 )"
 
 if [ -z "$PAYLOAD_HASH" ]; then
-  echo '{"error":"action_not_pending","message":"Action absente de la file d attente (deja traitee, ou inconnue)."}' >&2
+  echo '{"error":"action_not_pending"}' >&2
   exit 66
 fi
 
 body="$(
   python3 -c "
 import json, sys
-action_id, decision, approver, payload_hash, reason = sys.argv[1:6]
+action_id, decision, payload_hash, reason = sys.argv[1:5]
 payload = {
     'action_id': action_id,
     'decision': decision,
-    'approver': approver,
     'payload_hash': payload_hash,
 }
 if reason:
     payload['reason'] = reason
 print(json.dumps(payload))
-" "$ACTION_ID" "$DECISION" "$APPROVER" "$PAYLOAD_HASH" "$REASON"
+" "$ACTION_ID" "$DECISION" "$PAYLOAD_HASH" "$REASON"
 )"
 
+BODY_FILE="$(mktemp)"
+trap 'rm -f "$BODY_FILE"' EXIT
+printf '%s' "$body" >"$BODY_FILE"
+
 response="$(
-  curl --silent --show-error --max-time 20 -w '\n%{http_code}' \
-    -X POST "${API_BASE}/api/approvals" \
-    -H 'Content-Type: application/json' \
-    -d "$body"
+  CP_API_STATUS=1 "${SCRIPT_DIR}/cp-api.sh" admin POST '/api/approvals' "$BODY_FILE"
 )"
 
 printf '%s\n' "$(printf '%s' "$response" | sed '$d')"

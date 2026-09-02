@@ -5,13 +5,13 @@
 
 set -euo pipefail
 
-API="${AGENTIMPACT_API_BASE:-http://localhost:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="/root/obsidian-vault/Nadir"
 OUT="${VAULT}/État-Infra.md"
 NOW_UTC="$(date -u +"%Y-%m-%d %H:%M UTC")"
 
-AUTOPILOT="$(curl --silent --show-error --max-time 10 "${API}/api/clients/autopilot")"
-METRICS="$(curl --silent --show-error --max-time 10 "${API}/api/clients/metrics?days=1")"
+AUTOPILOT="$("${SCRIPT_DIR}/cp-api.sh" hermes GET "/api/clients/autopilot")"
+METRICS="$("${SCRIPT_DIR}/cp-api.sh" hermes GET "/api/clients/metrics?days=1")"
 
 OPENROUTER_KEY="$(grep OPENROUTER_API_KEY /home/hermes/.hermes/.env | cut -d= -f2)"
 CREDITS="$(curl --silent --show-error --max-time 10 -H "Authorization: Bearer ${OPENROUTER_KEY}" "https://openrouter.ai/api/v1/credits")"

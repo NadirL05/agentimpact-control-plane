@@ -1,0 +1,182 @@
+---
+# Déploiement atomique hermesctl v1
+# Ordre critique : tokens + scripts AVANT activation auth fail-closed API.
+
+- name: Deploy hermesctl v1 (atomic)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repo_root: /opt/agentimpact
+    # playbook_dir = .../infra/ansible/playbooks → racine dépôt = ../../../
+    work_src: "{{ playbook_dir }}/../../../"
+    rollback_bundle_dir: /var/lib/agentimpact/rollback/hermesctl-v1
+    rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
+    rollback_api_src_dir: "{{ rollback_bundle_dir }}/app-src"
+    rollback_compose_file: "{{ rollback_bundle_dir }}/compose.yml"
+  tasks:
+    - name: Vérifier tokens présents (fichiers, pas affichage)
+      stat:
+        path: "/etc/agentimpact/tokens/{{ item }}.env"
+      loop:
+        - bridge
+        - hermes
+        - admin
+      register: token_files
+      failed_when: not token_files.results | map(attribute='stat.exists') | list | min
+
+    - name: Créer groupe système agentimpact-ctl
+      group:
+        name: agentimpact-ctl
+        system: true
+        state: present
+
+    - name: Créer compte système agentimpact-ctl
+      user:
+        name: agentimpact-ctl
+        group: agentimpact-ctl
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Vérifier secrets training et dashboard dans .env
+      shell: |
+        set -euo pipefail
+        grep -qE '^TRAINING_FORM_TOKEN=.+' "{{ repo_root }}/.env"
+        grep -qE '^DASHBOARD_ACCESS_TOKEN=.+' "{{ repo_root }}/.env"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Créer répertoire rollback bundle hermesctl-v1
+      file:
+        path: "{{ rollback_bundle_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Vérifier scripts existants avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/scripts"
+      register: existing_scripts
+
+    - name: Vérifier sources API existantes avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/app/src"
+      register: existing_api_src
+
+    - name: Vérifier compose.yml existant avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/compose.yml"
+      register: existing_compose
+
+    - name: Sauvegarder scripts pre-hermesctl-v1
+      synchronize:
+        src: "{{ repo_root }}/scripts/"
+        dest: "{{ rollback_scripts_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_scripts.stat.exists
+
+    - name: Sauvegarder sources API pre-hermesctl-v1
+      synchronize:
+        src: "{{ repo_root }}/app/src/"
+        dest: "{{ rollback_api_src_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_api_src.stat.exists
+
+    - name: Sauvegarder compose.yml pre-hermesctl-v1
+      copy:
+        src: "{{ repo_root }}/compose.yml"
+        dest: "{{ rollback_compose_file }}"
+        remote_src: true
+        mode: "0644"
+      when: existing_compose.stat.exists
+
+    - name: Synchroniser migrations SQL vers app/src/migrations
+      synchronize:
+        src: "{{ work_src }}/src/migrations/"
+        dest: "{{ repo_root }}/app/src/migrations/"
+        delete: false
+
+    - name: Synchroniser code API vers app/src
+      synchronize:
+        src: "{{ work_src }}/src/"
+        dest: "{{ repo_root }}/app/src/"
+        delete: false
+
+    - name: Synchroniser compose.yml
+      copy:
+        src: "{{ work_src }}/infra/compose.yml"
+        dest: "{{ repo_root }}/compose.yml"
+        mode: "0644"
+
+    - name: Appliquer migration SQL proposals (stdin via service db)
+      shell: |
+        set -euo pipefail
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          psql -U agentimpact_app -d agentimpact \
+          < "{{ repo_root }}/app/src/migrations/001_cursor_proposals.sql"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Synchroniser scripts migrés
+      synchronize:
+        src: "{{ work_src }}/infra/scripts/"
+        dest: "{{ repo_root }}/scripts/"
+        delete: false
+
+    - name: Installer ctl-bridge
+      synchronize:
+        src: "{{ work_src }}/infra/ctl-bridge/"
+        dest: "{{ repo_root }}/ctl-bridge/"
+        delete: false
+
+    - name: Installer client hermesctl
+      synchronize:
+        src: "{{ work_src }}/infra/runner/hermesctl/"
+        dest: "{{ repo_root }}/runner/bin/"
+        delete: false
+
+    - name: Installer unités systemd
+      copy:
+        src: "{{ work_src }}/infra/systemd/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - agentimpact-ctl-bridge.socket
+        - agentimpact-ctl-bridge.service
+
+    - name: tmpfiles.d agentimpact-ctl
+      copy:
+        src: "{{ work_src }}/infra/systemd/agentimpact-ctl.conf"
+        dest: /etc/tmpfiles.d/agentimpact-ctl.conf
+        mode: "0644"
+
+    - name: Redémarrer API (auth fail-closed) — après sync code + tokens + scripts
+      command: docker compose -f {{ repo_root }}/compose.yml up -d --build api
+      changed_when: true
+
+    - name: Activer socket bridge
+      systemd:
+        name: agentimpact-ctl-bridge.socket
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Activer service bridge
+      systemd:
+        name: agentimpact-ctl-bridge.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Ajouter agentimpact-runner au groupe agentimpact-ctl
+      user:
+        name: agentimpact-runner
+        groups: agentimpact-ctl
+        append: true

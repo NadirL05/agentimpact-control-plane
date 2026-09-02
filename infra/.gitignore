@@ -5,3 +5,7 @@
 *.pem
 *.key
 credentials.json
+
+# Artefacts Python (bridge ctl)
+__pycache__/
+*.py[cod]

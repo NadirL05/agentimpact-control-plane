@@ -1,0 +1,77 @@
+---
+# Rollback atomique hermesctl v1 — restaure scripts, sources API et compose avant redémarrage API.
+
+- name: Rollback hermesctl v1
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repo_root: /opt/agentimpact
+    rollback_bundle_dir: /var/lib/agentimpact/rollback/hermesctl-v1
+    rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
+    rollback_api_src_dir: "{{ rollback_bundle_dir }}/app-src"
+    rollback_compose_file: "{{ rollback_bundle_dir }}/compose.yml"
+  tasks:
+    - name: Arrêter bridge
+      systemd:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      loop:
+        - agentimpact-ctl-bridge.service
+        - agentimpact-ctl-bridge.socket
+
+    - name: Retirer agentimpact-runner du groupe agentimpact-ctl (préserve les autres groupes)
+      command: gpasswd -d agentimpact-runner agentimpact-ctl
+      register: gpasswd_result
+      changed_when: gpasswd_result.rc == 0
+      failed_when:
+        - gpasswd_result.rc != 0
+        - "'is not a member' not in gpasswd_result.stderr"
+
+    - name: Vérifier backup scripts disponible
+      stat:
+        path: "{{ rollback_scripts_dir }}"
+      register: scripts_backup
+
+    - name: Vérifier backup sources API disponible
+      stat:
+        path: "{{ rollback_api_src_dir }}"
+      register: api_src_backup
+
+    - name: Vérifier backup compose.yml disponible
+      stat:
+        path: "{{ rollback_compose_file }}"
+      register: compose_backup
+
+    - name: Échec si backup bundle incomplet
+      fail:
+        msg: "Rollback impossible — bundle hermesctl-v1 incomplet (scripts, app/src ou compose.yml)"
+      when: >
+        not scripts_backup.stat.exists
+        or not api_src_backup.stat.exists
+        or not compose_backup.stat.exists
+
+    - name: Restaurer scripts versionnés pre-hermesctl-v1
+      synchronize:
+        src: "{{ rollback_scripts_dir }}/"
+        dest: "{{ repo_root }}/scripts/"
+        delete: false
+
+    - name: Restaurer sources API versionnées pre-hermesctl-v1
+      synchronize:
+        src: "{{ rollback_api_src_dir }}/"
+        dest: "{{ repo_root }}/app/src/"
+        delete: false
+
+    - name: Restaurer compose.yml versionné pre-hermesctl-v1
+      copy:
+        src: "{{ rollback_compose_file }}"
+        dest: "{{ repo_root }}/compose.yml"
+        remote_src: true
+        mode: "0644"
+
+    - name: Redémarrer API après restauration bundle complète
+      command: docker compose -f {{ repo_root }}/compose.yml up -d api
+      changed_when: true
