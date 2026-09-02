@@ -1,13 +1,64 @@
 ---
-# Déploiement routeur Slack + worker Grok v1 (sans démarrage automatique)
+# Déploiement routeur Slack + worker Grok v1 (sans démarrage automatique du routeur)
 
 - name: Deploy slack-grok-router v1
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
+    repo_root: /opt/agentimpact
     work_src: "{{ playbook_dir }}/../../../"
+    rollback_bundle_dir: /var/lib/agentimpact/rollback/slack-grok-router-v1
+    rollback_dist_dir: "{{ rollback_bundle_dir }}/app-dist"
+    rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
+    rollback_systemd_dir: "{{ rollback_bundle_dir }}/systemd"
+    rollback_tmpfiles_dir: "{{ rollback_bundle_dir }}/tmpfiles"
+    rollback_config_dir: "{{ rollback_bundle_dir }}/config"
+    rollback_pg_backup_dir: "{{ rollback_bundle_dir }}/pg-backup"
+    grok_agent_cli: /var/lib/cursor-grok-worker/.local/bin/agent
+    grok_workspace: /opt/agentimpact/grokbot/workspace
+    min_disk_mb: 1024
+    systemd_units:
+      - agentimpact-slack-router.service
+      - agentimpact-grok-worker.service
+      - agentimpact-grok-worker.socket
+      - agentimpact-gateway-inbox-hermes.service
+      - agentimpact-gateway-inbox-ana.service
+    managed_scripts:
+      - grok-agent-run.sh
+      - gateway-inbox-consumer.py
+    managed_configs:
+      - /etc/agentimpact/slack-router.env
+      - /etc/agentimpact/grok-worker.env
+      - /etc/agentimpact/gateway-inbox.env
   tasks:
+    - name: Vérifier compose.yml lisible par root
+      stat:
+        path: "{{ repo_root }}/compose.yml"
+      register: compose_stat
+      failed_when: not compose_stat.stat.exists or not compose_stat.stat.readable
+
+    - name: Vérifier services api et db dans compose
+      shell: |
+        set -euo pipefail
+        grep -qE '^\s+db:' "{{ repo_root }}/compose.yml"
+        grep -qE '^\s+api:' "{{ repo_root }}/compose.yml"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Vérifier espace disque suffisant
+      shell: |
+        set -euo pipefail
+        avail=$(df -BM --output=avail "{{ repo_root }}" | tail -1 | tr -dc '0-9')
+        if [ "$avail" -lt {{ min_disk_mb }} ]; then
+          echo "insufficient_disk_mb:${avail}" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Créer groupe agentimpact-grok-client
       group:
         name: agentimpact-grok-client
@@ -20,6 +71,28 @@
         system: true
         state: present
 
+    - name: Vérifier si cursor-grok-worker existe déjà
+      command: getent passwd cursor-grok-worker
+      register: grok_user_getent
+      changed_when: false
+      failed_when: false
+
+    - name: Créer groupe cursor-grok-worker
+      group:
+        name: cursor-grok-worker
+        system: true
+        state: present
+
+    - name: Créer utilisateur cursor-grok-worker si absent
+      user:
+        name: cursor-grok-worker
+        group: cursor-grok-worker
+        home: /var/lib/cursor-grok-worker
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: true
+      when: grok_user_getent.rc != 0
+
     - name: Créer utilisateur agentimpact-slack-router
       user:
         name: agentimpact-slack-router
@@ -30,12 +103,36 @@
         create_home: false
         state: present
 
+    - name: Créer et sécuriser workspace Grok
+      file:
+        path: "{{ grok_workspace }}"
+        state: directory
+        owner: cursor-grok-worker
+        group: cursor-grok-worker
+        mode: "0750"
+
+    - name: Vérifier CLI Cursor agent présent et exécutable
+      stat:
+        path: "{{ grok_agent_cli }}"
+      register: grok_agent_cli_stat
+      failed_when: >
+        not grok_agent_cli_stat.stat.exists
+        or not grok_agent_cli_stat.stat.executable
+
+    - name: Vérifier version CLI Cursor (sans exécution payante)
+      command: "{{ grok_agent_cli }} --version"
+      register: grok_agent_version
+      changed_when: false
+      failed_when: grok_agent_version.rc != 0
+
     - name: Vérifier credentials routeur Slack
       stat:
         path: "/etc/agentimpact/credentials/{{ item }}"
       loop:
         - slack-router-bot-token
         - slack-router-app-token
+        - slack-router-db-password
+        - gateway-inbox-bridge-token
       register: router_cred_files
       failed_when: not router_cred_files.results | map(attribute='stat.exists') | list | min
 
@@ -45,15 +142,154 @@
       register: grok_cred
       failed_when: not grok_cred.stat.exists
 
-    - name: Installer unités systemd routeur et worker Grok
+    - name: Vérifier permissions sûres credentials
+      shell: |
+        set -euo pipefail
+        for f in /etc/agentimpact/credentials/*; do
+          [ -e "$f" ] || continue
+          perms=$(stat -c '%a' "$f")
+          other=$((perms % 10))
+          group=$(((perms / 10) % 10))
+          if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
+            echo "unsafe_permissions:$f:$perms" >&2
+            exit 1
+          fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Vérifier artefacts build host requis
+      stat:
+        path: "{{ repo_root }}/app/dist/{{ item }}"
+      loop:
+        - slack-router/daemon.js
+        - grok-worker/server.js
+      register: host_dist_files
+      failed_when: not host_dist_files.results | map(attribute='stat.exists') | list | min
+
+    - name: Créer répertoire rollback bundle slack-grok-router-v1
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ rollback_bundle_dir }}"
+        - "{{ rollback_dist_dir }}"
+        - "{{ rollback_scripts_dir }}"
+        - "{{ rollback_systemd_dir }}"
+        - "{{ rollback_tmpfiles_dir }}"
+        - "{{ rollback_config_dir }}"
+        - "{{ rollback_pg_backup_dir }}"
+
+    - name: Vérifier dist existant avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/app/dist"
+      register: existing_dist
+
+    - name: Sauvegarder dist pre-slack-grok
+      synchronize:
+        src: "{{ repo_root }}/app/dist/"
+        dest: "{{ rollback_dist_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_dist.stat.exists
+
+    - name: Sauvegarder scripts gérés pre-slack-grok
+      copy:
+        src: "{{ repo_root }}/scripts/{{ item }}"
+        dest: "{{ rollback_scripts_dir }}/{{ item }}"
+        remote_src: true
+        mode: "0750"
+      loop: "{{ managed_scripts }}"
+      failed_when: false
+
+    - name: Sauvegarder unités systemd existantes
+      copy:
+        src: "/etc/systemd/system/{{ item }}"
+        dest: "{{ rollback_systemd_dir }}/{{ item }}"
+        remote_src: true
+        mode: "0644"
+      loop: "{{ systemd_units }}"
+      failed_when: false
+
+    - name: Sauvegarder tmpfiles existants
+      copy:
+        src: "/etc/tmpfiles.d/agentimpact-slack-router.conf"
+        dest: "{{ rollback_tmpfiles_dir }}/agentimpact-slack-router.conf"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Vérifier configs non secrètes avant sauvegarde
+      shell: |
+        set -euo pipefail
+        for cfg in /etc/agentimpact/slack-router.env /etc/agentimpact/grok-worker.env /etc/agentimpact/gateway-inbox.env; do
+          [ -f "$cfg" ] || continue
+          if grep -qE '^(PGPASSWORD|SLACK_ROUTER_BRIDGE_TOKEN|CURSOR_API_KEY|DATABASE_URL)=' "$cfg"; then
+            echo "secret_in_non_secret_config:$cfg" >&2
+            exit 1
+          fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Sauvegarder configurations non secrètes existantes
+      copy:
+        src: "{{ item }}"
+        dest: "{{ rollback_config_dir }}/{{ item | basename }}"
+        remote_src: true
+        mode: "0640"
+      loop: "{{ managed_configs }}"
+      failed_when: false
+
+    - name: Sauvegarde PostgreSQL pre-migration 002
+      shell: |
+        set -euo pipefail
+        stamp=$(date -u +%Y%m%d%H%M%S)
+        dump="{{ rollback_pg_backup_dir }}/pre-002-${stamp}.dump"
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          pg_dump -U agentimpact_app -d agentimpact --format=custom \
+          > "$dump"
+        chmod 0600 "$dump"
+        echo "$dump" > "{{ rollback_pg_backup_dir }}/latest-002.path"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      register: pg_backup_002
+
+    - name: Enregistrer chemin sauvegarde PostgreSQL 002 (sans contenu)
+      debug:
+        msg: "pg_backup_002={{ pg_backup_002.stdout_lines[-1] | default('unknown') }}"
+
+    - name: Vérifier sauvegarde PostgreSQL non vide
+      shell: |
+        set -euo pipefail
+        latest=$(ls -t "{{ rollback_pg_backup_dir }}"/*.dump 2>/dev/null | head -1)
+        test -n "$latest"
+        test -s "$latest"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Appliquer migration 002 slack router (stdin via service db)
+      shell: |
+        set -euo pipefail
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          psql -v ON_ERROR_STOP=1 -U agentimpact_app -d agentimpact \
+          < "{{ repo_root }}/app/src/migrations/002_slack_router.sql"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Installer unités systemd routeur, worker Grok et consumers inbox
       copy:
         src: "{{ work_src }}/infra/systemd/{{ item }}"
         dest: "/etc/systemd/system/{{ item }}"
         mode: "0644"
-      loop:
-        - agentimpact-slack-router.service
-        - agentimpact-grok-worker.service
-        - agentimpact-grok-worker.socket
+      loop: "{{ systemd_units }}"
 
     - name: Installer tmpfiles.d routeur
       copy:
@@ -70,18 +306,19 @@
         - { src: grok-agent-run.sh, dest: grok-agent-run.sh, mode: "0750" }
         - { src: gateway-inbox-consumer.py, dest: gateway-inbox-consumer.py, mode: "0750" }
 
-    - name: Appliquer migration 002 slack router
-      command: psql -v ON_ERROR_STOP=1 -f {{ work_src }}/src/migrations/002_slack_router.sql
-      environment:
-        PGHOST: "{{ lookup('env', 'PGHOST') | default('127.0.0.1', true) }}"
-        PGDATABASE: "{{ lookup('env', 'PGDATABASE') | default('agentimpact', true) }}"
-        PGUSER: "{{ lookup('env', 'PGUSER') | default('agentimpact_app', true) }}"
-      changed_when: false
+    - name: Installer template gateway-inbox.env si absent
+      copy:
+        src: "{{ work_src }}/infra/templates/gateway-inbox.env.example"
+        dest: /etc/agentimpact/gateway-inbox.env
+        mode: "0640"
+        owner: root
+        group: hermes
+        force: false
 
     - name: Appliquer tmpfiles
       command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
       changed_when: false
 
-    - name: Recharger systemd (sans start)
+    - name: Recharger systemd (sans démarrage routeur ni consumers)
       command: systemctl daemon-reload
       changed_when: false

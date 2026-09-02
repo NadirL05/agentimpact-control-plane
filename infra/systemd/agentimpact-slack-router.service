@@ -1,8 +1,8 @@
 [Unit]
 Description=AgentImpact Slack Router (Socket Mode)
-After=network-online.target agentimpact-grok-worker.service postgresql.service
+After=network-online.target agentimpact-grok-worker.socket postgresql.service
 Wants=network-online.target
-Requires=agentimpact-grok-worker.service
+Requires=agentimpact-grok-worker.socket
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -13,12 +13,16 @@ Group=agentimpact-slack-router
 SupplementaryGroups=agentimpact-grok-client
 WorkingDirectory=/opt/agentimpact/app
 
-# Tokens Slack uniquement — jamais CURSOR_API_KEY côté routeur
+# Secrets via LoadCredential — jamais dans EnvironmentFile
 LoadCredential=slack-bot-token:/etc/agentimpact/credentials/slack-router-bot-token
 LoadCredential=slack-app-token:/etc/agentimpact/credentials/slack-router-app-token
+LoadCredential=slack-router-db-password:/etc/agentimpact/credentials/slack-router-db-password
+LoadCredential=slack-router-bridge-token:/etc/agentimpact/credentials/gateway-inbox-bridge-token
 
 Environment=SLACK_BOT_TOKEN_FILE=%d/slack-bot-token
 Environment=SLACK_APP_TOKEN_FILE=%d/slack-app-token
+Environment=PGPASSWORD_FILE=%d/slack-router-db-password
+Environment=SLACK_ROUTER_BRIDGE_TOKEN_FILE=%d/slack-router-bridge-token
 Environment=GROK_WORKER_SOCKET=/run/agentimpact-grok-worker/grok.sock
 EnvironmentFile=-/etc/agentimpact/slack-router.env
 

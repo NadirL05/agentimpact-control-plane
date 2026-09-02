@@ -1,5 +1,5 @@
 ---
-# Rollback atomique hermesctl v1 — restaure scripts, sources API et compose avant redémarrage API.
+# Rollback atomique hermesctl v1 — restaure dist, scripts, sources API et compose avant redémarrage API.
 
 - name: Rollback hermesctl v1
   hosts: localhost
@@ -10,6 +10,7 @@
     rollback_bundle_dir: /var/lib/agentimpact/rollback/hermesctl-v1
     rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
     rollback_api_src_dir: "{{ rollback_bundle_dir }}/app-src"
+    rollback_dist_dir: "{{ rollback_bundle_dir }}/app-dist"
     rollback_compose_file: "{{ rollback_bundle_dir }}/compose.yml"
   tasks:
     - name: Arrêter bridge
@@ -52,6 +53,18 @@
         not scripts_backup.stat.exists
         or not api_src_backup.stat.exists
         or not compose_backup.stat.exists
+
+    - name: Vérifier backup dist disponible
+      stat:
+        path: "{{ rollback_dist_dir }}"
+      register: dist_backup
+
+    - name: Restaurer dist versionné pre-hermesctl-v1
+      synchronize:
+        src: "{{ rollback_dist_dir }}/"
+        dest: "{{ repo_root }}/app/dist/"
+        delete: false
+      when: dist_backup.stat.exists
 
     - name: Restaurer scripts versionnés pre-hermesctl-v1
       synchronize:

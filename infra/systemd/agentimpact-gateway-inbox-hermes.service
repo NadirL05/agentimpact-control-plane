@@ -1,0 +1,36 @@
+[Unit]
+Description=AgentImpact Gateway Inbox Consumer (Hermès)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/agentimpact
+
+LoadCredential=gateway-bridge-token:/etc/agentimpact/credentials/gateway-inbox-bridge-token
+
+Environment=GATEWAY_INBOX_TARGET=hermes
+Environment=HERMES_PROFILE=nadir-operator
+Environment=CONTROL_PLANE_URL=http://127.0.0.1:3000
+Environment=SLACK_ROUTER_BRIDGE_TOKEN_FILE=%d/gateway-bridge-token
+EnvironmentFile=-/etc/agentimpact/gateway-inbox.env
+
+ExecStart=/opt/agentimpact/scripts/gateway-inbox-consumer.py --loop
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=660
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/agentimpact/profiles /opt/agentimpact/scripts
+
+[Install]
+WantedBy=multi-user.target

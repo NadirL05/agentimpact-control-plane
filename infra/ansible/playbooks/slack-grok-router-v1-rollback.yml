@@ -1,10 +1,25 @@
 ---
-# Rollback routeur Slack v1 + worker Grok — stop + disable (pas de purge credentials)
+# Rollback routeur Slack v1 + worker Grok — stop, restauration bundle, pas de purge credentials ni tables SQL.
 
 - name: Rollback slack-grok-router v1
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    repo_root: /opt/agentimpact
+    rollback_bundle_dir: /var/lib/agentimpact/rollback/slack-grok-router-v1
+    rollback_dist_dir: "{{ rollback_bundle_dir }}/app-dist"
+    rollback_scripts_dir: "{{ rollback_bundle_dir }}/scripts"
+    rollback_systemd_dir: "{{ rollback_bundle_dir }}/systemd"
+    rollback_tmpfiles_dir: "{{ rollback_bundle_dir }}/tmpfiles"
+    rollback_config_dir: "{{ rollback_bundle_dir }}/config"
+    managed_scripts:
+      - grok-agent-run.sh
+      - gateway-inbox-consumer.py
+    managed_configs:
+      - slack-router.env
+      - grok-worker.env
+      - gateway-inbox.env
   tasks:
     - name: Activer kill switch Grok
       file:
@@ -14,23 +29,76 @@
         owner: root
         group: agentimpact-slack-router
 
-    - name: Désactiver service routeur
+    - name: Arrêter et désactiver services Slack/Grok
       systemd:
-        name: agentimpact-slack-router.service
+        name: "{{ item }}"
         enabled: false
         state: stopped
+      loop:
+        - agentimpact-slack-router.service
+        - agentimpact-grok-worker.service
+        - agentimpact-grok-worker.socket
+        - agentimpact-gateway-inbox-hermes.service
+        - agentimpact-gateway-inbox-ana.service
       failed_when: false
 
-    - name: Désactiver worker Grok
-      systemd:
-        name: agentimpact-grok-worker.service
-        enabled: false
-        state: stopped
+    - name: Vérifier backup dist disponible
+      stat:
+        path: "{{ rollback_dist_dir }}"
+      register: dist_backup
+
+    - name: Restaurer dist versionné pre-slack-grok
+      synchronize:
+        src: "{{ rollback_dist_dir }}/"
+        dest: "{{ repo_root }}/app/dist/"
+        delete: false
+      when: dist_backup.stat.exists
+
+    - name: Restaurer scripts gérés versionnés
+      copy:
+        src: "{{ rollback_scripts_dir }}/{{ item }}"
+        dest: "{{ repo_root }}/scripts/{{ item }}"
+        remote_src: true
+        mode: "0750"
+      loop: "{{ managed_scripts }}"
       failed_when: false
 
-    - name: Désactiver socket worker Grok
-      systemd:
-        name: agentimpact-grok-worker.socket
-        enabled: false
-        state: stopped
+    - name: Restaurer unités systemd versionnées
+      copy:
+        src: "{{ rollback_systemd_dir }}/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        remote_src: true
+        mode: "0644"
+      loop:
+        - agentimpact-slack-router.service
+        - agentimpact-grok-worker.service
+        - agentimpact-grok-worker.socket
+        - agentimpact-gateway-inbox-hermes.service
+        - agentimpact-gateway-inbox-ana.service
       failed_when: false
+
+    - name: Restaurer tmpfiles versionné
+      copy:
+        src: "{{ rollback_tmpfiles_dir }}/agentimpact-slack-router.conf"
+        dest: /etc/tmpfiles.d/agentimpact-slack-router.conf
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Restaurer configurations non secrètes versionnées
+      copy:
+        src: "{{ rollback_config_dir }}/{{ item }}"
+        dest: "/etc/agentimpact/{{ item }}"
+        remote_src: true
+        mode: "0640"
+      loop: "{{ managed_configs }}"
+      failed_when: false
+
+    - name: Appliquer tmpfiles restaurés
+      command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
+      changed_when: false
+      failed_when: false
+
+    - name: Recharger systemd après restauration
+      command: systemctl daemon-reload
+      changed_when: false

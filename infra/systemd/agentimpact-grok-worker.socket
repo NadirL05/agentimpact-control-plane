@@ -1,5 +1,6 @@
 [Unit]
 Description=AgentImpact Grok Worker Unix Socket
+Before=agentimpact-grok-worker.service
 
 [Socket]
 ListenStream=/run/agentimpact-grok-worker/grok.sock
@@ -7,6 +8,7 @@ SocketMode=0660
 SocketUser=cursor-grok-worker
 SocketGroup=agentimpact-grok-client
 DirectoryMode=0750
+Service=agentimpact-grok-worker.service
 
 [Install]
 WantedBy=sockets.target
