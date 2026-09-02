@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from allowlist import ALLOWED_CMDS, HANDLERS, validate_params
+from allowlist import ALLOWED_CMDS, HANDLERS, build_query_path, validate_params
 from audit import log_request, setup_audit_logging
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -118,7 +118,11 @@ def gateway_status() -> dict[str, str]:
     return states
 
 
-def handle_command(cmd: str, params: dict[str, Any]) -> tuple[bool, str | None, Any, int | None]:
+def handle_command(
+    cmd: str,
+    params: dict[str, Any],
+    peer_uid: int,
+) -> tuple[bool, str | None, Any, int | None]:
     if cmd not in ALLOWED_CMDS:
         return False, "UNKNOWN_CMD", None, None
 
@@ -141,14 +145,9 @@ def handle_command(cmd: str, params: dict[str, Any]) -> tuple[bool, str | None, 
     if cmd == "missions.show":
         path = path.format(id=params["id"])
     elif cmd == "missions.list":
-        query = []
-        for key in ("status", "target_agent", "limit", "offset"):
-            if key in params and params[key] is not None:
-                query.append(f"{key}={params[key]}")
-        if query:
-            path = f"{path}?{'&'.join(query)}"
+        path = build_query_path(cmd, path, params)
 
-    body = spec.build_body(params) if spec.build_body else None
+    body = spec.build_body(params, peer_uid) if spec.build_body else None
     status_code, payload = upstream_request(spec.method, path, body)
 
     if status_code >= 400:
@@ -211,13 +210,30 @@ def handle_client(conn: socket.socket) -> None:
 
         req_id = str(message.get("id", "unknown"))
         cmd = str(message.get("cmd", ""))
-        params = message.get("params") or {}
+        raw_params = message.get("params")
+        if raw_params is None:
+            params = {}
+        elif isinstance(raw_params, dict):
+            params = raw_params
+        else:
+            resp = error_response(req_id, "INVALID_PARAMS", "invalid params", uid, 0)
+            conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+            return
+
         if message.get("v") != 1:
             resp = error_response(req_id, "PROTOCOL_ERROR", "unsupported version", uid, 0)
             conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
             return
 
-        ok, error_code, data, upstream_status = handle_command(cmd, params)
+        try:
+            ok, error_code, data, upstream_status = handle_command(cmd, params, uid)
+        except Exception:
+            ok, error_code, data, upstream_status = (
+                False,
+                "INTERNAL_ERROR",
+                {"message": "internal error"},
+                None,
+            )
         duration_ms = int((time.monotonic() - started) * 1000)
 
         if ok:

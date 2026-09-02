@@ -41,6 +41,7 @@ const HERMES_RULES: RouteRule[] = [
   { method: 'POST', pattern: /^\/api\/fullenrich\/enrich$/ },
   { method: 'GET', pattern: /^\/api\/clients\/metrics$/ },
   { method: 'GET', pattern: /^\/api\/clients\/autonomy$/ },
+  { method: 'GET', pattern: /^\/api\/clients\/autopilot$/ },
   { method: 'POST', pattern: /^\/api\/clients\/[^/]+\/report$/ },
   { method: 'GET', pattern: /^\/profiles$/ },
   { method: 'GET', pattern: /^\/policies$/ },

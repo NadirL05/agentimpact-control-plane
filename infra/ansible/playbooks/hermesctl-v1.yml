@@ -8,7 +8,9 @@
   gather_facts: false
   vars:
     repo_root: /opt/agentimpact
-    work_src: "{{ playbook_dir }}/../../"
+    # playbook_dir = .../infra/ansible/playbooks → racine dépôt = ../../../
+    work_src: "{{ playbook_dir }}/../../../"
+    rollback_scripts_dir: /var/lib/agentimpact/rollback/hermesctl-v1-scripts
   tasks:
     - name: Vérifier tokens présents (fichiers, pas affichage)
       stat:
@@ -20,8 +22,39 @@
       register: token_files
       failed_when: not token_files.results | map(attribute='stat.exists') | list | min
 
-    - name: Appliquer migration SQL proposals
-      command: docker exec agentimpact-db psql -U agentimpact_app -d agentimpact -f /migrations/001_cursor_proposals.sql
+    - name: Créer répertoire rollback scripts
+      file:
+        path: "{{ rollback_scripts_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Vérifier scripts existants avant sauvegarde
+      stat:
+        path: "{{ repo_root }}/scripts"
+      register: existing_scripts
+
+    - name: Sauvegarder scripts pre-hermesctl-v1
+      synchronize:
+        src: "{{ repo_root }}/scripts/"
+        dest: "{{ rollback_scripts_dir }}/"
+        archive: true
+        delete: false
+      delegate_to: localhost
+      when: existing_scripts.stat.exists
+
+    - name: Synchroniser migrations SQL vers app/src/migrations
+      synchronize:
+        src: "{{ work_src }}/src/migrations/"
+        dest: "{{ repo_root }}/app/src/migrations/"
+        delete: false
+
+    - name: Appliquer migration SQL proposals (stdin, fichier monté dans le conteneur)
+      shell: |
+        set -euo pipefail
+        docker exec -i agentimpact-db psql -U agentimpact_app -d agentimpact \
+          < "{{ repo_root }}/app/src/migrations/001_cursor_proposals.sql"
+      args:
+        executable: /bin/bash
       changed_when: true
 
     - name: Synchroniser scripts migrés

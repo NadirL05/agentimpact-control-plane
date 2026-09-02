@@ -6,6 +6,7 @@
 #
 # Rôles : hermes | bridge | admin
 # Charge le token depuis /etc/agentimpact/tokens/<role>.env (jamais accessible au runner).
+# Le token n'apparaît jamais dans argv (curl --config, fichier 0600).
 
 set -euo pipefail
 
@@ -45,14 +46,29 @@ fi
 API="${AGENTIMPACT_API_BASE:?AGENTIMPACT_API_BASE requis — pas de fallback implicite}"
 URL="${API}${PATH_URL}"
 
-CURL_ARGS=(--silent --show-error --max-time 20 -X "$METHOD" -H "Authorization: Bearer ${TOKEN}")
+CURL_CFG="$(mktemp)"
+chmod 600 "$CURL_CFG"
+cleanup() {
+  rm -f "$CURL_CFG"
+}
+trap cleanup EXIT
+
+{
+  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN"
+  echo 'header = "Accept: application/json"'
+  printf 'request = "%s"\n' "$METHOD"
+  printf 'url = "%s"\n' "$URL"
+} >"$CURL_CFG"
 
 if [ -n "$BODY_FILE" ]; then
-  CURL_ARGS+=(-H 'Content-Type: application/json' -d @"$BODY_FILE")
+  {
+    echo 'header = "Content-Type: application/json"'
+    printf 'data = "@%s"\n' "$BODY_FILE"
+  } >>"$CURL_CFG"
 fi
 
 if [ "${CP_API_STATUS:-}" = "1" ]; then
-  curl "${CURL_ARGS[@]}" -w '\n%{http_code}' "$URL"
+  curl --silent --show-error --max-time 20 --config "$CURL_CFG" -w '\n%{http_code}'
 else
-  curl "${CURL_ARGS[@]}" "$URL"
+  curl --silent --show-error --max-time 20 --config "$CURL_CFG"
 fi

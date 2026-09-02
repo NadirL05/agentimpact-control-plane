@@ -55,6 +55,14 @@ describe('auth scopes', () => {
     ).toBe(true);
   });
 
+  it('autorise hermes sur autopilot (infra-status-to-vault)', () => {
+    expect(isRouteAllowed('hermes', 'GET', '/api/clients/autopilot')).toBe(true);
+  });
+
+  it('refuse bridge sur autopilot', () => {
+    expect(isRouteAllowed('bridge', 'GET', '/api/clients/autopilot')).toBe(false);
+  });
+
   it('exempte les webhooks signés', () => {
     expect(isWebhookExempt('POST', '/api/github/webhook')).toBe(true);
     expect(isWebhookExempt('GET', '/health')).toBe(false);
