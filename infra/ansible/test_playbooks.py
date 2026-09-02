@@ -120,6 +120,93 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("up -d api", self.rollback)
         self.assertNotIn("agentimpact-api", self.rollback)
 
+    def test_bridge_env_preflight_accepts_root_before_ctl_user(self) -> None:
+        self.assertIn("Vérifier bridge.env pré-déploiement", self.content)
+        self.assertIn("root:root|root:agentimpact-ctl", self.content)
+        preflight_idx = self.content.index("Vérifier bridge.env pré-déploiement")
+        user_idx = self.content.index("Créer compte système agentimpact-ctl")
+        self.assertLess(preflight_idx, user_idx)
+
+    def test_bridge_env_applied_after_ctl_user_creation(self) -> None:
+        user_idx = self.content.index("Créer compte système agentimpact-ctl")
+        apply_idx = self.content.index("Appliquer propriétaire bridge.env pour lecture agentimpact-ctl")
+        verify_idx = self.content.index("Vérifier permissions finales bridge.env")
+        systemd_idx = self.content.index("Installer unités systemd")
+        self.assertLess(user_idx, apply_idx)
+        self.assertLess(apply_idx, verify_idx)
+        self.assertLess(verify_idx, systemd_idx)
+        self.assertIn('path: /etc/agentimpact/tokens/bridge.env', self.content)
+        self.assertIn("owner: agentimpact-ctl", self.content)
+        self.assertIn("group: agentimpact-ctl", self.content)
+        self.assertIn('mode: "0400"', self.content)
+
+    def test_bridge_env_final_mode_0400_no_group_other_read(self) -> None:
+        block = self.content[
+            self.content.index("Vérifier permissions finales bridge.env") :
+            self.content.index("Vérifier hermes.env et admin.env restent root:root 0600")
+        ]
+        self.assertIn("agentimpact-ctl:agentimpact-ctl", block)
+        self.assertIn('"400"', block)
+        self.assertIn('"$group" -ge 4', block)
+        self.assertIn('"$other" -ge 4', block)
+
+    def test_hermes_admin_tokens_remain_root_0600_not_bridge_accessible(self) -> None:
+        block = self.content[
+            self.content.index("Vérifier hermes.env et admin.env restent root:root 0600") :
+            self.content.index("Vérifier secrets training et dashboard dans .env")
+        ]
+        self.assertIn("/etc/agentimpact/tokens/hermes.env", block)
+        self.assertIn("/etc/agentimpact/tokens/admin.env", block)
+        self.assertIn("root:root", block)
+        self.assertIn('"600"', block)
+        apply_block = self.content[
+            self.content.index("Appliquer propriétaire bridge.env") :
+            self.content.index("Vérifier permissions finales bridge.env")
+        ]
+        self.assertNotIn("hermes.env", apply_block)
+        self.assertNotIn("admin.env", apply_block)
+
+    def test_token_tasks_never_display_secrets(self) -> None:
+        token_section = self.content[
+            self.content.index("Vérifier tokens présents") :
+            self.content.index("Vérifier espace disque suffisant")
+        ]
+        self.assertIn("stat:", token_section)
+        self.assertNotIn("slurp:", token_section)
+        self.assertNotIn("cat ", token_section)
+        self.assertNotIn("debug:", token_section)
+
+    def test_rollback_does_not_modify_token_permissions(self) -> None:
+        self.assertNotIn("/etc/agentimpact/tokens", self.rollback)
+        self.assertNotIn("bridge.env", self.rollback)
+        self.assertNotIn("chown", self.rollback)
+        self.assertNotIn("chmod", self.rollback)
+
+
+class BridgeTokenPermissionsRegressionTest(unittest.TestCase):
+    PLAYBOOK = PLAYBOOKS / "hermesctl-v1.yml"
+    SERVICE = Path(__file__).resolve().parents[1] / "systemd" / "agentimpact-ctl-bridge.service"
+    BRIDGE_EXAMPLE = Path(__file__).resolve().parents[1] / "tokens" / "bridge.env.example"
+
+    def setUp(self) -> None:
+        self.playbook = self.PLAYBOOK.read_text(encoding="utf-8")
+        self.service = self.SERVICE.read_text(encoding="utf-8")
+        self.example = self.BRIDGE_EXAMPLE.read_text(encoding="utf-8")
+
+    def test_service_and_playbook_use_same_bridge_env_path(self) -> None:
+        path = "/etc/agentimpact/tokens/bridge.env"
+        self.assertIn(f"ConditionPathExists={path}", self.service)
+        self.assertIn(f"EnvironmentFile={path}", self.service)
+        self.assertIn(path, self.playbook)
+
+    def test_bridge_env_example_documents_0400_agentimpact_ctl(self) -> None:
+        self.assertIn("0400 agentimpact-ctl:agentimpact-ctl", self.example)
+        self.assertNotIn("0600 root:agentimpact-ctl", self.example)
+
+    def test_bridge_service_runs_as_agentimpact_ctl(self) -> None:
+        self.assertIn("User=agentimpact-ctl", self.service)
+        self.assertIn("Group=agentimpact-ctl", self.service)
+
 
 class SlackGrokPlaybookRegressionTest(unittest.TestCase):
     def setUp(self) -> None:

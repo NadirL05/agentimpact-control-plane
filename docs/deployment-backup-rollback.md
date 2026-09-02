@@ -37,6 +37,8 @@ docker compose -f /opt/agentimpact/compose.yml exec -T db \
 
 **Exclus** : `/etc/agentimpact/credentials/*`, `/etc/agentimpact/tokens/*`
 
+Le rollback hermesctl-v1 ne restaure ni ne modifie les permissions des fichiers token. `bridge.env` reste typiquement `agentimpact-ctl:agentimpact-ctl 0400` après rollback — compatible avec un redéploiement ou redémarrage manuel du bridge.
+
 ### slack-grok-router-v1 (`/var/lib/agentimpact/rollback/slack-grok-router-v1/`)
 
 | Chemin | Contenu |
