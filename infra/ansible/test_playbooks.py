@@ -199,6 +199,10 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("Détecter état du bundle rollback hermesctl-v1", self.bundle_tasks)
         self.assertIn("reuse_rollback_bundle", self.bundle_tasks)
         self.assertIn('echo "complete"', self.bundle_tasks)
+        self.assertIn("legacy_unknown", self.bundle_tasks)
+        self.assertIn("legacy_dist_marker_migrated", self.bundle_tasks)
+        self.assertIn("rollback_bundle_dist_state_unknown", self.bundle_tasks)
+        self.assertIn("rollback_bundle_dist_state_conflict", self.bundle_tasks)
         include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
         sync_idx = self.content.index("Synchroniser compose.yml")
         mig_idx = self.content.index("Appliquer migration SQL proposals")
@@ -215,6 +219,22 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         ]
         self.assertIn("not (reuse_rollback_bundle | bool)", pg_block)
 
+    def test_legacy_dist_marker_migration_is_fail_closed(self) -> None:
+        self.assertIn("Migrer marqueur legacy app-dist.absent si dist courant absent", self.bundle_tasks)
+        self.assertIn("invalid_app_dist_absent_marker", self.bundle_tasks)
+        self.assertIn("rollback_bundle_dist_state_unknown", self.bundle_tasks)
+        self.assertIn("rollback_bundle_dist_state_conflict", self.bundle_tasks)
+        migrate_idx = self.bundle_tasks.index(
+            "Migrer marqueur legacy app-dist.absent si dist courant absent"
+        )
+        reuse_idx = self.bundle_tasks.index("Mémoriser réutilisation du bundle rollback")
+        sync_idx = self.content.index("Synchroniser compose.yml")
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
+        self.assertLess(migrate_idx, reuse_idx)
+        self.assertLess(include_idx, sync_idx)
+        self.assertIn("chmod 0600", self.bundle_tasks)
+        self.assertIn("mktemp", self.bundle_tasks)
+        self.assertIn("legacy_dist_marker_migrated", self.bundle_tasks)
     def test_resume_refuses_partial_rollback_bundle(self) -> None:
         self.assertIn("Échec si bundle rollback partiel ou incohérent", self.bundle_tasks)
         self.assertIn("rollback_bundle_incomplete", self.bundle_tasks)

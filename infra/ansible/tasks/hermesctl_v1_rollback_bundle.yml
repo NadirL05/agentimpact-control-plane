@@ -4,6 +4,7 @@
 #   rollback_api_src_dir, rollback_dist_dir, rollback_compose_file, rollback_pg_backup_dir
 # Vars optionnelles :
 #   hermesctl_pg_dump_mode: docker (défaut) | fixture
+#   hermesctl_require_root_owner: true (défaut) — false en tests non-root
 #   hermesctl_skip_source_stats: false
 
 - name: Détecter état du bundle rollback hermesctl-v1
@@ -12,8 +13,11 @@
     bundle="{{ rollback_bundle_dir }}"
     scripts="{{ rollback_scripts_dir }}"
     api="{{ rollback_api_src_dir }}"
+    dist="{{ rollback_dist_dir }}"
     compose="{{ rollback_compose_file }}"
     pointer="{{ rollback_pg_backup_dir }}/latest-001.path"
+    marker="{{ rollback_bundle_dir }}/app-dist.absent"
+    require_root="{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
 
     has_scripts=0
     has_api=0
@@ -39,14 +43,75 @@
       fi
     fi
 
+    has_dist_dir=0
+    if [ -e "$dist" ]; then
+      if [ -L "$dist" ] || [ ! -d "$dist" ]; then
+        echo "dist_conflict" >&2
+        echo "dist_conflict"
+        exit 0
+      fi
+      has_dist_dir=1
+    fi
+
+    has_marker=0
+    if [ -e "$marker" ]; then
+      has_marker=1
+    fi
+
+    if [ "$has_dist_dir" -eq 1 ] && [ "$has_marker" -eq 1 ]; then
+      echo "dist_conflict" >&2
+      echo "dist_conflict"
+      exit 0
+    fi
+
+    if [ "$has_marker" -eq 1 ]; then
+      if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+        echo "invalid_app_dist_absent_marker" >&2
+        echo "invalid_app_dist_absent_marker"
+        exit 0
+      fi
+      perms=$(stat -c '%a' "$marker")
+      group=$(((perms / 10) % 10))
+      other=$((perms % 10))
+      if [ "$group" -ne 0 ] || [ "$other" -ne 0 ]; then
+        echo "invalid_app_dist_absent_marker" >&2
+        echo "invalid_app_dist_absent_marker"
+        exit 0
+      fi
+      if [ "$require_root" = "true" ]; then
+        owner=$(stat -c '%U:%G' "$marker")
+        if [ "$owner" != "root:root" ]; then
+          echo "invalid_app_dist_absent_marker" >&2
+          echo "invalid_app_dist_absent_marker"
+          exit 0
+        fi
+      fi
+    fi
+
+    if [ "$has_dist_dir" -eq 1 ]; then
+      dist_state="dist_present"
+    elif [ "$has_marker" -eq 1 ]; then
+      dist_state="dist_absent"
+    else
+      dist_state="legacy_unknown"
+    fi
+
     sum=$((has_scripts + has_api + has_compose + has_dump))
     if [ "$sum" -eq 4 ]; then
-      echo "complete"
-    elif [ "$sum" -eq 0 ]; then
+      if [ "$dist_state" = "legacy_unknown" ]; then
+        echo "legacy_unknown"
+        echo "$dist_state"
+      else
+        echo "complete"
+        echo "$dist_state"
+      fi
+    elif [ "$sum" -eq 0 ] && [ "$has_dist_dir" -eq 0 ] && [ "$has_marker" -eq 0 ]; then
       echo "absent"
+      echo "none"
     else
       echo "partial" >&2
       echo "partial"
+      echo "$dist_state"
     fi
   args:
     executable: /bin/bash
@@ -56,11 +121,121 @@
 - name: Échec si bundle rollback partiel ou incohérent
   fail:
     msg: rollback_bundle_incomplete
-  when: bundle_state.stdout == "partial"
+  when: bundle_state.stdout_lines[0] == "partial"
+
+- name: Échec si états dist incohérents (app-dist et marqueur)
+  fail:
+    msg: rollback_bundle_dist_state_conflict
+  when: bundle_state.stdout_lines[0] == "dist_conflict"
+
+- name: Échec si marqueur app-dist.absent invalide
+  fail:
+    msg: invalid_app_dist_absent_marker
+  when: bundle_state.stdout_lines[0] == "invalid_app_dist_absent_marker"
+
+- name: Migrer marqueur legacy app-dist.absent si dist courant absent
+  shell: |
+    set -euo pipefail
+    bundle="{{ rollback_bundle_dir }}"
+    marker="$bundle/app-dist.absent"
+    require_root="{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
+    current_dist="{{ repo_root }}/app/dist"
+
+    if [ -e "$current_dist" ]; then
+      echo "rollback_bundle_dist_state_unknown" >&2
+      exit 2
+    fi
+
+    tmp=$(mktemp "$bundle/.app-dist.absent.XXXXXX")
+    printf 'app-dist-absent\n' > "$tmp"
+    chmod 0600 "$tmp"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp"
+    fi
+    mv -f "$tmp" "$marker"
+    echo "legacy_dist_marker_migrated"
+  args:
+    executable: /bin/bash
+  register: legacy_dist_migration
+  failed_when: false
+  changed_when: (legacy_dist_migration.rc | default(1)) == 0
+  when: bundle_state.stdout_lines[0] == "legacy_unknown"
+
+- name: Échec si état dist legacy inconnu (dist courant présent)
+  fail:
+    msg: rollback_bundle_dist_state_unknown
+  when:
+    - bundle_state.stdout_lines[0] == "legacy_unknown"
+    - legacy_dist_migration is defined
+    - legacy_dist_migration is not skipped
+    - legacy_dist_migration.rc | default(0) == 2
+
+- name: Échec si migration marqueur legacy a échoué
+  fail:
+    msg: legacy_dist_marker_migration_failed
+  when:
+    - bundle_state.stdout_lines[0] == "legacy_unknown"
+    - legacy_dist_migration is defined
+    - legacy_dist_migration is not skipped
+    - legacy_dist_migration.rc | default(0) not in [0, 2]
+
+- name: Revalider bundle après migration marqueur legacy
+  shell: |
+    set -euo pipefail
+    scripts="{{ rollback_scripts_dir }}"
+    api="{{ rollback_api_src_dir }}"
+    dist="{{ rollback_dist_dir }}"
+    compose="{{ rollback_compose_file }}"
+    pointer="{{ rollback_pg_backup_dir }}/latest-001.path"
+    marker="{{ rollback_bundle_dir }}/app-dist.absent"
+    require_root="{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
+    err_marker() { echo "invalid_app_dist_absent_marker" >&2; exit 1; }
+    err_partial() { echo "partial" >&2; exit 1; }
+
+    [ -d "$scripts" ] && [ -n "$(ls -A "$scripts" 2>/dev/null || true)" ] || err_partial
+    [ -d "$api" ] && [ -n "$(ls -A "$api" 2>/dev/null || true)" ] || err_partial
+    [ -f "$compose" ] && [ -s "$compose" ] || err_partial
+    [ -f "$pointer" ] && [ ! -L "$pointer" ] || err_partial
+    raw=$(tr -d '[:space:]' < "$pointer" || true)
+    [ -n "$raw" ] && [ -e "$raw" ] || err_partial
+
+    [ ! -e "$dist" ] || err_partial
+    [ -e "$marker" ] || err_marker
+    [ ! -L "$marker" ] || err_marker
+    [ -f "$marker" ] || err_marker
+    perms=$(stat -c '%a' "$marker")
+    group=$(((perms / 10) % 10))
+    other=$((perms % 10))
+    [ "$group" -eq 0 ] && [ "$other" -eq 0 ] || err_marker
+    if [ "$require_root" = "true" ]; then
+      owner=$(stat -c '%U:%G' "$marker")
+      [ "$owner" = "root:root" ] || err_marker
+    fi
+    echo "complete"
+    echo "dist_absent"
+  args:
+    executable: /bin/bash
+  register: bundle_state_revalidated
+  changed_when: false
+  when:
+    - bundle_state.stdout_lines[0] == "legacy_unknown"
+    - legacy_dist_migration is defined
+    - legacy_dist_migration is not skipped
+    - legacy_dist_migration.rc | default(1) == 0
+
+- name: Annoncer migration marqueur legacy
+  debug:
+    msg: legacy_dist_marker_migrated
+  when:
+    - legacy_dist_migration is defined
+    - legacy_dist_migration is not skipped
+    - legacy_dist_migration.rc | default(1) == 0
 
 - name: Mémoriser réutilisation du bundle rollback
   set_fact:
-    reuse_rollback_bundle: "{{ bundle_state.stdout == 'complete' }}"
+    reuse_rollback_bundle: "{{ (bundle_state.stdout_lines[0] == 'complete') or (bundle_state_revalidated is defined and bundle_state_revalidated is not skipped and (bundle_state_revalidated.stdout_lines[0] | default('')) == 'complete') }}"
+    bundle_dist_state: "{{ bundle_state_revalidated.stdout_lines[1] if (bundle_state_revalidated is defined and bundle_state_revalidated is not skipped and (bundle_state_revalidated.stdout_lines | default([]) | length) > 1) else (bundle_state.stdout_lines[1] | default('none')) }}"
+    bundle_state_name: "{{ 'complete' if ((bundle_state.stdout_lines[0] == 'complete') or (bundle_state_revalidated is defined and bundle_state_revalidated is not skipped and (bundle_state_revalidated.stdout_lines[0] | default('')) == 'complete')) else (bundle_state.stdout_lines[0] | default('unknown')) }}"
 
 - name: Annoncer reprise avec bundle rollback existant
   debug:
@@ -142,10 +317,20 @@
     - existing_dist.stat.exists | default(false)
 
 - name: Enregistrer absence initiale de app/dist
-  copy:
-    content: "app-dist-absent\n"
-    dest: "{{ rollback_bundle_dir }}/app-dist.absent"
-    mode: "0640"
+  shell: |
+    set -euo pipefail
+    bundle="{{ rollback_bundle_dir }}"
+    marker="$bundle/app-dist.absent"
+    require_root="{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
+    tmp=$(mktemp "$bundle/.app-dist.absent.XXXXXX")
+    printf 'app-dist-absent\n' > "$tmp"
+    chmod 0600 "$tmp"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp"
+    fi
+    mv -f "$tmp" "$marker"
+  args:
+    executable: /bin/bash
   when:
     - not (reuse_rollback_bundle | bool)
     - existing_dist is defined

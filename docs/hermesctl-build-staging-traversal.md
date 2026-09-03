@@ -1,115 +1,92 @@
-# Worksheet — staging build hermesctl (traversal `/var/lib/agentimpact`)
+# Worksheet — staging build hermesctl + reprise bundle (legacy app-dist)
 
-Worktree : `/opt/agentimpact/runner/worktrees/hermesctl-build-staging-traversal`
-Branche : `fix/hermesctl-build-staging-traversal`
-Base : `origin/main` @ `446d592`
+Worktree : `/opt/agentimpact/runner/worktrees/hermesctl-legacy-dist-marker`
+Branche : `fix/hermesctl-legacy-dist-marker`
+Base : `origin/main` @ `4184ff3`
 
-## Cause racine
+## Cause racine (staging) — déjà corrigée sur main
 
-Le build Node s'exécute en `become_user: hermes` dans :
+Le build Node s'exécute sous `hermes` dans `/var/lib/agentimpact-build/hermesctl-v1`.
+`/var/lib/agentimpact` reste `root:root 0750` (non affaibli).
 
-```text
-/var/lib/agentimpact/build-staging/hermesctl-v1
-```
+## Bug legacy app-dist (ce correctif)
 
-Or `/var/lib/agentimpact` est **`root:root 0750`**. Hermès n'a ni `x` sur le parent → `cd: Permission denied`, même si le sous-répertoire staging est `hermes:hermes 0750`.
+Le premier déploiement a créé un bundle **noyau complet** sans état dist explicite :
 
-**Interdit** : affaiblir `/var/lib/agentimpact` (chmod/chown) pour rendre le parent traversable.
-
-## État partiel observé (incident réel)
-
-| Élément | État |
+| Élément bundle | État réel |
 | --- | --- |
-| Compte `agentimpact-ctl` | Créé |
-| `bridge.env` | `agentimpact-ctl:agentimpact-ctl 0400` |
-| Bundle rollback `hermesctl-v1` | Présent (anciens scripts, `app-src`, `compose.yml`, dump PG) |
-| `compose.yml` + `app/src` sur disque | Déjà synchronisés (état « nouveau ») |
-| Migration 001 | Non appliquée |
-| `app/dist` | Non installé depuis le staging |
-| Conteneurs API/DB | Existants, non recréés |
-| Bridge systemd | Absent / inactif |
-| Build staging | Échec avant `npm ci` |
+| `scripts/`, `app-src/`, `compose.yml` | présents |
+| `pg-backup/latest-001.path` + dump | valides |
+| `app-dist/` | **absent** |
+| `app-dist.absent` | **absent** |
 
-## Correction
+Sur disque : `/opt/agentimpact/app/dist` également absent ; migration 001 non appliquée.
 
-| Avant | Après |
+Le code mergé classait ce bundle `complete` sans exiger `app-dist/` **ou** `app-dist.absent`.
+Un redéploiement puis rollback **laisserait** le nouveau dist en place.
+
+## Modèle d'état dist
+
+| Observation | État |
 | --- | --- |
-| `/var/lib/agentimpact/build-staging/hermesctl-v1` | `/var/lib/agentimpact-build/hermesctl-v1` |
-| Parent non traversable par hermes | `/var/lib/agentimpact-build` = `hermes:hermes 0750` |
+| `app-dist/` seul | `dist_present` |
+| `app-dist.absent` seul | `dist_absent` |
+| les deux | conflit → `rollback_bundle_dist_state_conflict` |
+| aucun | `legacy_unknown` |
 
-Le playbook :
+Marqueur `app-dist.absent` : fichier régulier, pas de symlink, pas de bits group/other, `root:root` en production ; sinon `invalid_app_dist_absent_marker`.
 
-1. crée `build_root_dir` puis `build_staging_dir` ;
-2. vérifie `root:root 750` sur `/var/lib/agentimpact` (non modifié) ;
-3. vérifie que hermes peut `cd` dans le staging **avant** `npm ci` ;
-4. conserve `npm ci` / `npm run build` en hermes, suppression `node_modules` sous `app/src`, contrôles world-writable.
+## Migration sûre `legacy_unknown`
+
+Uniquement si le **noyau** est complet :
+
+1. Si `repo_root/app/dist` **absent** : créer atomiquement `app-dist.absent` (`mktemp` + `mv`, mode `0600`, `root:root` en prod) ; message `legacy_dist_marker_migrated` ; revalider ; `reuse_rollback_bundle=true` ; **aucun** nouveau dump / aucune réécriture scripts/compose/pointer.
+2. Si `repo_root/app/dist` **présent** : échec immédiat `rollback_bundle_dist_state_unknown` (avant sync/migration) — pas de conjecture.
 
 ## Stratégie de reprise (bundle)
 
-Avant toute sauvegarde / sync (tâches partagées `tasks/hermesctl_v1_rollback_bundle.yml`) :
+Avant toute sync / migration (`tasks/hermesctl_v1_rollback_bundle.yml`) :
 
-1. **Détecter** le bundle `/var/lib/agentimpact/rollback/hermesctl-v1` :
-   - `complete` = `scripts/` + `app-src/` + `compose.yml` + dump via `pg-backup/latest-001.path` valide ;
-   - `absent` = rien d'utilisable ;
-   - `partial` = **échec** (`rollback_bundle_incomplete`) — pas d'écrasement.
-2. Si **complete** : `reuse_rollback_bundle=true` — **aucune** resynchronisation vers le bundle, **aucun** nouveau `pg_dump`.
-3. Si **absent** : créer le bundle et le dump **avant** sync compose/API ; si `app/dist` manquait, écrire `app-dist.absent`.
-4. Valider `latest-001.path` : sous `pg-backup`, cible régulière non vide, pas de symlink, `root:root`, pas de lecture group/other ; erreur générique `invalid_pg_backup_pointer` (sans chemin).
+1. Détecter noyau + état dist.
+2. `partial` → `rollback_bundle_incomplete`.
+3. Conflit / marqueur invalide → échec générique.
+4. `legacy_unknown` → migration ou échec (ci-dessus).
+5. `complete` (dist connu) → réutilisation sans écrasement.
+6. `absent` → créer bundle + dump ; si dist courant manquant → `app-dist.absent`.
 
-Rollback : si `app-dist.absent` est présent, **supprimer** `/opt/agentimpact/app/dist` au lieu de restaurer un dist inventé.
-
-## Rollback
-
-Playbook : `infra/ansible/playbooks/hermesctl-v1-rollback.yml` (inchangé pour le staging).
-
-- Restaure scripts / app-src / compose / dist depuis le bundle.
-- N'utilise pas `/var/lib/agentimpact-build`.
-- L'ancien chemin `/var/lib/agentimpact/build-staging` peut rester orphelin (nettoyage manuel hors playbook, après validation Nadir).
+Rollback : si `app-dist.absent` présent, **supprimer** `/opt/agentimpact/app/dist`.
 
 ## Commandes de vérification (sans secret)
 
 ```bash
-# Parent inchangé
 stat -c '%U:%G %a' /var/lib/agentimpact
 # attendu : root:root 750
 
-# Nouveau staging traversable par hermes
-stat -c '%U:%G %a' /var/lib/agentimpact-build
-stat -c '%U:%G %a' /var/lib/agentimpact-build/hermesctl-v1
-# attendu : hermes:hermes 750
-
-sudo -u hermes test -x /var/lib/agentimpact-build \
-  && sudo -u hermes test -x /var/lib/agentimpact-build/hermesctl-v1 \
-  && echo hermes_traverse_ok
-
-# Bundle réutilisable (présence uniquement — pas de cat du dump)
 test -d /var/lib/agentimpact/rollback/hermesctl-v1/scripts
 test -d /var/lib/agentimpact/rollback/hermesctl-v1/app-src
 test -s /var/lib/agentimpact/rollback/hermesctl-v1/compose.yml
 test -f /var/lib/agentimpact/rollback/hermesctl-v1/pg-backup/latest-001.path
-# taille dump sans afficher le chemin secret éventuel ailleurs :
-pointer=/var/lib/agentimpact/rollback/hermesctl-v1/pg-backup/latest-001.path
-test -s "$(tr -d '[:space:]' < "$pointer")" && echo dump_ok
 
-# Pas de node_modules sous app/src
-test ! -d /opt/agentimpact/app/src/node_modules && echo no_host_node_modules
+# Après reprise corrigée : exactement un des deux
+test -f /var/lib/agentimpact/rollback/hermesctl-v1/app-dist.absent \
+  || test -d /var/lib/agentimpact/rollback/hermesctl-v1/app-dist
+# pas les deux
 ```
 
-## Procédure de reprise après merge (validation Nadir requise)
+## Procédure de reprise (validation Nadir)
 
-1. Merger / déployer le playbook corrigé (sans relancer Docker/migration hors playbook).
-2. Confirmer bundle **complete** (commandes ci-dessus).
-3. Relancer uniquement : `ansible-playbook …/infra/ansible/playbooks/hermesctl-v1.yml` (chemin worktree après checkout).
-4. Attendu logs : `reuse_rollback_bundle=true`, pas de nouveau `pre-001-*.dump`, build dans `/var/lib/agentimpact-build/hermesctl-v1`.
-5. Vérifier `app/dist`, migration 001, bridge systemd selon le playbook.
-6. En cas d'échec : rollback via `hermesctl-v1-rollback.yml` (bundle initial intact).
+1. Merger / déployer ce correctif (sans Docker/migration hors playbook).
+2. Relancer `hermesctl-v1.yml`.
+3. Attendu : `legacy_dist_marker_migrated` puis `reuse_rollback_bundle=true`, pas de nouveau `pre-001-*.dump`.
+4. Si dist courant était déjà présent sans état bundle → échec `rollback_bundle_dist_state_unknown` (intervention manuelle Nadir).
 
 ## Fichiers touchés
 
 | Fichier | Rôle |
 | --- | --- |
-| `infra/ansible/playbooks/hermesctl-v1.yml` | Staging + reprise bundle |
-| `infra/ansible/test_playbooks.py` | Tests non-régression |
+| `infra/ansible/tasks/hermesctl_v1_rollback_bundle.yml` | États dist + migration legacy |
+| `infra/ansible/test_hermesctl_bundle_resume_runtime.py` | Tests runtime |
+| `infra/ansible/test-fixtures/hermesctl-bundle-resume/*` | Fixtures |
+| `infra/ansible/test_playbooks.py` | Tests statiques |
 | `docs/hermesctl-build-staging-traversal.md` | Ce worksheet |
-| `docs/hermesctl-v1.md` | Chemin staging + reprise |
-| `docs/deployment-backup-rollback.md` | Note réutilisation bundle |
+| `docs/hermesctl-v1.md` / `docs/deployment-backup-rollback.md` | Doc reprise |
