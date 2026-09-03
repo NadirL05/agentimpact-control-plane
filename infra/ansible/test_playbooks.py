@@ -531,6 +531,43 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn('"static"', verify_block)
         self.assertIn('"disabled"', verify_block)
 
+    def test_playbook_adds_runner_to_ctl_group_before_socket_activation(self) -> None:
+        """Le smoke test s'exécute comme agentimpact-runner et accède au socket
+        0660 agentimpact-ctl:agentimpact-ctl — l'appartenance au groupe doit
+        précéder l'activation du socket et le smoke test."""
+        group_idx = self.content.index(
+            "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+        )
+        socket_idx = self.content.index(
+            "Activer et démarrer uniquement le socket bridge (socket activation)"
+        )
+        smoke_idx = self.content.index("Smoke test hermesctl borné")
+        self.assertLess(group_idx, socket_idx)
+        self.assertLess(group_idx, smoke_idx)
+
+    def test_playbook_group_add_keeps_present_and_append(self) -> None:
+        block = self.content[
+            self.content.index(
+                "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+            ) : self.content.index(
+                "Activer et démarrer uniquement le socket bridge (socket activation)"
+            )
+        ]
+        self.assertIn("name: agentimpact-runner", block)
+        self.assertIn("groups: agentimpact-ctl", block)
+        self.assertIn("append: true", block)
+        self.assertNotIn("remove: true", block)
+
+    def test_playbook_group_add_after_disable_old_service(self) -> None:
+        """L'ajout au groupe vient après la désactivation de l'ancien service direct."""
+        disable_idx = self.content.index(
+            "Désactiver et arrêter l'ancien démarrage direct du service bridge"
+        )
+        group_idx = self.content.index(
+            "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+        )
+        self.assertLess(disable_idx, group_idx)
+
     def test_playbook_verifies_socket_and_service_active_after_smoke(self) -> None:
         self.assertIn("Vérifier socket bridge active après smoke test", self.content)
         self.assertIn("Vérifier service bridge actif après socket activation", self.content)

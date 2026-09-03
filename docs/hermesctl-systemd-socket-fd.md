@@ -25,7 +25,7 @@ stdin. Or `bridge.py` lit le socket d'écoute via `LISTEN_FDS` (FD 3) avec
 ## Comportement avant / après
 
 | Aspect | Avant | Après |
-|---|---|---|
+| --- | --- | --- |
 | `StandardInput` du service | `socket` | absent |
 | `[Install]` du service | `WantedBy=multi-user.target` | absent (non enable) |
 | `Service=` côté socket | absent | `agentimpact-ctl-bridge.service` |
@@ -63,13 +63,20 @@ stdin. Or `bridge.py` lit le socket d'écoute via `LISTEN_FDS` (FD 3) avec
 - désactivation + arrêt de l'ancien démarrage direct du service
   (`agentimpact-ctl-bridge.service` → `enabled: false`, `state: stopped`) pour
   annuler l'état hérité de l'ancien playbook ;
+- **ajout de `agentimpact-runner` au groupe `agentimpact-ctl` avant l'activation
+  du socket** (`state: present`, `append: true`) — le smoke test s'exécute comme
+  `agentimpact-runner` et doit accéder au socket `0660 agentimpact-ctl:agentimpact-ctl` ;
 - activation + démarrage **uniquement** du socket
   (`agentimpact-ctl-bridge.socket` → `enabled: true`, `state: started`) ;
 - aucun démarrage direct du service ;
-- smoke test `hermesctl health` borné (`timeout 10`) qui déclenche le socket via
-  le client, puis vérifie `ok: true` ;
+- smoke test `hermesctl health` borné (`timeout 10`, `become_user: agentimpact-runner`)
+  qui déclenche le socket via le client, puis vérifie `ok: true` ;
 - vérifications post-smoke : socket `active`, service `active`, service **non**
   enabled (`disabled` ou `static`).
+
+Cet ordre garantit qu'une installation neuve comme une reprise après rollback
+permettent au smoke test (exécuté comme `agentimpact-runner`) d'accéder au
+socket `0660 agentimpact-ctl:agentimpact-ctl`.
 
 ### `bridge.py`
 
