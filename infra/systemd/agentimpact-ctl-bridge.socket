@@ -9,6 +9,7 @@ SocketGroup=agentimpact-ctl
 SocketMode=0660
 DirectoryMode=0750
 Accept=no
+Service=agentimpact-ctl-bridge.service
 
 [Install]
 WantedBy=sockets.target

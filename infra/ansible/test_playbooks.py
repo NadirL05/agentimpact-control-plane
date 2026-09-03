@@ -466,6 +466,131 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertNotIn("chown", self.rollback)
         self.assertNotIn("chmod", self.rollback)
 
+    def test_playbook_daemon_reload_after_unit_install(self) -> None:
+        install_idx = self.content.index("Installer unités systemd")
+        reload_idx = self.content.index("Recharger systemd après installation unités bridge")
+        socket_enable_idx = self.content.index(
+            "Activer et démarrer uniquement le socket bridge (socket activation)"
+        )
+        self.assertLess(install_idx, reload_idx)
+        self.assertLess(reload_idx, socket_enable_idx)
+
+    def test_playbook_disables_old_direct_service_enablement(self) -> None:
+        self.assertIn(
+            "Désactiver et arrêter l'ancien démarrage direct du service bridge",
+            self.content,
+        )
+        disable_block = self.content[
+            self.content.index(
+                "Désactiver et arrêter l'ancien démarrage direct du service bridge"
+            ) : self.content.index(
+                "Activer et démarrer uniquement le socket bridge (socket activation)"
+            )
+        ]
+        self.assertIn("agentimpact-ctl-bridge.service", disable_block)
+        self.assertIn("enabled: false", disable_block)
+        self.assertIn("state: stopped", disable_block)
+
+    def test_playbook_enables_only_socket_not_service(self) -> None:
+        socket_block = self.content[
+            self.content.index(
+                "Activer et démarrer uniquement le socket bridge (socket activation)"
+            ) : self.content.index("Smoke test hermesctl borné")
+        ]
+        self.assertIn("agentimpact-ctl-bridge.socket", socket_block)
+        self.assertIn("enabled: true", socket_block)
+        self.assertIn("state: started", socket_block)
+        # Aucune tâche systemd activant le service directement.
+        self.assertNotRegex(
+            self.content,
+            r"name:\s*agentimpact-ctl-bridge\.service\s*\n\s*enabled:\s*true",
+        )
+        self.assertNotRegex(
+            self.content,
+            r"name:\s*agentimpact-ctl-bridge\.service\s*\n\s*state:\s*started",
+        )
+
+    def test_playbook_has_bounded_smoke_test(self) -> None:
+        self.assertIn("Smoke test hermesctl borné", self.content)
+        smoke_block = self.content[
+            self.content.index("Smoke test hermesctl borné") : self.content.index(
+                "Vérifier socket bridge active après smoke test"
+            )
+        ]
+        self.assertIn("timeout 10", smoke_block)
+        self.assertIn("hermesctl health", smoke_block)
+        self.assertIn('"ok": true', smoke_block)
+        self.assertIn("become_user: agentimpact-runner", smoke_block)
+        self.assertIn("mktemp", smoke_block)
+
+    def test_playbook_service_enabled_check_accepts_static_or_disabled(self) -> None:
+        verify_block = self.content[
+            self.content.index("Vérifier service bridge non enabled (socket activation seule)") :
+        ]
+        self.assertIn("is-enabled agentimpact-ctl-bridge.service", verify_block)
+        self.assertIn('"static"', verify_block)
+        self.assertIn('"disabled"', verify_block)
+
+    def test_playbook_adds_runner_to_ctl_group_before_socket_activation(self) -> None:
+        """Le smoke test s'exécute comme agentimpact-runner et accède au socket
+        0660 agentimpact-ctl:agentimpact-ctl — l'appartenance au groupe doit
+        précéder l'activation du socket et le smoke test."""
+        group_idx = self.content.index(
+            "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+        )
+        socket_idx = self.content.index(
+            "Activer et démarrer uniquement le socket bridge (socket activation)"
+        )
+        smoke_idx = self.content.index("Smoke test hermesctl borné")
+        self.assertLess(group_idx, socket_idx)
+        self.assertLess(group_idx, smoke_idx)
+
+    def test_playbook_group_add_keeps_present_and_append(self) -> None:
+        block = self.content[
+            self.content.index(
+                "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+            ) : self.content.index(
+                "Activer et démarrer uniquement le socket bridge (socket activation)"
+            )
+        ]
+        self.assertIn("name: agentimpact-runner", block)
+        self.assertIn("groups: agentimpact-ctl", block)
+        self.assertIn("append: true", block)
+        self.assertNotIn("remove: true", block)
+
+    def test_playbook_group_add_after_disable_old_service(self) -> None:
+        """L'ajout au groupe vient après la désactivation de l'ancien service direct."""
+        disable_idx = self.content.index(
+            "Désactiver et arrêter l'ancien démarrage direct du service bridge"
+        )
+        group_idx = self.content.index(
+            "Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket"
+        )
+        self.assertLess(disable_idx, group_idx)
+
+    def test_playbook_verifies_socket_and_service_active_after_smoke(self) -> None:
+        self.assertIn("Vérifier socket bridge active après smoke test", self.content)
+        self.assertIn("Vérifier service bridge actif après socket activation", self.content)
+        self.assertIn("Vérifier service bridge non enabled (socket activation seule)", self.content)
+        verify_block = self.content[
+            self.content.index("Vérifier service bridge non enabled (socket activation seule)") :
+        ]
+        self.assertIn("is-enabled agentimpact-ctl-bridge.service", verify_block)
+
+    def test_playbook_never_starts_service_directly(self) -> None:
+        """Aucun démarrage direct du service — seule l'activation par socket démarre le service."""
+        blocks = re.split(r"\n    - name:", self.content)[1:]
+        for block in blocks:
+            if "agentimpact-ctl-bridge.service" not in block:
+                continue
+            if "systemd:" not in block:
+                continue
+            self.assertNotIn(
+                "state: started",
+                block,
+                "le service bridge ne doit pas être démarré directement",
+            )
+
 
 class BridgeTokenPermissionsRegressionTest(unittest.TestCase):
     PLAYBOOK = PLAYBOOKS / "hermesctl-v1.yml"
@@ -575,6 +700,47 @@ class SystemdRegressionTest(unittest.TestCase):
         content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
         self.assertIn("Requires=agentimpact-grok-worker.socket", content)
         self.assertNotIn("Requires=agentimpact-grok-worker.service", content)
+
+    def test_bridge_service_has_no_standard_input_socket(self) -> None:
+        """StandardInput=socket conflit avec l'activation par FD 3 (LISTEN_FDS)."""
+        service = (self.SYSTEMD / "agentimpact-ctl-bridge.service").read_text(encoding="utf-8")
+        self.assertNotIn("StandardInput=socket", service)
+        self.assertNotIn("StandardInput=accept", service)
+
+    def test_bridge_service_triggered_by_socket(self) -> None:
+        """TriggeredBy= est calculé par systemd depuis Service= du socket — pas de directive manuelle."""
+        service = (self.SYSTEMD / "agentimpact-ctl-bridge.service").read_text(encoding="utf-8")
+        self.assertNotIn("TriggeredBy=", service)
+        self.assertIn("Requires=agentimpact-ctl-bridge.socket", service)
+        self.assertIn("After=agentimpact-ctl-bridge.socket", service)
+
+    def test_bridge_service_has_no_install_section(self) -> None:
+        """Le service ne doit pas être enable directement — seul le socket s'enable."""
+        service = (self.SYSTEMD / "agentimpact-ctl-bridge.service").read_text(encoding="utf-8")
+        self.assertNotIn("[Install]", service)
+        self.assertNotIn("WantedBy=multi-user.target", service)
+
+    def test_bridge_service_has_start_limit_to_prevent_restart_loop(self) -> None:
+        service = (self.SYSTEMD / "agentimpact-ctl-bridge.service").read_text(encoding="utf-8")
+        self.assertIn("StartLimitIntervalSec=", service)
+        self.assertIn("StartLimitBurst=", service)
+
+    def test_bridge_socket_has_service_association(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-ctl-bridge.socket").read_text(encoding="utf-8")
+        self.assertIn("Service=agentimpact-ctl-bridge.service", socket)
+
+    def test_bridge_socket_mode_and_owner(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-ctl-bridge.socket").read_text(encoding="utf-8")
+        self.assertIn("SocketMode=0660", socket)
+        self.assertIn("SocketUser=agentimpact-ctl", socket)
+        self.assertIn("SocketGroup=agentimpact-ctl", socket)
+        self.assertNotIn("SocketMode=0666", socket)
+        self.assertNotIn("SocketMode=0777", socket)
+
+    def test_bridge_socket_install_targets_sockets_target(self) -> None:
+        socket = (self.SYSTEMD / "agentimpact-ctl-bridge.socket").read_text(encoding="utf-8")
+        self.assertIn("[Install]", socket)
+        self.assertIn("WantedBy=sockets.target", socket)
 
     def test_grok_socket_activation(self) -> None:
         socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")

@@ -357,22 +357,56 @@
       command: docker compose -f {{ repo_root }}/compose.yml up -d --build api
       changed_when: true
 
-    - name: Activer socket bridge
-      systemd:
-        name: agentimpact-ctl-bridge.socket
-        enabled: true
-        state: started
-        daemon_reload: true
+    - name: Recharger systemd après installation unités bridge
+      command: systemctl daemon-reload
+      changed_when: false
 
-    - name: Activer service bridge
+    - name: Désactiver et arrêter l'ancien démarrage direct du service bridge
       systemd:
         name: agentimpact-ctl-bridge.service
-        enabled: true
-        state: started
-        daemon_reload: true
+        enabled: false
+        state: stopped
+        daemon_reload: false
 
-    - name: Ajouter agentimpact-runner au groupe agentimpact-ctl
+    - name: Ajouter agentimpact-runner au groupe agentimpact-ctl avant activation socket
       user:
         name: agentimpact-runner
         groups: agentimpact-ctl
         append: true
+
+    - name: Activer et démarrer uniquement le socket bridge (socket activation)
+      systemd:
+        name: agentimpact-ctl-bridge.socket
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Smoke test hermesctl borné (déclenche le socket via health, en tant que agentimpact-runner)
+      become: true
+      become_user: agentimpact-runner
+      shell: |
+        set -euo pipefail
+        out="$(mktemp)"
+        trap 'rm -f "$out"' EXIT
+        timeout 10 /opt/agentimpact/runner/bin/hermesctl health >"$out" 2>&1
+        grep -q '"ok": true' "$out"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Vérifier socket bridge active après smoke test
+      command: systemctl is-active agentimpact-ctl-bridge.socket
+      changed_when: false
+
+    - name: Vérifier service bridge actif après socket activation
+      command: systemctl is-active agentimpact-ctl-bridge.service
+      changed_when: false
+
+    - name: Vérifier service bridge non enabled (socket activation seule)
+      shell: |
+        set -euo pipefail
+        state="$(systemctl is-enabled agentimpact-ctl-bridge.service 2>/dev/null || echo disabled)"
+        test "$state" = "disabled" || test "$state" = "static"
+      args:
+        executable: /bin/bash
+      changed_when: false

@@ -3,6 +3,8 @@ Description=AgentImpact hermesctl bridge
 Requires=agentimpact-ctl-bridge.socket
 After=agentimpact-ctl-bridge.socket network-online.target
 ConditionPathExists=/etc/agentimpact/tokens/bridge.env
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -20,10 +22,6 @@ ProtectSystem=strict
 ProtectHome=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
-StandardInput=socket
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=agentimpact-ctl-bridge
-
-[Install]
-WantedBy=multi-user.target
