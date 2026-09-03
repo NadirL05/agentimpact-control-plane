@@ -264,8 +264,14 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
                 self.assertEqual(pointer.stat().st_mode & 0o777, before_mode)
                 self.assertFalse((workspace / "runtime-report.txt").exists())
 
-    def test_legacy_pointer_rejects_unsafe_owner_symlink_and_external_target(self) -> None:
-        cases = ("wrong_owner", "symlink", "external_target")
+    def test_legacy_pointer_rejects_unsafe_owner_symlink_and_invalid_content(self) -> None:
+        cases = (
+            "wrong_owner",
+            "symlink",
+            "multiple_lines",
+            "empty_target",
+            "external_target",
+        )
         for case in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory(
                 prefix=f"hermesctl-legacy-pg-{case}-"
@@ -279,9 +285,21 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
                 pointer = workspace / "bundle" / "pg-backup" / "latest-001.path"
                 pointer.chmod(0o644)
                 require_root_owner = case == "wrong_owner"
+                before_dump_sha = _sha256(dump)
+                before_dump_mtime = _mtime_ns(dump)
+                before_dump_count = len(list(dump.parent.glob("pre-001-*.dump")))
                 if case == "symlink":
                     pointer.unlink()
                     pointer.symlink_to(dump)
+                elif case == "multiple_lines":
+                    pointer.write_text(f"{dump}\n{dump}\n", encoding="utf-8")
+                    pointer.chmod(0o644)
+                elif case == "empty_target":
+                    empty = dump.parent / "empty.dump"
+                    empty.touch()
+                    empty.chmod(0o600)
+                    pointer.write_text(f"{empty}\n", encoding="utf-8")
+                    pointer.chmod(0o644)
                 elif case == "external_target":
                     external = workspace / "external.dump"
                     external.write_text("external\n", encoding="utf-8")
@@ -294,11 +312,16 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
                 )
                 combined = proc.stdout + proc.stderr
                 self.assertNotEqual(proc.returncode, 0, combined)
-                if case != "symlink":
+                if case not in ("symlink", "multiple_lines"):
                     self.assertIn("invalid_pg_backup_pointer", combined)
                 self.assertNotIn(str(pointer), combined)
                 self.assertNotIn(str(dump), combined)
                 self.assertFalse((workspace / "runtime-report.txt").exists())
+                self.assertEqual(_sha256(dump), before_dump_sha)
+                self.assertEqual(_mtime_ns(dump), before_dump_mtime)
+                self.assertEqual(
+                    len(list(dump.parent.glob("pre-001-*.dump"))), before_dump_count
+                )
 
     def test_bundle_partial_fails_generic(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hermesctl-bundle-partial-") as tmp:
