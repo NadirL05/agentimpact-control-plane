@@ -42,6 +42,7 @@ Uniquement si le **noyau** est complet :
 
 1. Si `repo_root/app/dist` **absent** : créer atomiquement `app-dist.absent` (`mktemp` + `mv`, mode `0600`, `root:root` en prod) ; message `legacy_dist_marker_migrated` ; revalider ; `reuse_rollback_bundle=true` ; **aucun** nouveau dump / aucune réécriture scripts/compose/pointer.
 2. Si `repo_root/app/dist` **présent** : échec immédiat `rollback_bundle_dist_state_unknown` (avant sync/migration) — pas de conjecture.
+3. Si le seul écart est le pointeur historique `pg-backup/latest-001.path` en `root:root 0644`, il est migré à `0600` uniquement après validation de son format (une ligne, chemin absolu) et de sa cible canonique sous `pg-backup/` (`root:root 0600`, régulière, non-symlink, non vide). La migration journalise `legacy_pg_pointer_permissions_migrated`, ne réécrit ni contenu ni mtime, puis la validation stricte est relancée. Tout autre écart est refusé sans `chmod`.
 
 Voir aussi `docs/hermesctl-resume-preflight-idempotency.md` (préflight `bridge.env` idempotent sur reprise).
 

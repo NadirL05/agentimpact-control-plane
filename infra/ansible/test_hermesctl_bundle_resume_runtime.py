@@ -38,7 +38,12 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
         if not TASKS_FILE.is_file():
             raise unittest.SkipTest("tasks hermesctl_v1_rollback_bundle.yml manquant")
 
-    def _run_resume(self, workspace: Path) -> subprocess.CompletedProcess[str]:
+    def _run_resume(
+        self,
+        workspace: Path,
+        *,
+        require_root_owner: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         report = workspace / "runtime-report.txt"
         env = {
             **os.environ,
@@ -68,7 +73,7 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
                 "-e",
                 "hermesctl_pg_dump_mode=fixture",
                 "-e",
-                "hermesctl_require_root_owner=false",
+                f"hermesctl_require_root_owner={str(require_root_owner).lower()}",
             ],
             capture_output=True,
             text=True,
@@ -193,6 +198,107 @@ class HermesctlBundleResumeRuntimeTest(unittest.TestCase):
             self.assertEqual(_mtime_ns(dump), before["dump_mtime"])
             self.assertEqual(_sha256(pointer), before["pointer_sha"])
             self.assertEqual(_mtime_ns(pointer), before["pointer_mtime"])
+
+    def test_legacy_0644_pointer_migrates_only_permissions_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hermesctl-legacy-pg-pointer-") as tmp:
+            workspace = Path(tmp)
+            self._seed_repo(workspace, with_dist=False)
+            dump = self._seed_complete_bundle(workspace, dist_state="absent")
+            pointer = workspace / "bundle" / "pg-backup" / "latest-001.path"
+            pointer.chmod(0o644)
+            before = {
+                "pointer_sha": _sha256(pointer),
+                "pointer_mtime": _mtime_ns(pointer),
+                "dump_sha": _sha256(dump),
+                "dump_mtime": _mtime_ns(dump),
+                "dump_count": len(list(dump.parent.glob("pre-001-*.dump"))),
+            }
+            time.sleep(0.05)
+
+            first = self._run_resume(workspace)
+            combined = first.stdout + first.stderr
+            self.assertEqual(first.returncode, 0, combined)
+            self.assertIn("legacy_pg_pointer_permissions_migrated", combined)
+            self.assertNotIn(str(pointer), combined)
+            self.assertNotIn(str(dump), combined)
+            self.assertEqual(pointer.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(_sha256(pointer), before["pointer_sha"])
+            self.assertEqual(_mtime_ns(pointer), before["pointer_mtime"])
+            self.assertEqual(_sha256(dump), before["dump_sha"])
+            self.assertEqual(_mtime_ns(dump), before["dump_mtime"])
+            self.assertEqual(
+                len(list(dump.parent.glob("pre-001-*.dump"))), before["dump_count"]
+            )
+
+            second = self._run_resume(workspace)
+            second_output = second.stdout + second.stderr
+            self.assertEqual(second.returncode, 0, second_output)
+            self.assertNotIn("legacy_pg_pointer_permissions_migrated", second_output)
+            self.assertEqual(pointer.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(_sha256(pointer), before["pointer_sha"])
+            self.assertEqual(_mtime_ns(pointer), before["pointer_mtime"])
+            self.assertEqual(_sha256(dump), before["dump_sha"])
+            self.assertEqual(_mtime_ns(dump), before["dump_mtime"])
+            self.assertEqual(
+                len(list(dump.parent.glob("pre-001-*.dump"))), before["dump_count"]
+            )
+
+    def test_legacy_writable_pointer_modes_are_rejected_without_chmod(self) -> None:
+        for mode in (0o664, 0o666, 0o777):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory(
+                prefix=f"hermesctl-legacy-pg-{mode:o}-"
+            ) as tmp:
+                workspace = Path(tmp)
+                self._seed_repo(workspace, with_dist=False)
+                dump = self._seed_complete_bundle(workspace, dist_state="absent")
+                pointer = workspace / "bundle" / "pg-backup" / "latest-001.path"
+                pointer.chmod(mode)
+                before_mode = pointer.stat().st_mode & 0o777
+
+                proc = self._run_resume(workspace)
+                combined = proc.stdout + proc.stderr
+                self.assertNotEqual(proc.returncode, 0, combined)
+                self.assertIn("invalid_pg_backup_pointer", combined)
+                self.assertNotIn(str(pointer), combined)
+                self.assertNotIn(str(dump), combined)
+                self.assertEqual(pointer.stat().st_mode & 0o777, before_mode)
+                self.assertFalse((workspace / "runtime-report.txt").exists())
+
+    def test_legacy_pointer_rejects_unsafe_owner_symlink_and_external_target(self) -> None:
+        cases = ("wrong_owner", "symlink", "external_target")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory(
+                prefix=f"hermesctl-legacy-pg-{case}-"
+            ) as tmp:
+                workspace = Path(tmp)
+                self._seed_repo(workspace, with_dist=case == "wrong_owner")
+                dump = self._seed_complete_bundle(
+                    workspace,
+                    dist_state="present" if case == "wrong_owner" else "absent",
+                )
+                pointer = workspace / "bundle" / "pg-backup" / "latest-001.path"
+                pointer.chmod(0o644)
+                require_root_owner = case == "wrong_owner"
+                if case == "symlink":
+                    pointer.unlink()
+                    pointer.symlink_to(dump)
+                elif case == "external_target":
+                    external = workspace / "external.dump"
+                    external.write_text("external\n", encoding="utf-8")
+                    external.chmod(0o600)
+                    pointer.write_text(f"{external}\n", encoding="utf-8")
+                    pointer.chmod(0o644)
+
+                proc = self._run_resume(
+                    workspace, require_root_owner=require_root_owner
+                )
+                combined = proc.stdout + proc.stderr
+                self.assertNotEqual(proc.returncode, 0, combined)
+                if case != "symlink":
+                    self.assertIn("invalid_pg_backup_pointer", combined)
+                self.assertNotIn(str(pointer), combined)
+                self.assertNotIn(str(dump), combined)
+                self.assertFalse((workspace / "runtime-report.txt").exists())
 
     def test_bundle_partial_fails_generic(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hermesctl-bundle-partial-") as tmp:

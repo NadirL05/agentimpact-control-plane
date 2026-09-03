@@ -179,6 +179,25 @@
     - legacy_dist_migration is not skipped
     - legacy_dist_migration.rc | default(0) not in [0, 2]
 
+- name: Migrer permissions legacy du pointeur latest-001.path
+  script: ../files/hermesctl_pg_backup_pointer_legacy_migrate.sh
+  environment:
+    ROLLBACK_PG_BACKUP_DIR: "{{ rollback_pg_backup_dir }}"
+    HERMESCTL_REQUIRE_ROOT_OWNER: "{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
+  register: legacy_pg_pointer_migration
+  changed_when: (legacy_pg_pointer_migration.rc | default(1)) == 0
+  failed_when: (legacy_pg_pointer_migration.rc | default(1)) not in [0, 3]
+  when:
+    - bundle_state.stdout_lines[0] == "complete"
+
+- name: Journaliser migration permissions pointeur PostgreSQL legacy
+  debug:
+    msg: legacy_pg_pointer_permissions_migrated
+  when:
+    - legacy_pg_pointer_migration is defined
+    - legacy_pg_pointer_migration is not skipped
+    - legacy_pg_pointer_migration.rc | default(1) == 0
+
 - name: Revalider bundle après migration marqueur legacy
   shell: |
     set -euo pipefail
@@ -417,28 +436,23 @@
     [ ! -L "$pointer" ] || err
     [ -f "$pointer" ] || err
     perms=$(stat -c '%a' "$pointer")
-    group=$(((perms / 10) % 10))
-    other=$((perms % 10))
-    [ "$group" -eq 0 ] && [ "$other" -eq 0 ] || err
+    [ "$perms" = "600" ] || err
     if [ "$require_root" = "true" ]; then
       owner=$(stat -c '%U:%G' "$pointer")
       [ "$owner" = "root:root" ] || err
     fi
 
-    raw=$(tr -d '[:space:]' < "$pointer")
+    [ "$(wc -l < "$pointer")" -eq 1 ] || err
+    IFS= read -r raw < "$pointer" || err
     [ -n "$raw" ] || err
+    [ "${raw#/}" != "$raw" ] || err
 
-    case "$raw" in
-      "$pgdir"/*) ;;
-      *) err ;;
-    esac
+    [ "${raw#"$pgdir"/}" != "$raw" ] || err
     [ ! -L "$raw" ] || err
     [ -f "$raw" ] || err
     [ -s "$raw" ] || err
     dump_perms=$(stat -c '%a' "$raw")
-    dump_group=$(((dump_perms / 10) % 10))
-    dump_other=$((dump_perms % 10))
-    [ "$dump_group" -eq 0 ] && [ "$dump_other" -eq 0 ] || err
+    [ "$dump_perms" = "600" ] || err
     if [ "$require_root" = "true" ]; then
       dump_owner=$(stat -c '%U:%G' "$raw")
       [ "$dump_owner" = "root:root" ] || err
@@ -446,10 +460,7 @@
 
     canon_pgdir=$(readlink -f "$pgdir")
     canon_dump=$(readlink -f "$raw")
-    case "$canon_dump" in
-      "$canon_pgdir"/*) ;;
-      *) err ;;
-    esac
+    [ "${canon_dump#"$canon_pgdir"/}" != "$canon_dump" ] || err
     echo ok
   args:
     executable: /bin/bash
