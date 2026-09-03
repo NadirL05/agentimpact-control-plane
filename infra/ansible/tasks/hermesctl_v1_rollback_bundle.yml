@@ -1,0 +1,271 @@
+# Gestion atomique du bundle rollback hermesctl-v1.
+# Inclus par hermesctl-v1.yml et par les playbooks de test runtime.
+# Vars requises : repo_root, rollback_bundle_dir, rollback_scripts_dir,
+#   rollback_api_src_dir, rollback_dist_dir, rollback_compose_file, rollback_pg_backup_dir
+# Vars optionnelles :
+#   hermesctl_pg_dump_mode: docker (défaut) | fixture
+#   hermesctl_skip_source_stats: false
+
+- name: Détecter état du bundle rollback hermesctl-v1
+  shell: |
+    set -euo pipefail
+    bundle="{{ rollback_bundle_dir }}"
+    scripts="{{ rollback_scripts_dir }}"
+    api="{{ rollback_api_src_dir }}"
+    compose="{{ rollback_compose_file }}"
+    pointer="{{ rollback_pg_backup_dir }}/latest-001.path"
+
+    has_scripts=0
+    has_api=0
+    has_compose=0
+    has_dump=0
+
+    if [ -d "$scripts" ] && [ -n "$(ls -A "$scripts" 2>/dev/null || true)" ]; then
+      has_scripts=1
+    fi
+    if [ -d "$api" ] && [ -n "$(ls -A "$api" 2>/dev/null || true)" ]; then
+      has_api=1
+    fi
+    if [ -f "$compose" ] && [ -s "$compose" ]; then
+      has_compose=1
+    fi
+    if [ -e "$pointer" ]; then
+      # Validation minimale ici ; validation stricte dans la tâche dédiée.
+      if [ -f "$pointer" ] && [ ! -L "$pointer" ]; then
+        raw=$(tr -d '[:space:]' < "$pointer" || true)
+        if [ -n "$raw" ] && [ -e "$raw" ]; then
+          has_dump=1
+        fi
+      fi
+    fi
+
+    sum=$((has_scripts + has_api + has_compose + has_dump))
+    if [ "$sum" -eq 4 ]; then
+      echo "complete"
+    elif [ "$sum" -eq 0 ]; then
+      echo "absent"
+    else
+      echo "partial" >&2
+      echo "partial"
+    fi
+  args:
+    executable: /bin/bash
+  register: bundle_state
+  changed_when: false
+
+- name: Échec si bundle rollback partiel ou incohérent
+  fail:
+    msg: rollback_bundle_incomplete
+  when: bundle_state.stdout == "partial"
+
+- name: Mémoriser réutilisation du bundle rollback
+  set_fact:
+    reuse_rollback_bundle: "{{ bundle_state.stdout == 'complete' }}"
+
+- name: Annoncer reprise avec bundle rollback existant
+  debug:
+    msg: "reuse_rollback_bundle=true"
+  when: reuse_rollback_bundle | bool
+
+- name: Créer répertoire rollback bundle hermesctl-v1
+  file:
+    path: "{{ rollback_bundle_dir }}"
+    state: directory
+    mode: "0750"
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Créer répertoire sauvegarde PostgreSQL
+  file:
+    path: "{{ rollback_pg_backup_dir }}"
+    state: directory
+    mode: "0750"
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Vérifier scripts existants avant sauvegarde
+  stat:
+    path: "{{ repo_root }}/scripts"
+  register: existing_scripts
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Vérifier sources API existantes avant sauvegarde
+  stat:
+    path: "{{ repo_root }}/app/src"
+  register: existing_api_src
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Vérifier dist existant avant sauvegarde
+  stat:
+    path: "{{ repo_root }}/app/dist"
+  register: existing_dist
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Vérifier compose.yml existant avant sauvegarde
+  stat:
+    path: "{{ repo_root }}/compose.yml"
+  register: existing_compose
+  when: not (reuse_rollback_bundle | bool)
+
+- name: Sauvegarder scripts pre-hermesctl-v1
+  synchronize:
+    src: "{{ repo_root }}/scripts/"
+    dest: "{{ rollback_scripts_dir }}/"
+    archive: true
+    delete: false
+  delegate_to: localhost
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_scripts is defined
+    - existing_scripts.stat.exists | default(false)
+
+- name: Sauvegarder sources API pre-hermesctl-v1
+  synchronize:
+    src: "{{ repo_root }}/app/src/"
+    dest: "{{ rollback_api_src_dir }}/"
+    archive: true
+    delete: false
+  delegate_to: localhost
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_api_src is defined
+    - existing_api_src.stat.exists | default(false)
+
+- name: Sauvegarder dist pre-hermesctl-v1
+  synchronize:
+    src: "{{ repo_root }}/app/dist/"
+    dest: "{{ rollback_dist_dir }}/"
+    archive: true
+    delete: false
+  delegate_to: localhost
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_dist is defined
+    - existing_dist.stat.exists | default(false)
+
+- name: Enregistrer absence initiale de app/dist
+  copy:
+    content: "app-dist-absent\n"
+    dest: "{{ rollback_bundle_dir }}/app-dist.absent"
+    mode: "0640"
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_dist is defined
+    - not (existing_dist.stat.exists | default(false))
+
+- name: Retirer marqueur app-dist.absent si dist sauvegardé
+  file:
+    path: "{{ rollback_bundle_dir }}/app-dist.absent"
+    state: absent
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_dist is defined
+    - existing_dist.stat.exists | default(false)
+
+- name: Sauvegarder compose.yml pre-hermesctl-v1
+  copy:
+    src: "{{ repo_root }}/compose.yml"
+    dest: "{{ rollback_compose_file }}"
+    remote_src: true
+    mode: "0644"
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - existing_compose is defined
+    - existing_compose.stat.exists | default(false)
+
+- name: Sauvegarde PostgreSQL pre-migration 001 (docker)
+  shell: |
+    set -euo pipefail
+    stamp=$(date -u +%Y%m%d%H%M%S)
+    dump="{{ rollback_pg_backup_dir }}/pre-001-${stamp}.dump"
+    docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+      pg_dump -U agentimpact_app -d agentimpact --format=custom \
+      > "$dump"
+    chmod 0600 "$dump"
+    chown root:root "$dump"
+    printf '%s\n' "$dump" > "{{ rollback_pg_backup_dir }}/latest-001.path"
+    chmod 0600 "{{ rollback_pg_backup_dir }}/latest-001.path"
+    chown root:root "{{ rollback_pg_backup_dir }}/latest-001.path"
+  args:
+    executable: /bin/bash
+  changed_when: true
+  register: pg_backup_001
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - (hermesctl_pg_dump_mode | default('docker')) == 'docker'
+
+- name: Sauvegarde PostgreSQL pre-migration 001 (fixture test)
+  shell: |
+    set -euo pipefail
+    stamp=$(date -u +%Y%m%d%H%M%S)
+    dump="{{ rollback_pg_backup_dir }}/pre-001-${stamp}.dump"
+    printf 'fixture-pg-dump-%s\n' "$stamp" > "$dump"
+    chmod 0600 "$dump"
+    printf '%s\n' "$dump" > "{{ rollback_pg_backup_dir }}/latest-001.path"
+    chmod 0600 "{{ rollback_pg_backup_dir }}/latest-001.path"
+    if [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$dump" "{{ rollback_pg_backup_dir }}/latest-001.path"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: true
+  register: pg_backup_001_fixture
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - (hermesctl_pg_dump_mode | default('docker')) == 'fixture'
+
+- name: Enregistrer résultat sauvegarde PostgreSQL 001 (sans chemin)
+  debug:
+    msg: "pg_backup_001=ok"
+  when:
+    - not (reuse_rollback_bundle | bool)
+    - (pg_backup_001 is defined and pg_backup_001 is not skipped)
+      or (pg_backup_001_fixture is defined and pg_backup_001_fixture is not skipped)
+
+- name: Valider pointeur latest-001.path et dump associé
+  shell: |
+    set -euo pipefail
+    pgdir="{{ rollback_pg_backup_dir }}"
+    pointer="$pgdir/latest-001.path"
+    require_root="{{ hermesctl_require_root_owner | default(true) | bool | lower }}"
+    err() { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+
+    [ -e "$pointer" ] || err
+    [ ! -L "$pointer" ] || err
+    [ -f "$pointer" ] || err
+    perms=$(stat -c '%a' "$pointer")
+    group=$(((perms / 10) % 10))
+    other=$((perms % 10))
+    [ "$group" -eq 0 ] && [ "$other" -eq 0 ] || err
+    if [ "$require_root" = "true" ]; then
+      owner=$(stat -c '%U:%G' "$pointer")
+      [ "$owner" = "root:root" ] || err
+    fi
+
+    raw=$(tr -d '[:space:]' < "$pointer")
+    [ -n "$raw" ] || err
+
+    case "$raw" in
+      "$pgdir"/*) ;;
+      *) err ;;
+    esac
+    [ ! -L "$raw" ] || err
+    [ -f "$raw" ] || err
+    [ -s "$raw" ] || err
+    dump_perms=$(stat -c '%a' "$raw")
+    dump_group=$(((dump_perms / 10) % 10))
+    dump_other=$((dump_perms % 10))
+    [ "$dump_group" -eq 0 ] && [ "$dump_other" -eq 0 ] || err
+    if [ "$require_root" = "true" ]; then
+      dump_owner=$(stat -c '%U:%G' "$raw")
+      [ "$dump_owner" = "root:root" ] || err
+    fi
+
+    canon_pgdir=$(readlink -f "$pgdir")
+    canon_dump=$(readlink -f "$raw")
+    case "$canon_dump" in
+      "$canon_pgdir"/*) ;;
+      *) err ;;
+    esac
+    echo ok
+  args:
+    executable: /bin/bash
+  changed_when: false
