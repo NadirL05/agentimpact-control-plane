@@ -29,8 +29,9 @@ Il **ne** passe **pas** par `/var/lib/agentimpact/build-staging` : `/var/lib/age
 
 ### Reprise après déploiement partiel
 
-Si le bundle `/var/lib/agentimpact/rollback/hermesctl-v1` est **complet** (scripts, app-src, compose, dump `latest-001.path` valide), le playbook le **réutilise** sans resynchroniser ni refaire `pg_dump`.
+Si le bundle `/var/lib/agentimpact/rollback/hermesctl-v1` est **complet** (scripts, app-src, compose, dump `latest-001.path` valide **et** état dist explicite `app-dist/` ou `app-dist.absent`), le playbook le **réutilise** sans resynchroniser ni refaire `pg_dump`.
 Un bundle **partiel** provoque un échec explicite (`rollback_bundle_incomplete`).
+Cas **legacy** (noyau complet sans état dist) : si `app/dist` courant est absent, création atomique de `app-dist.absent` (`legacy_dist_marker_migrated`) puis réutilisation ; s'il est présent → `rollback_bundle_dist_state_unknown`.
 Si `app/dist` était absent au premier backup, le marqueur `app-dist.absent` est enregistré ; le rollback **supprime** alors le dist créé par le déploiement.
 
 Voir `docs/hermesctl-build-staging-traversal.md`.

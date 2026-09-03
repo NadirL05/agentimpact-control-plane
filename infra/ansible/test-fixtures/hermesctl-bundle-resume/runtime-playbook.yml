@@ -14,8 +14,10 @@
     - name: Exporter l'état bundle pour assertions runtime
       copy:
         content: |
-          bundle_state={{ bundle_state.stdout }}
+          bundle_state={{ bundle_state_name | default(bundle_state.stdout_lines[0]) }}
           reuse_rollback_bundle={{ reuse_rollback_bundle | bool | lower }}
+          bundle_dist_state={{ bundle_dist_state | default('none') }}
+          legacy_migrated={{ (legacy_dist_migration is defined and legacy_dist_migration is not skipped and (legacy_dist_migration.rc | default(1)) == 0) | bool | lower }}
         dest: "{{ runtime_report_path }}"
         mode: "0640"
       when: runtime_report_path is defined
