@@ -40,12 +40,20 @@
     - name: Vérifier tokens présents (fichiers, pas affichage)
       stat:
         path: "/etc/agentimpact/tokens/{{ item }}.env"
+        get_checksum: false
+        get_mime: false
       loop:
         - bridge
         - hermes
         - admin
       register: token_files
-      failed_when: not token_files.results | map(attribute='stat.exists') | list | min
+      no_log: true
+
+    - name: Échec si un token requis est absent
+      assert:
+        that:
+          - token_files.results | map(attribute='stat.exists') | list | min
+        fail_msg: missing_required_token
 
     - name: Vérifier bridge.env pré-déploiement (root, sans lecture group/other)
       shell: |

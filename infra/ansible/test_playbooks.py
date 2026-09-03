@@ -4,10 +4,123 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 PLAYBOOKS = Path(__file__).resolve().parent / "playbooks"
+
+
+def _ansible_task_blocks(content: str) -> list[str]:
+    return re.split(r"\n    - name:", content)[1:]
+
+
+class LoopPreflightRegressionTest(unittest.TestCase):
+    def test_no_failed_when_register_results_inside_same_loop_task(self) -> None:
+        invalid: list[str] = []
+        for playbook in sorted(PLAYBOOKS.glob("*.yml")):
+            for block in _ansible_task_blocks(playbook.read_text(encoding="utf-8")):
+                if "loop:" in block and re.search(r"failed_when:.*\.results", block):
+                    invalid.append(playbook.name)
+                    break
+        self.assertEqual(invalid, [])
+
+    def test_token_and_credential_stat_disable_checksum_and_mime(self) -> None:
+        for playbook in sorted(PLAYBOOKS.glob("*.yml")):
+            for block in _ansible_task_blocks(playbook.read_text(encoding="utf-8")):
+                if "stat:" not in block:
+                    continue
+                if "/tokens/" not in block and "/credentials/" not in block:
+                    continue
+                self.assertIn(
+                    "get_checksum: false",
+                    block,
+                    f"{playbook.name}: stat token/credential sans get_checksum: false",
+                )
+                self.assertIn(
+                    "get_mime: false",
+                    block,
+                    f"{playbook.name}: stat token/credential sans get_mime: false",
+                )
+
+    def test_token_and_credential_stat_use_no_log(self) -> None:
+        for playbook in sorted(PLAYBOOKS.glob("*.yml")):
+            for block in _ansible_task_blocks(playbook.read_text(encoding="utf-8")):
+                if "stat:" not in block:
+                    continue
+                if "/tokens/" not in block and "/credentials/" not in block:
+                    continue
+                self.assertIn(
+                    "no_log: true",
+                    block,
+                    f"{playbook.name}: stat token/credential sans no_log: true",
+                )
+
+    def test_no_tracked_env_fixture_files(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        tracked = subprocess.run(
+            ["git", "ls-files", "*.env", "**/*.env"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tracked_paths = [line.strip() for line in tracked.stdout.splitlines() if line.strip()]
+        new_env_fixtures = [
+            p
+            for p in tracked_paths
+            if "test-fixtures/loop-preflight" in p and p.endswith(".env")
+        ]
+        self.assertEqual(new_env_fixtures, [], tracked_paths)
+
+    def test_loop_preflight_fixture_sources_not_env_suffix(self) -> None:
+        fixture_root = Path(__file__).resolve().parent / "test-fixtures" / "loop-preflight"
+        env_sources = list(fixture_root.rglob("*.env"))
+        self.assertEqual(env_sources, [])
+
+    def test_runtime_playbook_stat_uses_no_log_and_hardening(self) -> None:
+        runtime = (
+            Path(__file__).resolve().parent
+            / "test-fixtures"
+            / "loop-preflight"
+            / "runtime-playbook.yml"
+        ).read_text(encoding="utf-8")
+        stat_block = runtime[runtime.index("Stat loop tokens") : runtime.index("Assert all tokens")]
+        self.assertIn("get_checksum: false", stat_block)
+        self.assertIn("get_mime: false", stat_block)
+        self.assertIn("no_log: true", stat_block)
+        self.assertIn("fail_msg: missing_required_token", runtime)
+
+    def test_hermesctl_tokens_use_assert_after_stat_loop(self) -> None:
+        content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
+        stat_idx = content.index("Vérifier tokens présents")
+        assert_idx = content.index("Échec si un token requis est absent")
+        bridge_idx = content.index("Vérifier bridge.env pré-déploiement")
+        self.assertLess(stat_idx, assert_idx)
+        self.assertLess(assert_idx, bridge_idx)
+        assert_block = content[assert_idx : content.index("Vérifier bridge.env pré-déploiement")]
+        self.assertIn("token_files.results", assert_block)
+        self.assertIn("assert:", assert_block)
+
+    def test_slack_router_credentials_use_assert_after_stat_loop(self) -> None:
+        content = (PLAYBOOKS / "slack-grok-router-v1.yml").read_text(encoding="utf-8")
+        stat_idx = content.index("Vérifier credentials routeur Slack")
+        assert_idx = content.index("Échec si un credential routeur est absent")
+        grok_stat_idx = content.index("Vérifier credential Grok worker")
+        grok_assert_idx = content.index("Échec si credential Grok absent")
+        self.assertLess(stat_idx, assert_idx)
+        self.assertLess(assert_idx, grok_stat_idx)
+        self.assertLess(grok_stat_idx, grok_assert_idx)
+        assert_block = content[assert_idx : content.index("Vérifier credential Grok worker")]
+        self.assertIn("missing_required_credential", assert_block)
+
+    def test_host_dist_artifacts_use_assert_after_stat_loop(self) -> None:
+        content = (PLAYBOOKS / "slack-grok-router-v1.yml").read_text(encoding="utf-8")
+        stat_idx = content.index("Vérifier artefacts build host requis")
+        assert_idx = content.index("Échec si un artefact build host est absent")
+        rollback_idx = content.index("Créer répertoire rollback bundle slack-grok-router-v1")
+        self.assertLess(stat_idx, assert_idx)
+        self.assertLess(assert_idx, rollback_idx)
 
 
 class HermesctlPlaybookRegressionTest(unittest.TestCase):
