@@ -1,0 +1,37 @@
+---
+# Runtime — préflight bridge.env (script partagé, sans Docker ni secrets réels).
+- name: Test hermesctl bridge.env preflight
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    bridge_preflight_script: "{{ playbook_dir }}/../../files/hermesctl_bridge_env_preflight.sh"
+  tasks:
+    - name: Préflight bridge.env (1)
+      shell: |
+        set -euo pipefail
+        "{{ bridge_preflight_script }}" "{{ bridge_env_path }}"
+      args:
+        executable: /bin/bash
+      register: bridge_preflight_1
+      changed_when: false
+
+    - name: Préflight bridge.env (2 — idempotence)
+      shell: |
+        set -euo pipefail
+        "{{ bridge_preflight_script }}" "{{ bridge_env_path }}"
+      args:
+        executable: /bin/bash
+      register: bridge_preflight_2
+      changed_when: false
+      when: run_twice | default(false) | bool
+
+    - name: Exporter rapport runtime
+      copy:
+        content: |
+          preflight1={{ bridge_preflight_1.stdout | default('') | trim }}
+          preflight2={{ bridge_preflight_2.stdout | default('') | trim }}
+          ran_twice={{ run_twice | default(false) | bool | lower }}
+        dest: "{{ runtime_report_path }}"
+        mode: "0640"
+      when: runtime_report_path is defined

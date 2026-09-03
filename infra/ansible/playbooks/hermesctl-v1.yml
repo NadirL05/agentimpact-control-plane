@@ -57,26 +57,11 @@
           - token_files.results | map(attribute='stat.exists') | list | min
         fail_msg: missing_required_token
 
-    - name: Vérifier bridge.env pré-déploiement (root, sans lecture group/other)
+    - name: Vérifier bridge.env pré-déploiement (cycle de vie sécurisé)
       shell: |
         set -euo pipefail
-        f=/etc/agentimpact/tokens/bridge.env
-        test -f "$f"
-        perms=$(stat -c '%a' "$f")
-        owner=$(stat -c '%U:%G' "$f")
-        other=$((perms % 10))
-        group=$(((perms / 10) % 10))
-        if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
-          echo "unsafe_bridge_preflight:$f:$perms" >&2
-          exit 1
-        fi
-        case "$owner" in
-          root:root|root:agentimpact-ctl) ;;
-          *)
-            echo "unexpected_bridge_owner_preflight:$owner" >&2
-            exit 1
-            ;;
-        esac
+        "{{ playbook_dir }}/../files/hermesctl_bridge_env_preflight.sh" \
+          "{{ bridge_env_path | default('/etc/agentimpact/tokens/bridge.env') }}"
       args:
         executable: /bin/bash
       changed_when: false
@@ -86,11 +71,19 @@
         set -euo pipefail
         for f in /etc/agentimpact/tokens/*.env /etc/agentimpact/credentials/*; do
           [ -e "$f" ] || continue
+          if [ -L "$f" ]; then
+            echo "unsafe_permissions" >&2
+            exit 1
+          fi
+          if [ ! -f "$f" ]; then
+            echo "unsafe_permissions" >&2
+            exit 1
+          fi
           perms=$(stat -c '%a' "$f")
           other=$((perms % 10))
           group=$(((perms / 10) % 10))
           if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
-            echo "unsafe_permissions:$f:$perms" >&2
+            echo "unsafe_permissions" >&2
             exit 1
           fi
         done
@@ -136,13 +129,17 @@
       shell: |
         set -euo pipefail
         f=/etc/agentimpact/tokens/bridge.env
+        if [ -L "$f" ] || [ ! -f "$f" ]; then
+          echo "unsafe_bridge_final" >&2
+          exit 1
+        fi
         test "$(stat -c '%U:%G' "$f")" = "agentimpact-ctl:agentimpact-ctl"
         test "$(stat -c '%a' "$f")" = "400"
         perms=$(stat -c '%a' "$f")
         group=$(((perms / 10) % 10))
         other=$((perms % 10))
-        if [ "$group" -ge 4 ] || [ "$other" -ge 4 ]; then
-          echo "unsafe_bridge_final:$f:$perms" >&2
+        if [ "$group" -ne 0 ] || [ "$other" -ne 0 ]; then
+          echo "unsafe_bridge_final" >&2
           exit 1
         fi
       args:
@@ -160,7 +157,7 @@
           group=$(((perms / 10) % 10))
           other=$((perms % 10))
           if [ "$group" -ge 4 ] || [ "$other" -ge 4 ]; then
-            echo "unsafe_api_token:$f:$perms" >&2
+            echo "unsafe_api_token" >&2
             exit 1
           fi
         done

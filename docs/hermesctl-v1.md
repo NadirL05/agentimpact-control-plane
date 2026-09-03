@@ -44,9 +44,17 @@ Voir `docs/hermesctl-build-staging-traversal.md`.
 | `hermes.env` | `root:root` | `0600` | API Docker (root conteneur) |
 | `admin.env` | `root:root` | `0600` | API Docker (root conteneur) |
 
-**Preflight** (avant création du compte `agentimpact-ctl`) : `bridge.env` peut être `root:root 0600` ou `root:agentimpact-ctl 0600` — aucune lecture group/other.
+**Preflight** (avant ou après création du compte `agentimpact-ctl`) — trois états sécurisés acceptés pour `bridge.env` :
 
-**Post-création compte** : le playbook impose `bridge.env` en `agentimpact-ctl:agentimpact-ctl 0400`. Le mode `0600 root:agentimpact-ctl` est incorrect : le groupe ne peut pas lire un fichier `0600` dont le propriétaire est root.
+| Owner | Mode | Règle |
+| --- | --- | --- |
+| `root:root` | sans lecture group/other | install initiale |
+| `root:agentimpact-ctl` | sans lecture group/other | transition |
+| `agentimpact-ctl:agentimpact-ctl` | **exactement `0400`** | état final (reprise idempotente) |
+
+Refus : autre propriétaire, `agentimpact-ctl` en `0600`/`0440`/autre mode, symlink, fichier non régulier. Le script ne lit jamais le contenu.
+
+**Post-création compte** : le playbook impose toujours `bridge.env` en `agentimpact-ctl:agentimpact-ctl 0400` (idempotent).
 
 Le service systemd et le playbook utilisent le même chemin : `/etc/agentimpact/tokens/bridge.env` (`EnvironmentFile` dans `agentimpact-ctl-bridge.service`).
 

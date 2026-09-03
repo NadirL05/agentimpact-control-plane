@@ -359,11 +359,33 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertNotIn("agentimpact-api", self.rollback)
 
     def test_bridge_env_preflight_accepts_root_before_ctl_user(self) -> None:
-        self.assertIn("Vérifier bridge.env pré-déploiement", self.content)
-        self.assertIn("root:root|root:agentimpact-ctl", self.content)
+        self.assertIn("Vérifier bridge.env pré-déploiement (cycle de vie sécurisé)", self.content)
+        self.assertIn("hermesctl_bridge_env_preflight.sh", self.content)
+        script = (
+            Path(__file__).resolve().parent / "files" / "hermesctl_bridge_env_preflight.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("root:root|root:agentimpact-ctl", script)
+        self.assertIn("agentimpact-ctl:agentimpact-ctl", script)
+        self.assertIn("unexpected_bridge_mode_preflight", script)
+        self.assertIn("invalid_bridge_env_preflight", script)
+        self.assertIn("getent passwd agentimpact-ctl", script)
         preflight_idx = self.content.index("Vérifier bridge.env pré-déploiement")
         user_idx = self.content.index("Créer compte système agentimpact-ctl")
         self.assertLess(preflight_idx, user_idx)
+
+    def test_bridge_env_preflight_accepts_final_ctl_0400_state(self) -> None:
+        script = (
+            Path(__file__).resolve().parent / "files" / "hermesctl_bridge_env_preflight.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('[ "$perms" != "400" ]', script)
+        self.assertIn("unexpected_bridge_mode_preflight", script)
+        apply_block = self.content[
+            self.content.index("Appliquer propriétaire bridge.env pour lecture agentimpact-ctl") :
+            self.content.index("Vérifier permissions finales bridge.env")
+        ]
+        self.assertIn('mode: "0400"', apply_block)
+        self.assertIn("owner: agentimpact-ctl", apply_block)
+        self.assertIn("group: agentimpact-ctl", apply_block)
 
     def test_bridge_env_applied_after_ctl_user_creation(self) -> None:
         user_idx = self.content.index("Créer compte système agentimpact-ctl")
@@ -385,8 +407,10 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         ]
         self.assertIn("agentimpact-ctl:agentimpact-ctl", block)
         self.assertIn('"400"', block)
-        self.assertIn('"$group" -ge 4', block)
-        self.assertIn('"$other" -ge 4', block)
+        self.assertIn('"$group" -ne 0', block)
+        self.assertIn('"$other" -ne 0', block)
+        self.assertIn("unsafe_bridge_final", block)
+        self.assertNotIn("unsafe_bridge_final:$f", block)
 
     def test_hermes_admin_tokens_remain_root_0600_not_bridge_accessible(self) -> None:
         block = self.content[
