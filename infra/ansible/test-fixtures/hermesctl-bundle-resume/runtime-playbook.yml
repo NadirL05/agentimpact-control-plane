@@ -1,0 +1,21 @@
+---
+# Runtime — reprise bundle hermesctl (fixture, sans Docker ni secrets).
+- name: Test hermesctl rollback bundle resume
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    hermesctl_pg_dump_mode: fixture
+    hermesctl_require_root_owner: false
+  tasks:
+    - name: Préparer / réutiliser le bundle rollback hermesctl-v1
+      include_tasks: "{{ playbook_dir }}/../../tasks/hermesctl_v1_rollback_bundle.yml"
+
+    - name: Exporter l'état bundle pour assertions runtime
+      copy:
+        content: |
+          bundle_state={{ bundle_state.stdout }}
+          reuse_rollback_bundle={{ reuse_rollback_bundle | bool | lower }}
+        dest: "{{ runtime_report_path }}"
+        mode: "0640"
+      when: runtime_report_path is defined

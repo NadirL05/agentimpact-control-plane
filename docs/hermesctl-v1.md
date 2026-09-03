@@ -22,6 +22,19 @@ Branche : `feature/hermesctl-v1-atomic`
 
 Playbook : `infra/ansible/playbooks/hermesctl-v1.yml`
 
+### Staging build (hermes)
+
+Le build Node s'exécute sous `hermes` dans `/var/lib/agentimpact-build/hermesctl-v1` (parent `hermes:hermes 0750`).
+Il **ne** passe **pas** par `/var/lib/agentimpact/build-staging` : `/var/lib/agentimpact` reste `root:root 0750` et n'est pas affaibli.
+
+### Reprise après déploiement partiel
+
+Si le bundle `/var/lib/agentimpact/rollback/hermesctl-v1` est **complet** (scripts, app-src, compose, dump `latest-001.path` valide), le playbook le **réutilise** sans resynchroniser ni refaire `pg_dump`.
+Un bundle **partiel** provoque un échec explicite (`rollback_bundle_incomplete`).
+Si `app/dist` était absent au premier backup, le marqueur `app-dist.absent` est enregistré ; le rollback **supprime** alors le dist créé par le déploiement.
+
+Voir `docs/hermesctl-build-staging-traversal.md`.
+
 ### Permissions des fichiers token
 
 | Fichier | Propriétaire final | Mode | Lu par |

@@ -127,6 +127,9 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.content = (PLAYBOOKS / "hermesctl-v1.yml").read_text(encoding="utf-8")
         self.rollback = (PLAYBOOKS / "hermesctl-v1-rollback.yml").read_text(encoding="utf-8")
+        self.bundle_tasks = (
+            Path(__file__).resolve().parent / "tasks" / "hermesctl_v1_rollback_bundle.yml"
+        ).read_text(encoding="utf-8")
 
     def test_work_src_points_to_repo_root_not_infra_infra(self) -> None:
         self.assertIn('work_src: "{{ playbook_dir }}/../../../"', self.content)
@@ -162,23 +165,123 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("Propriétaire app/dist hermes", self.content)
         self.assertIn("Supprimer node_modules hôte sous app/src", self.content)
 
+    def test_build_staging_outside_agentimpact_var_lib(self) -> None:
+        self.assertIn(
+            "build_staging_dir: /var/lib/agentimpact-build/hermesctl-v1",
+            self.content,
+        )
+        self.assertIn("build_root_dir: /var/lib/agentimpact-build", self.content)
+        self.assertNotIn(
+            "build_staging_dir: /var/lib/agentimpact/build-staging",
+            self.content,
+        )
+        self.assertIn("Créer racine build hermes", self.content)
+        self.assertIn("Vérifier staging accessible par hermes avant build", self.content)
+
+    def test_never_weakens_var_lib_agentimpact_permissions(self) -> None:
+        self.assertIn("root:root 750", self.content)
+        # Aucun chmod/chown ciblant le parent /var/lib/agentimpact.
+        self.assertNotRegex(
+            self.content,
+            r"(chmod|chown).*/var/lib/agentimpact[^\-/a-z]",
+        )
+        root_block = self.content[
+            self.content.index("Créer racine build hermes") :
+            self.content.index("Créer répertoire staging build")
+        ]
+        self.assertIn('mode: "0750"', root_block)
+        self.assertIn('owner: "{{ app_owner }}"', root_block)
+        self.assertNotIn("0777", root_block)
+        self.assertNotIn("0755", root_block)
+
+    def test_resume_reuses_complete_rollback_bundle(self) -> None:
+        self.assertIn("hermesctl_v1_rollback_bundle.yml", self.content)
+        self.assertIn("Détecter état du bundle rollback hermesctl-v1", self.bundle_tasks)
+        self.assertIn("reuse_rollback_bundle", self.bundle_tasks)
+        self.assertIn('echo "complete"', self.bundle_tasks)
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
+        sync_idx = self.content.index("Synchroniser compose.yml")
+        mig_idx = self.content.index("Appliquer migration SQL proposals")
+        self.assertLess(include_idx, sync_idx)
+        self.assertLess(sync_idx, mig_idx)
+        backup_scripts = self.bundle_tasks[
+            self.bundle_tasks.index("Sauvegarder scripts pre-hermesctl-v1") :
+            self.bundle_tasks.index("Sauvegarder sources API pre-hermesctl-v1")
+        ]
+        self.assertIn("not (reuse_rollback_bundle | bool)", backup_scripts)
+        pg_block = self.bundle_tasks[
+            self.bundle_tasks.index("Sauvegarde PostgreSQL pre-migration 001 (docker)") :
+            self.bundle_tasks.index("Sauvegarde PostgreSQL pre-migration 001 (fixture test)")
+        ]
+        self.assertIn("not (reuse_rollback_bundle | bool)", pg_block)
+
+    def test_resume_refuses_partial_rollback_bundle(self) -> None:
+        self.assertIn("Échec si bundle rollback partiel ou incohérent", self.bundle_tasks)
+        self.assertIn("rollback_bundle_incomplete", self.bundle_tasks)
+        self.assertIn('echo "partial"', self.bundle_tasks)
+
+    def test_fresh_install_creates_bundle_before_sync(self) -> None:
+        create_idx = self.bundle_tasks.index("Créer répertoire rollback bundle hermesctl-v1")
+        backup_idx = self.bundle_tasks.index("Sauvegarder sources API pre-hermesctl-v1")
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
+        sync_idx = self.content.index("Synchroniser code API vers app/src")
+        self.assertLess(create_idx, backup_idx)
+        self.assertLess(include_idx, sync_idx)
+        create_block = self.bundle_tasks[
+            create_idx : self.bundle_tasks.index("Créer répertoire sauvegarde PostgreSQL")
+        ]
+        self.assertIn("not (reuse_rollback_bundle | bool)", create_block)
+
+    def test_bundle_validation_precedes_any_app_sync_or_migration(self) -> None:
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
+        for name in (
+            "Synchroniser compose.yml",
+            "Synchroniser migrations SQL vers app/src/migrations",
+            "Synchroniser code API vers app/src",
+            "Appliquer migration SQL proposals",
+            "Installer dist staging vers app/dist",
+        ):
+            self.assertLess(include_idx, self.content.index(name), name)
+
+    def test_latest_001_path_validated_without_leaking_path(self) -> None:
+        self.assertIn("Valider pointeur latest-001.path et dump associé", self.bundle_tasks)
+        self.assertIn("invalid_pg_backup_pointer", self.bundle_tasks)
+        self.assertIn('echo "invalid_pg_backup_pointer"', self.bundle_tasks)
+        self.assertIn("readlink -f", self.bundle_tasks)
+        self.assertIn("pg_backup_001=ok", self.bundle_tasks)
+        self.assertNotIn("pg_backup_001={{ pg_backup_001.stdout", self.bundle_tasks)
+
+    def test_app_dist_absent_marker_recorded_and_honored_on_rollback(self) -> None:
+        self.assertIn("Enregistrer absence initiale de app/dist", self.bundle_tasks)
+        self.assertIn("app-dist.absent", self.bundle_tasks)
+        self.assertIn("Supprimer dist créé par déploiement (aucun dist initial)", self.rollback)
+        self.assertIn("app-dist.absent", self.rollback)
+        restore_block = self.rollback[
+            self.rollback.index("Restaurer dist versionné pre-hermesctl-v1") :
+            self.rollback.index("Restaurer scripts versionnés pre-hermesctl-v1")
+        ]
+        self.assertIn("not (dist_absent_marker.stat.exists", restore_block)
+
     def test_pg_dump_permissions_0600(self) -> None:
-        self.assertIn("chmod 0600", self.content)
-        self.assertIn("latest-001.path", self.content)
+        self.assertIn("chmod 0600", self.bundle_tasks)
+        self.assertIn("latest-001.path", self.bundle_tasks)
 
     def test_rollback_bundle_excludes_credentials_copy(self) -> None:
         self.assertNotRegex(self.content, r"Sauvegarder[^\n]*credentials")
         self.assertNotRegex(self.content, r"dest:.*rollback.*credentials")
+        self.assertNotRegex(self.bundle_tasks, r"dest:.*rollback.*credentials")
 
     def test_backups_dist_before_sync(self) -> None:
-        backup_dist_idx = self.content.index("Sauvegarder dist pre-hermesctl-v1")
+        self.assertIn("Sauvegarder dist pre-hermesctl-v1", self.bundle_tasks)
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
         sync_api_idx = self.content.index("Synchroniser code API vers app/src")
-        self.assertLess(backup_dist_idx, sync_api_idx)
+        self.assertLess(include_idx, sync_api_idx)
 
     def test_pg_backup_before_migration(self) -> None:
-        backup_idx = self.content.index("Sauvegarde PostgreSQL pre-migration 001")
+        self.assertIn("Sauvegarde PostgreSQL pre-migration 001 (docker)", self.bundle_tasks)
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
         migration_idx = self.content.index("Appliquer migration SQL proposals")
-        self.assertLess(backup_idx, migration_idx)
+        self.assertLess(include_idx, migration_idx)
 
     def test_compose_readable_validation(self) -> None:
         self.assertIn("Vérifier compose.yml lisible par root", self.content)
@@ -206,12 +309,14 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertLess(restore_compose_idx, api_idx)
 
     def test_deploy_backups_api_and_compose_before_sync(self) -> None:
-        backup_api_idx = self.content.index("Sauvegarder sources API pre-hermesctl-v1")
-        backup_compose_idx = self.content.index("Sauvegarder compose.yml pre-hermesctl-v1")
+        self.assertIn("Sauvegarder sources API pre-hermesctl-v1", self.bundle_tasks)
+        self.assertIn("Sauvegarder compose.yml pre-hermesctl-v1", self.bundle_tasks)
+        include_idx = self.content.index("Préparer / réutiliser le bundle rollback hermesctl-v1")
         sync_api_idx = self.content.index("Synchroniser code API vers app/src")
         sync_compose_idx = self.content.index("Synchroniser compose.yml")
-        self.assertLess(backup_api_idx, sync_api_idx)
-        self.assertLess(backup_compose_idx, sync_compose_idx)
+        self.assertLess(include_idx, sync_compose_idx)
+        self.assertLess(include_idx, sync_api_idx)
+        self.assertLess(sync_compose_idx, sync_api_idx)
 
     def test_rollback_fails_on_incomplete_bundle(self) -> None:
         self.assertIn("bundle hermesctl-v1 incomplet", self.rollback)

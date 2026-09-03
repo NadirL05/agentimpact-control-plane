@@ -19,7 +19,9 @@
     host_build_user: hermes
     app_owner: hermes
     app_group: hermes
-    build_staging_dir: /var/lib/agentimpact/build-staging/hermesctl-v1
+    # Staging hors /var/lib/agentimpact (0750 root:root) — hermes doit pouvoir traverser le parent.
+    build_root_dir: /var/lib/agentimpact-build
+    build_staging_dir: /var/lib/agentimpact-build/hermesctl-v1
     min_disk_mb: 1024
   tasks:
     - name: Vérifier compose.yml lisible par root
@@ -175,101 +177,8 @@
         executable: /bin/bash
       changed_when: false
 
-    - name: Créer répertoire rollback bundle hermesctl-v1
-      file:
-        path: "{{ rollback_bundle_dir }}"
-        state: directory
-        mode: "0750"
-
-    - name: Créer répertoire sauvegarde PostgreSQL
-      file:
-        path: "{{ rollback_pg_backup_dir }}"
-        state: directory
-        mode: "0750"
-
-    - name: Vérifier scripts existants avant sauvegarde
-      stat:
-        path: "{{ repo_root }}/scripts"
-      register: existing_scripts
-
-    - name: Vérifier sources API existantes avant sauvegarde
-      stat:
-        path: "{{ repo_root }}/app/src"
-      register: existing_api_src
-
-    - name: Vérifier dist existant avant sauvegarde
-      stat:
-        path: "{{ repo_root }}/app/dist"
-      register: existing_dist
-
-    - name: Vérifier compose.yml existant avant sauvegarde
-      stat:
-        path: "{{ repo_root }}/compose.yml"
-      register: existing_compose
-
-    - name: Sauvegarder scripts pre-hermesctl-v1
-      synchronize:
-        src: "{{ repo_root }}/scripts/"
-        dest: "{{ rollback_scripts_dir }}/"
-        archive: true
-        delete: false
-      delegate_to: localhost
-      when: existing_scripts.stat.exists
-
-    - name: Sauvegarder sources API pre-hermesctl-v1
-      synchronize:
-        src: "{{ repo_root }}/app/src/"
-        dest: "{{ rollback_api_src_dir }}/"
-        archive: true
-        delete: false
-      delegate_to: localhost
-      when: existing_api_src.stat.exists
-
-    - name: Sauvegarder dist pre-hermesctl-v1
-      synchronize:
-        src: "{{ repo_root }}/app/dist/"
-        dest: "{{ rollback_dist_dir }}/"
-        archive: true
-        delete: false
-      delegate_to: localhost
-      when: existing_dist.stat.exists
-
-    - name: Sauvegarder compose.yml pre-hermesctl-v1
-      copy:
-        src: "{{ repo_root }}/compose.yml"
-        dest: "{{ rollback_compose_file }}"
-        remote_src: true
-        mode: "0644"
-      when: existing_compose.stat.exists
-
-    - name: Sauvegarde PostgreSQL pre-migration 001
-      shell: |
-        set -euo pipefail
-        stamp=$(date -u +%Y%m%d%H%M%S)
-        dump="{{ rollback_pg_backup_dir }}/pre-001-${stamp}.dump"
-        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
-          pg_dump -U agentimpact_app -d agentimpact --format=custom \
-          > "$dump"
-        chmod 0600 "$dump"
-        echo "$dump" > "{{ rollback_pg_backup_dir }}/latest-001.path"
-      args:
-        executable: /bin/bash
-      changed_when: true
-      register: pg_backup_001
-
-    - name: Enregistrer chemin sauvegarde PostgreSQL 001 (sans contenu)
-      debug:
-        msg: "pg_backup_001={{ pg_backup_001.stdout_lines[-1] | default('unknown') }}"
-
-    - name: Vérifier sauvegarde PostgreSQL non vide
-      shell: |
-        set -euo pipefail
-        latest=$(ls -t "{{ rollback_pg_backup_dir }}"/*.dump 2>/dev/null | head -1)
-        test -n "$latest"
-        test -s "$latest"
-      args:
-        executable: /bin/bash
-      changed_when: false
+    - name: Préparer / réutiliser le bundle rollback hermesctl-v1
+      include_tasks: "{{ playbook_dir }}/../tasks/hermesctl_v1_rollback_bundle.yml"
 
     - name: Synchroniser compose.yml
       copy:
@@ -301,6 +210,14 @@
         path: "{{ repo_root }}/app/src/node_modules"
         state: absent
 
+    - name: Créer racine build hermes (traversable, hors /var/lib/agentimpact)
+      file:
+        path: "{{ build_root_dir }}"
+        state: directory
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "0750"
+
     - name: Créer répertoire staging build
       file:
         path: "{{ build_staging_dir }}"
@@ -308,6 +225,19 @@
         owner: "{{ app_owner }}"
         group: "{{ app_group }}"
         mode: "0750"
+
+    - name: Vérifier hermes peut traverser le staging sans affaiblir /var/lib/agentimpact
+      shell: |
+        set -euo pipefail
+        test "$(stat -c '%U:%G %a' '{{ build_root_dir }}')" = "{{ app_owner }}:{{ app_group }} 750"
+        test "$(stat -c '%U:%G %a' /var/lib/agentimpact)" = "root:root 750"
+        # Ne jamais rendre /var/lib/agentimpact traversable par hermes via ce playbook.
+        if [ -d /var/lib/agentimpact/build-staging ]; then
+          echo "legacy_build_staging_present:/var/lib/agentimpact/build-staging" >&2
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Synchroniser sources vers staging build
       synchronize:
@@ -321,6 +251,19 @@
         owner: "{{ app_owner }}"
         group: "{{ app_group }}"
         recurse: true
+
+    - name: Vérifier staging accessible par hermes avant build
+      become: true
+      become_user: "{{ host_build_user }}"
+      shell: |
+        set -euo pipefail
+        test -d "{{ build_staging_dir }}"
+        test -r "{{ build_staging_dir }}"
+        test -x "{{ build_staging_dir }}"
+        cd "{{ build_staging_dir }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Build Node dans staging (hermes, indépendant du conteneur API)
       become: true
