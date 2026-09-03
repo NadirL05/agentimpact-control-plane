@@ -130,6 +130,11 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.bundle_tasks = (
             Path(__file__).resolve().parent / "tasks" / "hermesctl_v1_rollback_bundle.yml"
         ).read_text(encoding="utf-8")
+        self.legacy_pg_pointer_migration = (
+            Path(__file__).resolve().parent
+            / "files"
+            / "hermesctl_pg_backup_pointer_legacy_migrate.sh"
+        ).read_text(encoding="utf-8")
 
     def test_work_src_points_to_repo_root_not_infra_infra(self) -> None:
         self.assertIn('work_src: "{{ playbook_dir }}/../../../"', self.content)
@@ -270,6 +275,23 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("readlink -f", self.bundle_tasks)
         self.assertIn("pg_backup_001=ok", self.bundle_tasks)
         self.assertNotIn("pg_backup_001={{ pg_backup_001.stdout", self.bundle_tasks)
+
+    def test_legacy_pg_pointer_migration_is_exact_and_precedes_reuse(self) -> None:
+        migration_idx = self.bundle_tasks.index(
+            "Migrer permissions legacy du pointeur latest-001.path"
+        )
+        reuse_idx = self.bundle_tasks.index("Mémoriser réutilisation du bundle rollback")
+        self.assertLess(migration_idx, reuse_idx)
+        self.assertIn("legacy_pg_pointer_permissions_migrated", self.bundle_tasks)
+        self.assertIn("chmod 0600", self.legacy_pg_pointer_migration)
+        self.assertIn('= "644"', self.legacy_pg_pointer_migration)
+        self.assertIn('= "600"', self.legacy_pg_pointer_migration)
+        self.assertIn("root:root", self.legacy_pg_pointer_migration)
+        self.assertIn("readlink -f", self.legacy_pg_pointer_migration)
+        self.assertIn("wc -l", self.legacy_pg_pointer_migration)
+        self.assertIn("invalid_pg_backup_pointer", self.legacy_pg_pointer_migration)
+        self.assertNotIn('echo "$raw"', self.legacy_pg_pointer_migration)
+        self.assertNotIn('echo "$canon_dump"', self.legacy_pg_pointer_migration)
 
     def test_app_dist_absent_marker_recorded_and_honored_on_rollback(self) -> None:
         self.assertIn("Enregistrer absence initiale de app/dist", self.bundle_tasks)
