@@ -167,19 +167,12 @@ Les unités `agentimpact-grok-worker.socket` / `agentimpact-grok-worker.service`
 utilisent le bon modèle d'activation par socket :
 
 - `Service=agentimpact-grok-worker.service` côté socket ;
+- pas de directive manuelle `TriggeredBy=` côté service (propriété calculée par systemd) ;
 - pas de `StandardInput=socket` ;
 - pas de section `[Install]` côté service ;
-- `StartLimitIntervalSec` / `StartLimitBurst` présents.
+- `StartLimitIntervalSec` / `StartLimitBurst` présents ;
+- le worker écoute via `LISTEN_FDS` / FD 3 (`src/grok-worker/server.ts`).
 
-**Défect détecté (suivi séparé, hors de cette branche)** : l'unité
-`agentimpact-grok-worker.service` contient une directive manuelle
-`TriggeredBy=agentimpact-grok-worker.socket`. Comme pour le bridge, `TriggeredBy=`
-est une propriété systemd calculée automatiquement depuis `Service=` du socket et
-ne devrait pas être maintenue manuellement. `systemd-analyze verify` émet le même
-avertissement `Unknown key name 'TriggeredBy'` pour cette unité.
-
-Ce défaut n'est **pas** bloquant pour le bridge (le socket Grok fonctionne
-correctement car `Service=` est présent côté socket), et Slack-Grok n'est **pas**
-modifié dans cette mission. Suivi séparé recommandé : retirer la directive
-`TriggeredBy=` manuelle de `agentimpact-grok-worker.service` dans une branche
-dédiée `fix/grok-worker-triggeredby-cleanup`.
+Corrigé dans `fix/slack-grok-final-preflight` : retrait de la directive manuelle
+`TriggeredBy=` qui provoquait `Unknown key name 'TriggeredBy'` sous
+`systemd-analyze verify`.

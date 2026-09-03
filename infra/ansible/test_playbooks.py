@@ -621,6 +621,9 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.content = (PLAYBOOKS / "slack-grok-router-v1.yml").read_text(encoding="utf-8")
         self.rollback = (PLAYBOOKS / "slack-grok-router-v1-rollback.yml").read_text(encoding="utf-8")
+        self.pg_backup_tasks = (
+            Path(__file__).resolve().parent / "tasks" / "slack_grok_pg_backup_002.yml"
+        ).read_text(encoding="utf-8")
 
     def test_migration_002_uses_compose_service_db(self) -> None:
         self.assertIn('docker compose -f "{{ repo_root }}/compose.yml" exec -T db', self.content)
@@ -653,6 +656,34 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
         backup_idx = self.content.index("Sauvegarde PostgreSQL pre-migration 002")
         migration_idx = self.content.index("Appliquer migration 002 slack router")
         self.assertLess(backup_idx, migration_idx)
+        self.assertIn("include_tasks: ../tasks/slack_grok_pg_backup_002.yml", self.content)
+
+    def test_pg_backup_002_pointer_is_atomic_root_0600(self) -> None:
+        self.assertIn("latest-002.path", self.pg_backup_tasks)
+        self.assertIn("mktemp", self.pg_backup_tasks)
+        self.assertIn("chmod 0600", self.pg_backup_tasks)
+        self.assertIn("chown root:root", self.pg_backup_tasks)
+        self.assertIn("mv -f", self.pg_backup_tasks)
+        self.assertIn("[ ! -L ", self.pg_backup_tasks)
+        self.assertIn("invalid_pg_backup_pointer", self.pg_backup_tasks)
+        self.assertIn("pg_backup_002=ok", self.pg_backup_tasks)
+        self.assertNotIn("pg_backup_002={{ pg_backup_002.stdout", self.pg_backup_tasks)
+        self.assertNotIn('echo "$dump"', self.pg_backup_tasks)
+        self.assertNotIn('echo "$raw"', self.pg_backup_tasks)
+        self.assertNotIn('echo "$canon_dump"', self.pg_backup_tasks)
+
+    def test_pg_backup_002_resume_does_not_replace_dump(self) -> None:
+        self.assertIn("reuse_pg_backup_002", self.pg_backup_tasks)
+        self.assertIn("not (reuse_pg_backup_002 | bool)", self.pg_backup_tasks)
+        self.assertIn('echo "complete"', self.pg_backup_tasks)
+        self.assertIn("Valider pointeur latest-002.path et dump associé", self.pg_backup_tasks)
+        self.assertIn('readlink -f "$pgdir"', self.pg_backup_tasks)
+
+    def test_pg_backup_002_dump_confined_under_pg_backup(self) -> None:
+        self.assertIn('"${raw#"$pgdir"/}" != "$raw"', self.pg_backup_tasks)
+        self.assertIn('"${canon_dump#"$canon_pgdir"/}" != "$canon_dump"', self.pg_backup_tasks)
+        self.assertIn('[ -s "$raw" ]', self.pg_backup_tasks)
+        self.assertIn("dump_perms=$(stat -c '%a'", self.pg_backup_tasks)
 
     def test_inbox_consumer_services_installed(self) -> None:
         self.assertIn("agentimpact-gateway-inbox-hermes.service", self.content)
@@ -665,11 +696,47 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
             r"name:\s*agentimpact-slack-router\.service\s*\n\s*enabled:\s*true",
         )
         self.assertNotIn("state: started", self.content)
+        self.assertNotIn("enabled: true", self.content)
+        self.assertNotRegex(self.content, r"systemctl\s+start\b")
+        self.assertNotRegex(self.content, r"systemctl\s+enable\b")
+
+    def test_installs_units_scripts_and_migration_without_start(self) -> None:
+        self.assertIn("Installer unités systemd routeur, worker Grok et consumers inbox", self.content)
+        self.assertIn("Installer scripts wrapper et inbox consumer", self.content)
+        self.assertIn("Appliquer migration 002 slack router", self.content)
+        self.assertIn("systemctl daemon-reload", self.content)
+        daemon_idx = self.content.index("systemctl daemon-reload")
+        # Aucun démarrage après le reload
+        tail = self.content[daemon_idx:]
+        self.assertNotIn("state: started", tail)
+        self.assertNotIn("enabled: true", tail)
+
+    def test_credentials_checked_by_existence_and_permissions_only(self) -> None:
+        self.assertIn("Vérifier credentials routeur Slack", self.content)
+        self.assertIn("Vérifier credential Grok worker", self.content)
+        self.assertIn("Vérifier permissions sûres credentials", self.content)
+        self.assertIn("missing_required_credential", self.content)
+        self.assertIn("unsafe_permissions", self.content)
+        self.assertNotIn("unsafe_permissions:$f:$perms", self.content)
+        cred_region = self.content[
+            self.content.index("Vérifier credentials routeur Slack") : self.content.index(
+                "Vérifier artefacts build host requis"
+            )
+        ]
+        self.assertNotIn("lookup(", cred_region)
+        self.assertNotIn("slurp:", cred_region)
+        self.assertNotIn("content:", cred_region)
 
     def test_rollback_stops_all_services(self) -> None:
         self.assertIn("agentimpact-gateway-inbox-hermes.service", self.rollback)
         self.assertIn("agentimpact-gateway-inbox-ana.service", self.rollback)
         self.assertIn("grokbot.disabled", self.rollback)
+
+    def test_rollback_does_not_drop_tables(self) -> None:
+        self.assertNotIn("DROP TABLE", self.rollback)
+        self.assertNotIn("DROP SCHEMA", self.rollback)
+        self.assertNotIn("pg_restore", self.rollback)
+        self.assertNotIn("--clean", self.rollback)
 
     def test_rollback_restores_bundle(self) -> None:
         self.assertIn("Restaurer dist versionné", self.rollback)
@@ -748,8 +815,12 @@ class SystemdRegressionTest(unittest.TestCase):
         self.assertIn("Service=agentimpact-grok-worker.service", socket)
         self.assertIn("SocketGroup=agentimpact-grok-client", socket)
         self.assertIn("SocketMode=0660", socket)
-        self.assertIn("TriggeredBy=agentimpact-grok-worker.socket", service)
+        self.assertNotIn("TriggeredBy=", service)
+        self.assertIn("Requires=agentimpact-grok-worker.socket", service)
+        self.assertRegex(service, r"(?m)^After=.*\bagentimpact-grok-worker\.socket\b")
         self.assertNotIn("[Install]", service)
+        self.assertNotIn("StandardInput=socket", service)
+        self.assertNotIn("StandardInput=accept", service)
 
     def test_grok_socket_group_is_grok_client(self) -> None:
         socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
@@ -813,10 +884,25 @@ class SystemdRegressionTest(unittest.TestCase):
         router = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
         self.assertIn("Restart=on-failure", service)
         self.assertNotIn("RuntimeDirectory=", service)
-        self.assertIn("TriggeredBy=agentimpact-grok-worker.socket", service)
+        self.assertNotIn("TriggeredBy=", service)
         self.assertIn("Requires=agentimpact-grok-worker.socket", router)
         self.assertNotIn("Requires=agentimpact-grok-worker.service", router)
         self.assertIn("SocketGroup=agentimpact-grok-client", socket)
+
+    def test_grok_worker_triggered_by_is_not_manual(self) -> None:
+        """TriggeredBy= est calculé par systemd depuis Service= du socket — pas de directive manuelle."""
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        socket = (self.SYSTEMD / "agentimpact-grok-worker.socket").read_text(encoding="utf-8")
+        self.assertNotIn("TriggeredBy=", service)
+        self.assertIn("Service=agentimpact-grok-worker.service", socket)
+
+    def test_grok_worker_source_uses_listen_fds_fd3(self) -> None:
+        server = (
+            Path(__file__).resolve().parents[2] / "src" / "grok-worker" / "server.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn("LISTEN_FDS", server)
+        self.assertIn("fd: 3", server)
+        self.assertIn("socket_activation", server)
 
     def test_router_sets_node_env_production(self) -> None:
         content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(encoding="utf-8")
