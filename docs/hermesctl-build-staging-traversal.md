@@ -43,6 +43,8 @@ Uniquement si le **noyau** est complet :
 1. Si `repo_root/app/dist` **absent** : créer atomiquement `app-dist.absent` (`mktemp` + `mv`, mode `0600`, `root:root` en prod) ; message `legacy_dist_marker_migrated` ; revalider ; `reuse_rollback_bundle=true` ; **aucun** nouveau dump / aucune réécriture scripts/compose/pointer.
 2. Si `repo_root/app/dist` **présent** : échec immédiat `rollback_bundle_dist_state_unknown` (avant sync/migration) — pas de conjecture.
 
+Voir aussi `docs/hermesctl-resume-preflight-idempotency.md` (préflight `bridge.env` idempotent sur reprise).
+
 ## Stratégie de reprise (bundle)
 
 Avant toute sync / migration (`tasks/hermesctl_v1_rollback_bundle.yml`) :
