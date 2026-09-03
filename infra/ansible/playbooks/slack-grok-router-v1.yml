@@ -128,19 +128,35 @@
     - name: Vérifier credentials routeur Slack
       stat:
         path: "/etc/agentimpact/credentials/{{ item }}"
+        get_checksum: false
+        get_mime: false
       loop:
         - slack-router-bot-token
         - slack-router-app-token
         - slack-router-db-password
         - gateway-inbox-bridge-token
       register: router_cred_files
-      failed_when: not router_cred_files.results | map(attribute='stat.exists') | list | min
+      no_log: true
+
+    - name: Échec si un credential routeur est absent
+      assert:
+        that:
+          - router_cred_files.results | map(attribute='stat.exists') | list | min
+        fail_msg: missing_required_credential
 
     - name: Vérifier credential Grok worker
       stat:
         path: /etc/agentimpact/credentials/cursor-grok-api-key
+        get_checksum: false
+        get_mime: false
       register: grok_cred
-      failed_when: not grok_cred.stat.exists
+      no_log: true
+
+    - name: Échec si credential Grok absent
+      assert:
+        that:
+          - grok_cred.stat.exists
+        fail_msg: missing_required_credential
 
     - name: Vérifier permissions sûres credentials
       shell: |
@@ -166,7 +182,12 @@
         - slack-router/daemon.js
         - grok-worker/server.js
       register: host_dist_files
-      failed_when: not host_dist_files.results | map(attribute='stat.exists') | list | min
+
+    - name: Échec si un artefact build host est absent
+      assert:
+        that:
+          - host_dist_files.results | map(attribute='stat.exists') | list | min
+        fail_msg: missing_required_host_dist_artifact
 
     - name: Créer répertoire rollback bundle slack-grok-router-v1
       file:

@@ -1,0 +1,27 @@
+---
+# Test runtime — reproduit le pattern stat loop + assert post-boucle (preflight production).
+- name: Test loop preflight runtime
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    token_names:
+      - bridge
+      - hermes
+      - admin
+    token_fixture_dir: "{{ token_fixture_dir | mandatory }}"
+  tasks:
+    - name: Stat loop tokens (fixture preflight)
+      stat:
+        path: "{{ token_fixture_dir }}/{{ item }}.env"
+        get_checksum: false
+        get_mime: false
+      loop: "{{ token_names }}"
+      register: token_files
+      no_log: true
+
+    - name: Assert all tokens present
+      assert:
+        that:
+          - token_files.results | map(attribute='stat.exists') | list | min
+        fail_msg: missing_required_token
