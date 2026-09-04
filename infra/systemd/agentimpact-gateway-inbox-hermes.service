@@ -1,7 +1,8 @@
 [Unit]
 Description=AgentImpact Gateway Inbox Consumer (Hermès)
-After=network-online.target
-Wants=network-online.target
+# docker.service actif ≠ API ready : gate HTTP /health via ExecStartPre.
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -19,10 +20,12 @@ Environment=CONTROL_PLANE_URL=http://127.0.0.1:3000
 Environment=SLACK_ROUTER_BRIDGE_TOKEN_FILE=%d/gateway-bridge-token
 EnvironmentFile=-/etc/agentimpact/gateway-inbox.env
 
+ExecStartPre=/opt/agentimpact/scripts/wait-control-plane-ready.sh
 ExecStart=/opt/agentimpact/scripts/gateway-inbox-consumer.py --loop
 
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=120
 TimeoutStopSec=660
 KillSignal=SIGTERM
 
