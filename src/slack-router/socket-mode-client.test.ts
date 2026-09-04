@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSocketModeRunner, nextBackoffMs } from './socket-mode-client.js';
-import type { SocketModeTransport } from './socket-mode-client.js';
+import {
+  createSocketModeRunner,
+  nextBackoffMs,
+  normalizeSocketModeSlackEvent,
+} from './socket-mode-client.js';
+import type { SocketModeSlackEvent, SocketModeTransport } from './socket-mode-client.js';
+import { isEventsApiEnvelope } from './slack-envelope.js';
 
 describe('nextBackoffMs', () => {
   it('double jusqu au plafond 30s', () => {
@@ -8,6 +13,72 @@ describe('nextBackoffMs', () => {
     expect(nextBackoffMs(2)).toBe(2000);
     expect(nextBackoffMs(6)).toBe(30000);
     expect(nextBackoffMs(10)).toBe(30000);
+  });
+});
+
+/**
+ * Régression : @slack/socket-mode 2.0.7 émet slack_event avec body = payload,
+ * pas une enveloppe { type, envelope_id, payload }. Sans normalisation,
+ * isEventsApiEnvelope rejette silencieusement tous les événements.
+ */
+describe('normalizeSocketModeSlackEvent (socket-mode 2.0.7)', () => {
+  const payload = {
+    team_id: 'T1',
+    event_id: 'Ev1',
+    event: { type: 'message', channel: 'C1', user: 'U1', text: 'hi', ts: '1.0' },
+  };
+
+  function sdkEvent(overrides: Partial<SocketModeSlackEvent> = {}): SocketModeSlackEvent {
+    return {
+      envelope_id: 'env-1',
+      type: 'events_api',
+      body: payload,
+      ack: async () => undefined,
+      ...overrides,
+    };
+  }
+
+  it('reconstruit une enveloppe Events API valide pour handleSlackEnvelope', () => {
+    const raw = normalizeSocketModeSlackEvent(sdkEvent());
+    expect(raw).toEqual({
+      envelope_id: 'env-1',
+      type: 'events_api',
+      payload,
+    });
+    expect(isEventsApiEnvelope(raw)).toBe(true);
+    if (isEventsApiEnvelope(raw)) {
+      expect(raw.payload.event_id).toBe('Ev1');
+      expect(raw.payload.team_id).toBe('T1');
+    }
+  });
+
+  it('ne passe pas isEventsApiEnvelope si on transmet seulement event.body (bug historique)', () => {
+    const event = sdkEvent();
+    expect(isEventsApiEnvelope(event.body)).toBe(false);
+  });
+
+  it('filtre les types non events_api via le runner', async () => {
+    const transport = mockTransport();
+    const onEnvelope = vi.fn(async () => undefined);
+    const client = createSocketModeRunner(
+      transport,
+      { onEnvelope },
+      () => undefined,
+    );
+    await client.start();
+
+    transport.handlers?.onMessage(
+      normalizeSocketModeSlackEvent(sdkEvent({ type: 'disconnect' })),
+    );
+    expect(onEnvelope).not.toHaveBeenCalled();
+
+    transport.handlers?.onMessage(normalizeSocketModeSlackEvent(sdkEvent()));
+    expect(onEnvelope).toHaveBeenCalledTimes(1);
+    expect(onEnvelope.mock.calls[0][0]).toMatchObject({
+      envelope_id: 'env-1',
+      type: 'events_api',
+      payload,
+    });
   });
 });
 
