@@ -112,7 +112,19 @@ def run_hermes(prompt: str) -> str:
         "-z",
         prompt,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    # Timeout worker (subprocess) distinct du timeout ACK routeur et du timeout LLM.
+    # Les missions async ne maintiennent plus de poll HTTP côté Slack pendant cette durée.
+    worker_timeout = int(os.environ.get("GATEWAY_INBOX_HERMES_TIMEOUT_SEC", "600"))
+    if worker_timeout < 30:
+        worker_timeout = 30
+    if worker_timeout > 3600:
+        worker_timeout = 3600
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=worker_timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("hermes_timeout") from exc
     output = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
         raise RuntimeError(format_hermes_exit_error(proc.returncode, proc.stderr or ""))
