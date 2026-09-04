@@ -739,6 +739,9 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("Activer et démarrer consumer inbox Hermès", self.content)
         self.assertIn("Activer et démarrer consumer inbox Ana", self.content)
         self.assertIn("Vérifier profil Ana (agentimpact-growth) avant enable", self.content)
+        self.assertIn("Vérifier résolution profil Hermès (évite hermes_exit_78)", self.content)
+        self.assertIn("agentimpact-chief-of-staff", self.content)
+        self.assertIn("run-with-profile.sh nadir-operator true", self.content)
         self.assertIn("name: agentimpact-slack-router.service", self.content)
         self.assertIn("name: agentimpact-grok-worker.socket", self.content)
         self.assertIn("name: agentimpact-gateway-inbox-hermes.service", self.content)
@@ -1078,6 +1081,16 @@ class SystemdRegressionTest(unittest.TestCase):
         )
         self.assertIn("HERMES_PROFILE=nadir-operator", content)
         self.assertNotIn("HERMES_PROFILE=default", content)
+
+    def test_nadir_operator_env_example_resolves_chief_of_staff(self) -> None:
+        example = (
+            Path(__file__).resolve().parents[1]
+            / "agentimpact-profiles"
+            / "nadir-operator"
+            / ".env.example"
+        ).read_text(encoding="utf-8")
+        self.assertIn("HERMES_PROFILE=agentimpact-chief-of-staff", example)
+        self.assertNotIn("HERMES_PROFILE=default", example)
 
     def test_inbox_ana_uses_agentimpact_growth_profile(self) -> None:
         content = (self.SYSTEMD / "agentimpact-gateway-inbox-ana.service").read_text(

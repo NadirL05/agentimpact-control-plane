@@ -218,6 +218,38 @@ class GatewayInboxConsumerTest(unittest.TestCase):
             self.assertIn("/complete", complete_call[0][0])
             self.assertEqual(complete_call[0][1]["error_code"], "hermes_exit_1")
 
+    def test_format_hermes_exit_78_includes_sanitized_profile_error(self) -> None:
+        mod = load_module()
+        err = mod.format_hermes_exit_error(
+            78,
+            "HERMES_PROFILE='default' ne resout vers aucun dossier existant "
+            "(essaye: /home/hermes/.hermes/profiles/default)\n",
+        )
+        self.assertTrue(err.startswith("hermes_exit_78:"))
+        self.assertIn("HERMES_PROFILE", err)
+        self.assertNotIn("OPENROUTER", err)
+
+    def test_format_hermes_exit_drops_secretish_stderr(self) -> None:
+        mod = load_module()
+        err = mod.format_hermes_exit_error(1, "api_key=sk-secret\nother\n")
+        self.assertEqual(err, "hermes_exit_1")
+
+    def test_run_hermes_maps_exit_78_from_wrapper(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ["HERMES_PROFILE"] = "nadir-operator"
+        mod = load_module()
+        with patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                [],
+                78,
+                stdout="",
+                stderr="HERMES_PROFILE='default' ne resout vers aucun dossier existant\n",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.run_hermes("prompt")
+            self.assertIn("hermes_exit_78", str(ctx.exception))
+            self.assertIn("HERMES_PROFILE", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -426,6 +426,28 @@
         enabled: false
         daemon_reload: false
 
+    - name: Corriger profil Hermès nadir-operator (HERMES_PROFILE résolvable)
+      lineinfile:
+        path: /opt/agentimpact/profiles/nadir-operator/.env
+        regexp: '^HERMES_PROFILE='
+        line: 'HERMES_PROFILE=agentimpact-chief-of-staff'
+        owner: hermes
+        group: hermes
+        mode: "0600"
+
+    - name: Vérifier résolution profil Hermès (évite hermes_exit_78)
+      shell: |
+        set -euo pipefail
+        test -d /opt/agentimpact/profiles/nadir-operator
+        test -f /opt/agentimpact/profiles/nadir-operator/.env
+        grep -q '^HERMES_PROFILE=agentimpact-chief-of-staff$' /opt/agentimpact/profiles/nadir-operator/.env
+        test -d /home/hermes/.hermes/profiles/agentimpact-chief-of-staff
+        # Non payant : wrapper doit exit 0 (true), pas 78
+        sudo -u hermes /opt/agentimpact/scripts/run-with-profile.sh nadir-operator true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Activer et démarrer consumer inbox Hermès
       systemd:
         name: agentimpact-gateway-inbox-hermes.service
