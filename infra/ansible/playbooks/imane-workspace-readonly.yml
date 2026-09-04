@@ -1,0 +1,174 @@
+---
+# Imane workspace read-only prep for async Hermès audit.
+# Safe ops only: ACL RO for hermes, origin fetch URL, push DISABLED, optional fetch.
+# NEVER: pull, merge, reset, checkout remote, push, rewrite history, deploy keys, secrets.
+
+- name: Prepare Imane workspace read-only for Hermès audit
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    imane_repo_path: /opt/agentimpact/runner/repos/imn-academy-tanstack
+    imane_runner_path: /opt/agentimpact/runner
+    imane_repos_path: /opt/agentimpact/runner/repos
+    imane_owner: agentimpact-runner
+    imane_group: agentimpact-runner
+    imane_hermes_user: hermes
+    imane_origin_fetch: git@github.com:NadirL05/imane-projet.git
+    imane_origin_push: DISABLED
+    imane_do_fetch: true
+  tasks:
+    - name: Ensure acl package present (setfacl/getfacl)
+      apt:
+        name: acl
+        state: present
+        update_cache: false
+
+    - name: Assert expected workspace path exists
+      stat:
+        path: "{{ imane_repo_path }}"
+      register: imane_repo_stat
+      failed_when: not imane_repo_stat.stat.exists or not imane_repo_stat.stat.isdir
+
+    - name: Assert owner/group agentimpact-runner
+      command: stat -c '%U:%G' "{{ imane_repo_path }}"
+      register: imane_owner_stat
+      changed_when: false
+      failed_when: imane_owner_stat.stdout != (imane_owner ~ ':' ~ imane_group)
+
+    - name: Capture git status porcelain (dirty guard)
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" status --porcelain
+      register: imane_porcelain
+      changed_when: false
+
+    - name: Fail-closed if workspace dirty (no remote/ACL mutation beyond ACL refresh)
+      assert:
+        that:
+          - imane_porcelain.stdout | length == 0
+        fail_msg: >-
+          imane_repo_dirty — refuse origin/fetch changes on dirty tree.
+          Apply ACL-only remediation manually after review.
+      when: imane_do_fetch | bool
+
+    - name: Check ACL hermes traverse on runner
+      shell: getfacl -p "{{ imane_runner_path }}" | grep -q 'user:{{ imane_hermes_user }}:--x'
+      register: acl_runner
+      changed_when: false
+      failed_when: false
+
+    - name: ACL traverse-only for hermes on runner parent
+      command: setfacl -m u:{{ imane_hermes_user }}:--x "{{ imane_runner_path }}"
+      when: acl_runner.rc != 0
+
+    - name: Check ACL hermes traverse on repos
+      shell: getfacl -p "{{ imane_repos_path }}" | grep -q 'user:{{ imane_hermes_user }}:--x'
+      register: acl_repos
+      changed_when: false
+      failed_when: false
+
+    - name: ACL traverse-only for hermes on repos parent
+      command: setfacl -m u:{{ imane_hermes_user }}:--x "{{ imane_repos_path }}"
+      when: acl_repos.rc != 0
+
+    - name: Check ACL hermes read on workspace root
+      shell: getfacl -p "{{ imane_repo_path }}" | grep -Eq 'user:{{ imane_hermes_user }}:r-x'
+      register: acl_repo
+      changed_when: false
+      failed_when: false
+
+    - name: ACL recursive read for hermes on Imane workspace
+      command: setfacl -R -m u:{{ imane_hermes_user }}:r-X "{{ imane_repo_path }}"
+      when: acl_repo.rc != 0
+
+    - name: Check default ACL hermes on workspace root
+      shell: getfacl -p "{{ imane_repo_path }}" | grep -Eq 'default:user:{{ imane_hermes_user }}:r-x'
+      register: acl_repo_default
+      changed_when: false
+      failed_when: false
+
+    - name: ACL default recursive read for hermes on Imane workspace
+      command: setfacl -R -d -m u:{{ imane_hermes_user }}:r-X "{{ imane_repo_path }}"
+      when: acl_repo_default.rc != 0
+
+    - name: Check hermes safe.directory
+      become_user: "{{ imane_hermes_user }}"
+      shell: |
+        set -euo pipefail
+        git config --global --get-all safe.directory | grep -Fx "{{ imane_repo_path }}"
+      args:
+        executable: /bin/bash
+      register: hermes_safe_check
+      changed_when: false
+      failed_when: false
+
+    - name: Hermes safe.directory for Imane workspace (git dubious ownership)
+      become_user: "{{ imane_hermes_user }}"
+      command: git config --global --add safe.directory "{{ imane_repo_path }}"
+      when: hermes_safe_check.rc != 0
+
+    - name: Check whether origin exists
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote
+      register: imane_remotes
+      changed_when: false
+
+    - name: Add origin fetch URL when missing
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote add origin "{{ imane_origin_fetch }}"
+      when: "'origin' not in imane_remotes.stdout_lines"
+
+    - name: Read current origin fetch URL
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote get-url origin
+      register: origin_fetch_current
+      when: "'origin' in imane_remotes.stdout_lines"
+      changed_when: false
+      failed_when: false
+
+    - name: Set origin fetch URL (idempotent)
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote set-url origin "{{ imane_origin_fetch }}"
+      when:
+        - "'origin' in imane_remotes.stdout_lines"
+        - origin_fetch_current.stdout | default('') != imane_origin_fetch
+
+    - name: Read current origin push URL
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote get-url --push origin
+      register: origin_push_current
+      when: "'origin' in imane_remotes.stdout_lines"
+      changed_when: false
+      failed_when: false
+
+    - name: Disable origin push URL
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" remote set-url --push origin "{{ imane_origin_push }}"
+      when:
+        - "'origin' in imane_remotes.stdout_lines"
+        - origin_push_current.stdout | default('') != imane_origin_push
+
+    - name: Fetch origin only (no pull/merge/reset/checkout)
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" fetch origin
+      when:
+        - imane_do_fetch | bool
+        - imane_porcelain.stdout | length == 0
+      register: imane_fetch
+      # fetch is read-only for HEAD; report changed only if new objects arrived
+      changed_when: imane_fetch.stderr is defined and ('->' in (imane_fetch.stderr | default('')) or '[new' in (imane_fetch.stderr | default('')))
+
+    - name: Assert HEAD unchanged intent note (capture HEAD)
+      become_user: "{{ imane_owner }}"
+      command: git -C "{{ imane_repo_path }}" rev-parse HEAD
+      register: imane_head
+      changed_when: false
+
+    - name: Run Imane workspace RO assertions
+      shell: |
+        set -euo pipefail
+        bash "{{ playbook_dir }}/../files/imane_workspace_readonly_assert.sh" "{{ imane_repo_path }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
