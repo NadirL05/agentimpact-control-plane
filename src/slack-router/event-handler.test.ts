@@ -360,3 +360,41 @@ describe('apps Slack natives', () => {
     expect(hermesExecute).not.toHaveBeenCalled();
   });
 });
+
+describe('ROUTE CODEX smoke V1', () => {
+  it('message exact smoke → createCodexRelay appelé, métrique ok', async () => {
+    const posts: string[] = [];
+    const metrics = createMetrics();
+    const config = testConfig({ bridgeToken: 'bridge-test' });
+    const stores = createTestDispatchStores(config);
+    const smoke =
+      'ROUTE CODEX: créer une proposition de test V1 pour revue Nadir uniquement';
+    const codexExecute = vi.fn(async () => ({
+      ok: true as const,
+      text: 'Proposition Codex enregistrée (`prop-smoke`). Aucun lancement automatique — revue Nadir requise.',
+    }));
+
+    await handleSlackEnvelope(envelope('E-codex-smoke', smoke), stores, {
+      config,
+      metrics,
+      poster: {
+        postThreadReply: async (_c, _t, text) => {
+          posts.push(text);
+        },
+      },
+      logLine: () => undefined,
+      relays: [{ target: 'codex' as const, execute: codexExecute }],
+    });
+
+    expect(codexExecute).toHaveBeenCalledTimes(1);
+    expect(codexExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'créer une proposition de test V1 pour revue Nadir uniquement',
+      }),
+    );
+    expect(posts[0]).toContain('Aucun lancement automatique');
+    expect(metrics.codex_runs_ok).toBe(1);
+    expect(metrics.codex_runs_failed).toBe(0);
+    expect(metrics.hermes_runs_ok + metrics.hermes_runs_failed).toBe(0);
+  });
+});
