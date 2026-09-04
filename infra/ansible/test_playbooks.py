@@ -722,27 +722,73 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("agentimpact-gateway-inbox-ana.service", self.content)
 
     def test_router_not_auto_started(self) -> None:
-        self.assertIn("sans démarrage routeur", self.content)
-        self.assertNotRegex(
-            self.content,
-            r"name:\s*agentimpact-slack-router\.service\s*\n\s*enabled:\s*true",
-        )
-        self.assertNotIn("state: started", self.content)
-        self.assertNotIn("enabled: true", self.content)
+        """Ana et le service Grok direct ne doivent pas être auto-startés."""
+        self.assertIn("Laisser Ana installée mais non enable", self.content)
+        self.assertIn("S'assurer que le service Grok n'est pas enable directement", self.content)
         self.assertNotRegex(self.content, r"systemctl\s+start\b")
         self.assertNotRegex(self.content, r"systemctl\s+enable\b")
+        # Ana explicitement disabled
+        ana_block = self.content[
+            self.content.index("Laisser Ana installée mais non enable") :
+            self.content.index("Vérifier services critiques actifs")
+        ]
+        self.assertIn("name: agentimpact-gateway-inbox-ana.service", ana_block)
+        self.assertIn("enabled: false", ana_block)
+        # Grok .service pas enable
+        grok_svc = self.content[
+            self.content.index("S'assurer que le service Grok n'est pas enable directement") :
+            self.content.index("Activer et démarrer consumer inbox Hermès")
+        ]
+        self.assertIn("name: agentimpact-grok-worker.service", grok_svc)
+        self.assertIn("enabled: false", grok_svc)
+
+    def test_boot_enablement_slack_grok_hermes(self) -> None:
+        self.assertIn("Activer et démarrer Slack Router au boot", self.content)
+        self.assertIn("Activer et démarrer socket Grok (pas le service — socket activation)", self.content)
+        self.assertIn("Activer et démarrer consumer inbox Hermès", self.content)
+        self.assertIn("name: agentimpact-slack-router.service", self.content)
+        self.assertIn("name: agentimpact-grok-worker.socket", self.content)
+        self.assertIn("name: agentimpact-gateway-inbox-hermes.service", self.content)
+        hermes_idx = self.content.index("Activer et démarrer consumer inbox Hermès")
+        hermes_block = self.content[hermes_idx : hermes_idx + 250]
+        self.assertIn("enabled: true", hermes_block)
+        self.assertIn("state: started", hermes_block)
+        self.assertIn("Vérifier services critiques actifs", self.content)
+
+    def test_inbox_consumer_owned_by_root_hermes_0750(self) -> None:
+        self.assertIn("Installer inbox consumer (exécutable par User=hermes)", self.content)
+        block = self.content[
+            self.content.index("Installer inbox consumer (exécutable par User=hermes)") :
+            self.content.index("Vérifier ownership wrapper Grok, consumer inbox et répertoire app")
+        ]
+        self.assertIn("owner: root", block)
+        self.assertIn("group: hermes", block)
+        self.assertIn('mode: "0750"', block)
+        self.assertIn("root:hermes 750", self.content)
+        self.assertIn("sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py", self.content)
+
+    def test_inbox_units_allow_hermes_home_write(self) -> None:
+        for name in (
+            "agentimpact-gateway-inbox-hermes.service",
+            "agentimpact-gateway-inbox-ana.service",
+        ):
+            content = (self.SYSTEMD / name).read_text(encoding="utf-8")
+            self.assertIn("ProtectHome=read-only", content)
+            self.assertIn("ProtectSystem=strict", content)
+            self.assertRegex(
+                content,
+                r"(?m)^ReadWritePaths=.*(?:^|\s)/home/hermes/\.hermes(?:\s|$)",
+            )
 
     def test_installs_units_scripts_and_migration_without_start(self) -> None:
         self.assertIn("Installer unités systemd routeur, worker Grok et consumers inbox", self.content)
         self.assertIn("Installer wrapper Grok (groupe grok-client)", self.content)
-        self.assertIn("Installer inbox consumer", self.content)
+        self.assertIn("Installer inbox consumer (exécutable par User=hermes)", self.content)
         self.assertIn("Appliquer migration 002 slack router", self.content)
         self.assertIn("systemctl daemon-reload", self.content)
-        daemon_idx = self.content.index("systemctl daemon-reload")
-        # Aucun démarrage après le reload
-        tail = self.content[daemon_idx:]
-        self.assertNotIn("state: started", tail)
-        self.assertNotIn("enabled: true", tail)
+        # Après reload : activation contrôlée Hermès/router/socket, pas Ana
+        self.assertIn("Activer et démarrer consumer inbox Hermès", self.content)
+        self.assertIn("Laisser Ana installée mais non enable", self.content)
 
     def test_app_directory_permissions_for_grok_client_traverse(self) -> None:
         self.assertIn("Sécuriser répertoire app pour traverse groupe grok-client", self.content)

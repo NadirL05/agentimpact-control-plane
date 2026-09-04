@@ -189,6 +189,35 @@ class GatewayInboxConsumerTest(unittest.TestCase):
         ), patch.object(mod, "sleep_backoff", return_value=True):
             self.assertEqual(mod.run_loop(), 0)
 
+    def test_run_loop_fail_closed_without_token_file(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN_FILE", None)
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN", None)
+        mod = load_module()
+        self.assertEqual(mod.run_loop(), 2)
+
+    def test_run_once_fail_closed_without_token(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN_FILE", None)
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN", None)
+        mod = load_module()
+        self.assertEqual(mod.run_once(), 2)
+
+    def test_process_once_hermes_error_marks_failed(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        mod = load_module()
+        with patch.object(mod, "api_post") as mock_post, patch.object(
+            mod, "run_hermes", side_effect=RuntimeError("hermes_exit_1")
+        ):
+            mock_post.side_effect = [
+                (200, {"item": {"id": "x", "target": "hermes", "prompt": "p"}}),
+                (200, {}),
+            ]
+            self.assertEqual(mod.process_once("token"), "failed")
+            complete_call = mock_post.call_args_list[1]
+            self.assertIn("/complete", complete_call[0][0])
+            self.assertEqual(complete_call[0][1]["error_code"], "hermes_exit_1")
+
 
 if __name__ == "__main__":
     unittest.main()
