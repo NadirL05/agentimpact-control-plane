@@ -30,7 +30,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/agentimpact/profiles /opt/agentimpact/scripts
+ReadWritePaths=/opt/agentimpact/profiles /opt/agentimpact/scripts /home/hermes/.hermes
 
 [Install]
 WantedBy=multi-user.target
