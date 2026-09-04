@@ -4,6 +4,7 @@ import { dispatchSlackMessage, type DispatchStores } from './dispatch.js';
 import { formatSafeLog } from '../core/slack-router/logger.js';
 import type { SlackRouteTarget } from '../core/slack-router/types.js';
 import type { RouterMetrics } from './metrics.js';
+import { recordRouteOutcome } from './metrics.js';
 import { createCodexRelay } from './relays/codex-relay.js';
 import { createGrokRelay } from './relays/grok-relay.js';
 import { createGatewayInboxRelay } from './relays/inbox-relay.js';
@@ -172,6 +173,7 @@ export async function handleSlackEnvelope(
 
   if (!relayResult.ok) {
     if (dispatch.target === 'grok') deps.metrics.grok_runs_failed += 1;
+    else recordRouteOutcome(deps.metrics, dispatch.target, false);
     deps.metrics.events_rejected += 1;
     await deps.poster.postThreadReply(message.channel, threadTs, relayResult.userMessage);
     deps.logLine(
@@ -186,6 +188,9 @@ export async function handleSlackEnvelope(
     return;
   }
 
+  if (dispatch.target !== 'grok') {
+    recordRouteOutcome(deps.metrics, dispatch.target, true);
+  }
   await deps.poster.postThreadReply(message.channel, threadTs, relayResult.text);
   deps.logLine(
     formatSafeLog({
