@@ -105,6 +105,14 @@
         mode: "0750"
       failed_when: false
 
+    - name: Réappliquer ownership consumer inbox (exécutable hermes)
+      file:
+        path: /opt/agentimpact/scripts/gateway-inbox-consumer.py
+        owner: root
+        group: hermes
+        mode: "0750"
+      failed_when: false
+
     - name: Réappliquer permissions répertoire app
       file:
         path: "{{ repo_root }}/app"

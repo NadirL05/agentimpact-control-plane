@@ -1,6 +1,10 @@
 ---
-# Déploiement routeur Slack + worker Grok v1
-# (installe unités/scripts, applique migration 002, sans démarrage automatique)
+# Déploiement routeur Slack + worker Grok v1 + consumer inbox Hermès
+# Installe unités/scripts, applique migration 002, active au boot :
+#   - agentimpact-slack-router.service
+#   - agentimpact-grok-worker.socket (pas le .service — socket activation)
+#   - agentimpact-gateway-inbox-hermes.service
+# Ana reste installée mais non enable (chantier séparé).
 
 - name: Deploy slack-grok-router v1
   hosts: localhost
@@ -360,18 +364,25 @@
         group: agentimpact-grok-client
         mode: "0750"
 
-    - name: Installer inbox consumer
+    - name: Installer inbox consumer (exécutable par User=hermes)
       copy:
         src: "{{ work_src }}/infra/scripts/gateway-inbox-consumer.py"
         dest: /opt/agentimpact/scripts/gateway-inbox-consumer.py
+        owner: root
+        group: hermes
         mode: "0750"
 
-    - name: Vérifier ownership wrapper Grok et répertoire app
+    - name: Vérifier ownership wrapper Grok, consumer inbox et répertoire app
       shell: |
         set -euo pipefail
         test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/grok-agent-run.sh)" = "agentimpact-runner:agentimpact-grok-client 750"
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/gateway-inbox-consumer.py)" = "root:hermes 750"
         test "$(stat -c '%U:%G %a' '{{ repo_root }}/app')" = "hermes:agentimpact-grok-client 710"
+        # hermes doit pouvoir exécuter le consumer (évite systemd 203/EXEC)
+        sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py
         grep -q '/var/lib/cursor-grok-worker' /etc/systemd/system/agentimpact-grok-worker.service
+        grep -q '/home/hermes/.hermes' /etc/systemd/system/agentimpact-gateway-inbox-hermes.service
+        grep -q '/home/hermes/.hermes' /etc/systemd/system/agentimpact-gateway-inbox-ana.service
         test ! -f /etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf
       args:
         executable: /bin/bash
@@ -390,6 +401,53 @@
       command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
       changed_when: false
 
-    - name: Recharger systemd (sans démarrage routeur, worker ni consumers)
+    - name: Recharger systemd avant activation boot
       command: systemctl daemon-reload
+      changed_when: false
+
+    - name: Activer et démarrer Slack Router au boot
+      systemd:
+        name: agentimpact-slack-router.service
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Activer et démarrer socket Grok (pas le service — socket activation)
+      systemd:
+        name: agentimpact-grok-worker.socket
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: S'assurer que le service Grok n'est pas enable directement
+      systemd:
+        name: agentimpact-grok-worker.service
+        enabled: false
+        daemon_reload: false
+
+    - name: Activer et démarrer consumer inbox Hermès
+      systemd:
+        name: agentimpact-gateway-inbox-hermes.service
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Laisser Ana installée mais non enable (chantier séparé)
+      systemd:
+        name: agentimpact-gateway-inbox-ana.service
+        enabled: false
+        state: stopped
+        daemon_reload: false
+      failed_when: false
+
+    - name: Vérifier services critiques actifs
+      shell: |
+        set -euo pipefail
+        test "$(systemctl is-active agentimpact-slack-router.service)" = "active"
+        test "$(systemctl is-active agentimpact-grok-worker.socket)" = "active"
+        test "$(systemctl is-active agentimpact-gateway-inbox-hermes.service)" = "active"
+        test "$(systemctl is-enabled agentimpact-gateway-inbox-hermes.service)" = "enabled"
+        test "$(systemctl is-enabled agentimpact-gateway-inbox-ana.service)" != "enabled"
+      args:
+        executable: /bin/bash
       changed_when: false
