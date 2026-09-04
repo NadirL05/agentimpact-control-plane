@@ -1,10 +1,11 @@
 ---
-# Déploiement routeur Slack + worker Grok v1 + consumer inbox Hermès
+# Déploiement routeur Slack + worker Grok v1 + consumers inbox Hermès/Ana
 # Installe unités/scripts, applique migration 002, active au boot :
 #   - agentimpact-slack-router.service
 #   - agentimpact-grok-worker.socket (pas le .service — socket activation)
 #   - agentimpact-gateway-inbox-hermes.service
-# Ana reste installée mais non enable (chantier séparé).
+#   - agentimpact-gateway-inbox-ana.service (profil agentimpact-growth)
+# Devin : stub fail-closed dans le routeur (pas d'unité systemd).
 
 - name: Deploy slack-grok-router v1
   hosts: localhost
@@ -432,13 +433,22 @@
         state: started
         daemon_reload: false
 
-    - name: Laisser Ana installée mais non enable (chantier séparé)
+    - name: Vérifier profil Ana (agentimpact-growth) avant enable
+      shell: |
+        set -euo pipefail
+        test -d /opt/agentimpact/profiles/agentimpact-growth
+        test -f /opt/agentimpact/profiles/agentimpact-growth/.env
+        test -d /home/hermes/.hermes/profiles/agentimpact-growth
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Activer et démarrer consumer inbox Ana
       systemd:
         name: agentimpact-gateway-inbox-ana.service
-        enabled: false
-        state: stopped
+        enabled: true
+        state: started
         daemon_reload: false
-      failed_when: false
 
     - name: Vérifier services critiques actifs
       shell: |
@@ -447,7 +457,9 @@
         test "$(systemctl is-active agentimpact-grok-worker.socket)" = "active"
         test "$(systemctl is-active agentimpact-gateway-inbox-hermes.service)" = "active"
         test "$(systemctl is-enabled agentimpact-gateway-inbox-hermes.service)" = "enabled"
-        test "$(systemctl is-enabled agentimpact-gateway-inbox-ana.service)" != "enabled"
+        test "$(systemctl is-active agentimpact-gateway-inbox-ana.service)" = "active"
+        test "$(systemctl is-enabled agentimpact-gateway-inbox-ana.service)" = "enabled"
+        test "$(systemctl is-enabled agentimpact-grok-worker.service)" != "enabled"
       args:
         executable: /bin/bash
       changed_when: false
