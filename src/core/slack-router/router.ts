@@ -70,6 +70,8 @@ export function routeSlackMessage(
     if ((event.text ?? '').trim() !== 'ESCALADE DEVIN') {
       return { action: 'reject', reason: 'devin_exact_command_required', thread_key: tKey };
     }
+    // V1 : pas d'intégration Devin — fail-closed aligné sur dispatch.ts prod.
+    return { action: 'reject', reason: 'devin_not_configured', thread_key: tKey };
   }
 
   const ownerResult = resolveThreadOwner(
