@@ -26,6 +26,37 @@ describe('parseRoute', () => {
     expect(parseRoute('ROUTE ANA')).toMatchObject({ target: 'ana', explicit: true });
   });
 
+  it('smoke V1 exact : ROUTE CODEX avec deux-points', () => {
+    expect(
+      parseRoute(
+        'ROUTE CODEX: créer une proposition de test V1 pour revue Nadir uniquement',
+      ),
+    ).toEqual({
+      target: 'codex',
+      prompt: 'créer une proposition de test V1 pour revue Nadir uniquement',
+      explicit: true,
+    });
+  });
+
+  it('mention bot en tête n’empêche pas ROUTE CODEX', () => {
+    expect(
+      parseRoute(
+        '<@UROUTER01> ROUTE CODEX: créer une proposition de test V1 pour revue Nadir uniquement',
+      ),
+    ).toEqual({
+      target: 'codex',
+      prompt: 'créer une proposition de test V1 pour revue Nadir uniquement',
+      explicit: true,
+    });
+  });
+
+  it('ROUTE <@U…|Codex>: (mot-clé remplacé par mention) reste hors Codex', () => {
+    expect(parseRoute('ROUTE <@UCODEX01|Codex>: créer une proposition')).toMatchObject({
+      target: 'hermes',
+      explicit: false,
+    });
+  });
+
   it('ESCALADE DEVIN exacte', () => {
     expect(parseRoute('ESCALADE DEVIN')).toEqual({
       target: 'devin',

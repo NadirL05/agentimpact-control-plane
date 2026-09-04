@@ -11,7 +11,8 @@ export type InboxRelayConfig = {
 
 const DEFAULT_INBOX_CONFIG: InboxRelayConfig = {
   pollIntervalMs: 500,
-  timeoutMs: 120_000,
+  // Aligné sur le timeout subprocess Hermès (600s) du consumer.
+  timeoutMs: 600_000,
 };
 
 async function sleep(ms: number): Promise<void> {

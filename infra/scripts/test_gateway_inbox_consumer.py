@@ -189,6 +189,67 @@ class GatewayInboxConsumerTest(unittest.TestCase):
         ), patch.object(mod, "sleep_backoff", return_value=True):
             self.assertEqual(mod.run_loop(), 0)
 
+    def test_run_loop_fail_closed_without_token_file(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN_FILE", None)
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN", None)
+        mod = load_module()
+        self.assertEqual(mod.run_loop(), 2)
+
+    def test_run_once_fail_closed_without_token(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN_FILE", None)
+        os.environ.pop("SLACK_ROUTER_BRIDGE_TOKEN", None)
+        mod = load_module()
+        self.assertEqual(mod.run_once(), 2)
+
+    def test_process_once_hermes_error_marks_failed(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        mod = load_module()
+        with patch.object(mod, "api_post") as mock_post, patch.object(
+            mod, "run_hermes", side_effect=RuntimeError("hermes_exit_1")
+        ):
+            mock_post.side_effect = [
+                (200, {"item": {"id": "x", "target": "hermes", "prompt": "p"}}),
+                (200, {}),
+            ]
+            self.assertEqual(mod.process_once("token"), "failed")
+            complete_call = mock_post.call_args_list[1]
+            self.assertIn("/complete", complete_call[0][0])
+            self.assertEqual(complete_call[0][1]["error_code"], "hermes_exit_1")
+
+    def test_format_hermes_exit_78_includes_sanitized_profile_error(self) -> None:
+        mod = load_module()
+        err = mod.format_hermes_exit_error(
+            78,
+            "HERMES_PROFILE='default' ne resout vers aucun dossier existant "
+            "(essaye: /home/hermes/.hermes/profiles/default)\n",
+        )
+        self.assertTrue(err.startswith("hermes_exit_78:"))
+        self.assertIn("HERMES_PROFILE", err)
+        self.assertNotIn("OPENROUTER", err)
+
+    def test_format_hermes_exit_drops_secretish_stderr(self) -> None:
+        mod = load_module()
+        err = mod.format_hermes_exit_error(1, "api_key=sk-secret\nother\n")
+        self.assertEqual(err, "hermes_exit_1")
+
+    def test_run_hermes_maps_exit_78_from_wrapper(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ["HERMES_PROFILE"] = "nadir-operator"
+        mod = load_module()
+        with patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                [],
+                78,
+                stdout="",
+                stderr="HERMES_PROFILE='default' ne resout vers aucun dossier existant\n",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.run_hermes("prompt")
+            self.assertIn("hermes_exit_78", str(ctx.exception))
+            self.assertIn("HERMES_PROFILE", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

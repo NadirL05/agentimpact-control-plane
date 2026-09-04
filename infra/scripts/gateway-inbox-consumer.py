@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -114,10 +115,38 @@ def run_hermes(prompt: str) -> str:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
     output = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        raise RuntimeError(f"hermes_exit_{proc.returncode}")
+        raise RuntimeError(format_hermes_exit_error(proc.returncode, proc.stderr or ""))
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     return lines[-1] if lines else "Réponse Hermès vide."
 
+
+_SECRETISH_RE = re.compile(
+    r"(token|secret|password|api[_-]?key|bearer|authorization)\s*[:=]",
+    re.IGNORECASE,
+)
+
+
+def format_hermes_exit_error(returncode: int, stderr: str) -> str:
+    """Mappe returncode → hermes_exit_N, avec snippet stderr sanitisé (config only)."""
+    base = f"hermes_exit_{returncode}"
+    for raw in stderr.splitlines():
+        line = raw.strip()
+        if not line or _SECRETISH_RE.search(line):
+            continue
+        if any(
+            marker in line
+            for marker in (
+                "HERMES_PROFILE",
+                "Fichier manquant",
+                "Profil inconnu",
+                "ne resout",
+                "Usage:",
+            )
+        ):
+            # Pas de prompt ni chemin trop long ; error_code API ≤ 120.
+            snippet = line[:80]
+            return f"{base}:{snippet}"[:120]
+    return base
 
 def _try_complete_error(item_id: str, token: str, error_code: str) -> str:
     """Tente de marquer failed ; retourne outcome si transport bloque."""

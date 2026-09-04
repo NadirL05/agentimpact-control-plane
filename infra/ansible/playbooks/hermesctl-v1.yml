@@ -306,6 +306,72 @@
         executable: /bin/bash
       changed_when: false
 
+    # Runtime ESM : Node résout package.json + node_modules depuis /opt/agentimpact/app
+    # (WorkingDirectory routeur / chemin absolu grok-worker). Build staging garde les
+    # devDependencies ; le runtime n'installe que les deps de production.
+    - name: Sauvegarder package.json runtime existant vers rollback
+      copy:
+        src: "{{ repo_root }}/app/package.json"
+        dest: "{{ rollback_bundle_dir }}/app-package.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Sauvegarder package-lock.json runtime existant vers rollback
+      copy:
+        src: "{{ repo_root }}/app/package-lock.json"
+        dest: "{{ rollback_bundle_dir }}/app-package-lock.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Installer package.json runtime vers app
+      copy:
+        src: "{{ build_staging_dir }}/package.json"
+        dest: "{{ repo_root }}/app/package.json"
+        remote_src: true
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "0644"
+
+    - name: Installer package-lock.json runtime vers app
+      copy:
+        src: "{{ build_staging_dir }}/package-lock.json"
+        dest: "{{ repo_root }}/app/package-lock.json"
+        remote_src: true
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "0644"
+
+    - name: Installer dépendances runtime (npm ci --omit=dev)
+      become: true
+      become_user: "{{ host_build_user }}"
+      shell: |
+        set -euo pipefail
+        cd "{{ repo_root }}/app"
+        npm ci --omit=dev
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Vérifier runtime ESM et dépendances production
+      shell: |
+        set -euo pipefail
+        pkg="{{ repo_root }}/app/package.json"
+        test -f "$pkg"
+        grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "$pkg"
+        test -d "{{ repo_root }}/app/node_modules/@slack/web-api"
+        test -d "{{ repo_root }}/app/node_modules/@slack/socket-mode"
+        test -d "{{ repo_root }}/app/node_modules/pg"
+        test ! -d "{{ repo_root }}/app/src/node_modules"
+        if find "{{ repo_root }}/app/node_modules" -xdev \( -type d -o -type f \) -perm -0002 | grep -q .; then
+          echo "world_writable_runtime_node_modules" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Appliquer migration SQL proposals (stdin via service db)
       shell: |
         set -euo pipefail

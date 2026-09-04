@@ -31,6 +31,31 @@ export function nextBackoffMs(attempt: number, capMs = 30_000): number {
   return base;
 }
 
+/**
+ * Forme émise par @slack/socket-mode 2.0.x sur `slack_event` :
+ * `{ ack, envelope_id, type, body }` où `body` = payload Events API.
+ * `isEventsApiEnvelope` attend `{ envelope_id, type, payload }`.
+ */
+export type SocketModeSlackEvent = {
+  envelope_id: string;
+  type: string;
+  body: unknown;
+  ack: () => Promise<void>;
+};
+
+/** Reconstruit l'enveloppe Events API à partir de l'événement SDK Socket Mode. */
+export function normalizeSocketModeSlackEvent(event: SocketModeSlackEvent): {
+  envelope_id: string;
+  type: string;
+  payload: unknown;
+} {
+  return {
+    envelope_id: event.envelope_id,
+    type: event.type,
+    payload: event.body,
+  };
+}
+
 export function createSocketModeRunner(
   transport: SocketModeTransport,
   handlers: SocketModeHandlers,
@@ -113,9 +138,9 @@ export function createSlackSocketTransport(config: SlackRouterEnvConfig): Socket
     async connect() {
       const { SocketModeClient } = await import('@slack/socket-mode');
       client = new SocketModeClient({ appToken: config.appToken });
-      client.on('slack_event', async (event: { body: unknown; ack: () => Promise<void> }) => {
+      client.on('slack_event', async (event: SocketModeSlackEvent) => {
         await event.ack();
-        onMessage?.(event.body);
+        onMessage?.(normalizeSocketModeSlackEvent(event));
       });
       client.on('disconnect', () => onDisconnect?.());
       await client.start();

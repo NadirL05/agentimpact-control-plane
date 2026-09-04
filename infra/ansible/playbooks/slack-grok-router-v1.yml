@@ -1,6 +1,11 @@
 ---
-# Déploiement routeur Slack + worker Grok v1
-# (installe unités/scripts, applique migration 002, sans démarrage automatique)
+# Déploiement routeur Slack + worker Grok v1 + consumers inbox Hermès/Ana
+# Installe unités/scripts, applique migration 002, active au boot :
+#   - agentimpact-slack-router.service
+#   - agentimpact-grok-worker.socket (pas le .service — socket activation)
+#   - agentimpact-gateway-inbox-hermes.service
+#   - agentimpact-gateway-inbox-ana.service (profil agentimpact-growth)
+# Devin : stub fail-closed dans le routeur (pas d'unité systemd).
 
 - name: Deploy slack-grok-router v1
   hosts: localhost
@@ -94,6 +99,12 @@
         create_home: true
       when: grok_user_getent.rc != 0
 
+    - name: Ajouter cursor-grok-worker au groupe agentimpact-grok-client
+      user:
+        name: cursor-grok-worker
+        groups: agentimpact-grok-client
+        append: true
+
     - name: Créer utilisateur agentimpact-slack-router
       user:
         name: agentimpact-slack-router
@@ -103,6 +114,14 @@
         shell: /usr/sbin/nologin
         create_home: false
         state: present
+
+    - name: Sécuriser répertoire app pour traverse groupe grok-client
+      file:
+        path: "{{ repo_root }}/app"
+        state: directory
+        owner: hermes
+        group: agentimpact-grok-client
+        mode: "0710"
 
     - name: Créer et sécuriser workspace Grok
       file:
@@ -192,6 +211,28 @@
           - host_dist_files.results | map(attribute='stat.exists') | list | min
         fail_msg: missing_required_host_dist_artifact
 
+    - name: Vérifier package.json runtime ESM présent
+      stat:
+        path: "{{ repo_root }}/app/package.json"
+      register: app_package_json
+
+    - name: Échec si package.json runtime absent
+      assert:
+        that:
+          - app_package_json.stat.exists
+        fail_msg: missing_runtime_package_json_run_hermesctl_first
+
+    - name: Vérifier dépendances runtime critiques
+      shell: |
+        set -euo pipefail
+        grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "{{ repo_root }}/app/package.json"
+        test -d "{{ repo_root }}/app/node_modules/@slack/web-api"
+        test -d "{{ repo_root }}/app/node_modules/@slack/socket-mode"
+        test -d "{{ repo_root }}/app/node_modules/pg"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Créer répertoire rollback bundle slack-grok-router-v1
       file:
         path: "{{ item }}"
@@ -219,6 +260,22 @@
         delete: false
       delegate_to: localhost
       when: existing_dist.stat.exists
+
+    - name: Sauvegarder package.json runtime pre-slack-grok
+      copy:
+        src: "{{ repo_root }}/app/package.json"
+        dest: "{{ rollback_bundle_dir }}/app-package.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Sauvegarder package-lock.json runtime pre-slack-grok
+      copy:
+        src: "{{ repo_root }}/app/package-lock.json"
+        dest: "{{ rollback_bundle_dir }}/app-package-lock.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
 
     - name: Sauvegarder scripts gérés pre-slack-grok
       copy:
@@ -289,20 +346,48 @@
         mode: "0644"
       loop: "{{ systemd_units }}"
 
+    - name: Retirer drop-in obsolète cursor-home (désormais dans l unit git)
+      file:
+        path: /etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf
+        state: absent
+
     - name: Installer tmpfiles.d routeur
       copy:
         src: "{{ work_src }}/infra/systemd/agentimpact-slack-router.tmpfiles.conf"
         dest: /etc/tmpfiles.d/agentimpact-slack-router.conf
         mode: "0644"
 
-    - name: Installer scripts wrapper et inbox consumer
+    - name: Installer wrapper Grok (groupe grok-client)
       copy:
-        src: "{{ work_src }}/infra/scripts/{{ item.src }}"
-        dest: "/opt/agentimpact/scripts/{{ item.dest }}"
-        mode: "{{ item.mode }}"
-      loop:
-        - { src: grok-agent-run.sh, dest: grok-agent-run.sh, mode: "0750" }
-        - { src: gateway-inbox-consumer.py, dest: gateway-inbox-consumer.py, mode: "0750" }
+        src: "{{ work_src }}/infra/scripts/grok-agent-run.sh"
+        dest: /opt/agentimpact/scripts/grok-agent-run.sh
+        owner: agentimpact-runner
+        group: agentimpact-grok-client
+        mode: "0750"
+
+    - name: Installer inbox consumer (exécutable par User=hermes)
+      copy:
+        src: "{{ work_src }}/infra/scripts/gateway-inbox-consumer.py"
+        dest: /opt/agentimpact/scripts/gateway-inbox-consumer.py
+        owner: root
+        group: hermes
+        mode: "0750"
+
+    - name: Vérifier ownership wrapper Grok, consumer inbox et répertoire app
+      shell: |
+        set -euo pipefail
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/grok-agent-run.sh)" = "agentimpact-runner:agentimpact-grok-client 750"
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/gateway-inbox-consumer.py)" = "root:hermes 750"
+        test "$(stat -c '%U:%G %a' '{{ repo_root }}/app')" = "hermes:agentimpact-grok-client 710"
+        # hermes doit pouvoir exécuter le consumer (évite systemd 203/EXEC)
+        sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py
+        grep -q '/var/lib/cursor-grok-worker' /etc/systemd/system/agentimpact-grok-worker.service
+        grep -q '/home/hermes/.hermes' /etc/systemd/system/agentimpact-gateway-inbox-hermes.service
+        grep -q '/home/hermes/.hermes' /etc/systemd/system/agentimpact-gateway-inbox-ana.service
+        test ! -f /etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Installer template gateway-inbox.env si absent
       copy:
@@ -317,6 +402,86 @@
       command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
       changed_when: false
 
-    - name: Recharger systemd (sans démarrage routeur, worker ni consumers)
+    - name: Recharger systemd avant activation boot
       command: systemctl daemon-reload
+      changed_when: false
+
+    - name: Activer et démarrer Slack Router au boot
+      systemd:
+        name: agentimpact-slack-router.service
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Activer et démarrer socket Grok (pas le service — socket activation)
+      systemd:
+        name: agentimpact-grok-worker.socket
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: S'assurer que le service Grok n'est pas enable directement
+      systemd:
+        name: agentimpact-grok-worker.service
+        enabled: false
+        daemon_reload: false
+
+    - name: Corriger profil Hermès nadir-operator (HERMES_PROFILE résolvable)
+      lineinfile:
+        path: /opt/agentimpact/profiles/nadir-operator/.env
+        regexp: '^HERMES_PROFILE='
+        line: 'HERMES_PROFILE=agentimpact-chief-of-staff'
+        owner: hermes
+        group: hermes
+        mode: "0600"
+
+    - name: Vérifier résolution profil Hermès (évite hermes_exit_78)
+      shell: |
+        set -euo pipefail
+        test -d /opt/agentimpact/profiles/nadir-operator
+        test -f /opt/agentimpact/profiles/nadir-operator/.env
+        grep -q '^HERMES_PROFILE=agentimpact-chief-of-staff$' /opt/agentimpact/profiles/nadir-operator/.env
+        test -d /home/hermes/.hermes/profiles/agentimpact-chief-of-staff
+        # Non payant : wrapper doit exit 0 (true), pas 78
+        sudo -u hermes /opt/agentimpact/scripts/run-with-profile.sh nadir-operator true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Activer et démarrer consumer inbox Hermès
+      systemd:
+        name: agentimpact-gateway-inbox-hermes.service
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Vérifier profil Ana (agentimpact-growth) avant enable
+      shell: |
+        set -euo pipefail
+        test -d /opt/agentimpact/profiles/agentimpact-growth
+        test -f /opt/agentimpact/profiles/agentimpact-growth/.env
+        test -d /home/hermes/.hermes/profiles/agentimpact-growth
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Activer et démarrer consumer inbox Ana
+      systemd:
+        name: agentimpact-gateway-inbox-ana.service
+        enabled: true
+        state: started
+        daemon_reload: false
+
+    - name: Vérifier services critiques actifs
+      shell: |
+        set -euo pipefail
+        test "$(systemctl is-active agentimpact-slack-router.service)" = "active"
+        test "$(systemctl is-active agentimpact-grok-worker.socket)" = "active"
+        test "$(systemctl is-active agentimpact-gateway-inbox-hermes.service)" = "active"
+        test "$(systemctl is-enabled agentimpact-gateway-inbox-hermes.service)" = "enabled"
+        test "$(systemctl is-active agentimpact-gateway-inbox-ana.service)" = "active"
+        test "$(systemctl is-enabled agentimpact-gateway-inbox-ana.service)" = "enabled"
+        test "$(systemctl is-enabled agentimpact-grok-worker.service)" != "enabled"
+      args:
+        executable: /bin/bash
       changed_when: false

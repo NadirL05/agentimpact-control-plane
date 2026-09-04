@@ -85,20 +85,20 @@ describe('routeSlackMessage', () => {
     expect(follow).toMatchObject({ action: 'delegate', target: 'grok' });
   });
 
-  it('ESCALADE DEVIN réservé à Nadir', () => {
+  it('ESCALADE DEVIN Nadir → fail-closed not_configured (V1)', () => {
     const ok = routeSlackMessage(
       baseEvent({ text: 'ESCALADE DEVIN', user: 'U_NADIR' }),
       stores(),
       cfg(),
     );
-    expect(ok).toMatchObject({ action: 'delegate', target: 'devin' });
+    expect(ok).toMatchObject({ action: 'reject', reason: 'devin_not_configured' });
 
     const deny = routeSlackMessage(
       baseEvent({ text: 'ESCALADE DEVIN', user: 'U_OTHER' }),
       stores(),
       cfg(),
     );
-    expect(deny.action).toBe('reject');
+    expect(deny).toMatchObject({ action: 'reject', reason: 'devin_nadir_only' });
   });
 
   it('Grok jamais auto sur source cron', () => {

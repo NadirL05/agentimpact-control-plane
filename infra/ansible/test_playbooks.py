@@ -170,6 +170,36 @@ class HermesctlPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("Propriétaire app/dist hermes", self.content)
         self.assertIn("Supprimer node_modules hôte sous app/src", self.content)
 
+    def test_installs_runtime_package_json_and_omit_dev_deps(self) -> None:
+        self.assertIn("Installer package.json runtime vers app", self.content)
+        self.assertIn("Installer package-lock.json runtime vers app", self.content)
+        self.assertIn("Installer dépendances runtime (npm ci --omit=dev)", self.content)
+        self.assertIn("npm ci --omit=dev", self.content)
+        self.assertIn("Vérifier runtime ESM et dépendances production", self.content)
+        self.assertIn('"type"[[:space:]]*:[[:space:]]*"module"', self.content)
+        self.assertIn("node_modules/@slack/web-api", self.content)
+        self.assertIn("node_modules/@slack/socket-mode", self.content)
+        self.assertIn("node_modules/pg", self.content)
+        # Pas de copie aveugle du node_modules staging vers app
+        self.assertNotRegex(
+            self.content,
+            r"src:\s*\{\{\s*build_staging_dir\s*\}\}/node_modules",
+        )
+        dist_idx = self.content.index("Installer dist staging vers app/dist")
+        pkg_idx = self.content.index("Installer package.json runtime vers app")
+        npm_idx = self.content.index("Installer dépendances runtime (npm ci --omit=dev)")
+        self.assertLess(dist_idx, pkg_idx)
+        self.assertLess(pkg_idx, npm_idx)
+
+    def test_rollback_saves_and_restores_runtime_package_manifest(self) -> None:
+        self.assertIn("Sauvegarder package.json runtime existant vers rollback", self.content)
+        self.assertIn("app-package.json", self.content)
+        self.assertIn("app-package-lock.json", self.content)
+        self.assertIn("Restaurer package.json runtime depuis rollback", self.rollback)
+        self.assertIn("Régénérer node_modules runtime depuis lock (omit=dev)", self.rollback)
+        self.assertNotRegex(self.content, r"Sauvegarder[^\n]*credentials")
+        self.assertNotRegex(self.rollback, r"dest:.*credentials")
+
     def test_build_staging_outside_agentimpact_var_lib(self) -> None:
         self.assertIn(
             "build_staging_dir: /var/lib/agentimpact-build/hermesctl-v1",
@@ -618,6 +648,8 @@ class BridgeTokenPermissionsRegressionTest(unittest.TestCase):
 
 
 class SlackGrokPlaybookRegressionTest(unittest.TestCase):
+    SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
+
     def setUp(self) -> None:
         self.content = (PLAYBOOKS / "slack-grok-router-v1.yml").read_text(encoding="utf-8")
         self.rollback = (PLAYBOOKS / "slack-grok-router-v1-rollback.yml").read_text(encoding="utf-8")
@@ -690,26 +722,146 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("agentimpact-gateway-inbox-ana.service", self.content)
 
     def test_router_not_auto_started(self) -> None:
-        self.assertIn("sans démarrage routeur", self.content)
-        self.assertNotRegex(
-            self.content,
-            r"name:\s*agentimpact-slack-router\.service\s*\n\s*enabled:\s*true",
-        )
-        self.assertNotIn("state: started", self.content)
-        self.assertNotIn("enabled: true", self.content)
+        """Le service Grok direct ne doit pas être auto-starté (socket activation)."""
+        self.assertIn("S'assurer que le service Grok n'est pas enable directement", self.content)
         self.assertNotRegex(self.content, r"systemctl\s+start\b")
         self.assertNotRegex(self.content, r"systemctl\s+enable\b")
+        grok_svc = self.content[
+            self.content.index("S'assurer que le service Grok n'est pas enable directement") :
+            self.content.index("Activer et démarrer consumer inbox Hermès")
+        ]
+        self.assertIn("name: agentimpact-grok-worker.service", grok_svc)
+        self.assertIn("enabled: false", grok_svc)
+
+    def test_boot_enablement_slack_grok_hermes(self) -> None:
+        self.assertIn("Activer et démarrer Slack Router au boot", self.content)
+        self.assertIn("Activer et démarrer socket Grok (pas le service — socket activation)", self.content)
+        self.assertIn("Activer et démarrer consumer inbox Hermès", self.content)
+        self.assertIn("Activer et démarrer consumer inbox Ana", self.content)
+        self.assertIn("Vérifier profil Ana (agentimpact-growth) avant enable", self.content)
+        self.assertIn("Vérifier résolution profil Hermès (évite hermes_exit_78)", self.content)
+        self.assertIn("agentimpact-chief-of-staff", self.content)
+        self.assertIn("run-with-profile.sh nadir-operator true", self.content)
+        self.assertIn("name: agentimpact-slack-router.service", self.content)
+        self.assertIn("name: agentimpact-grok-worker.socket", self.content)
+        self.assertIn("name: agentimpact-gateway-inbox-hermes.service", self.content)
+        self.assertIn("name: agentimpact-gateway-inbox-ana.service", self.content)
+        hermes_idx = self.content.index("Activer et démarrer consumer inbox Hermès")
+        hermes_block = self.content[hermes_idx : hermes_idx + 250]
+        self.assertIn("enabled: true", hermes_block)
+        self.assertIn("state: started", hermes_block)
+        ana_idx = self.content.index("Activer et démarrer consumer inbox Ana")
+        ana_block = self.content[ana_idx : ana_idx + 250]
+        self.assertIn("enabled: true", ana_block)
+        self.assertIn("state: started", ana_block)
+        self.assertIn("Vérifier services critiques actifs", self.content)
+
+    def test_inbox_consumer_owned_by_root_hermes_0750(self) -> None:
+        self.assertIn("Installer inbox consumer (exécutable par User=hermes)", self.content)
+        block = self.content[
+            self.content.index("Installer inbox consumer (exécutable par User=hermes)") :
+            self.content.index("Vérifier ownership wrapper Grok, consumer inbox et répertoire app")
+        ]
+        self.assertIn("owner: root", block)
+        self.assertIn("group: hermes", block)
+        self.assertIn('mode: "0750"', block)
+        self.assertIn("root:hermes 750", self.content)
+        self.assertIn("sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py", self.content)
+
+    def test_inbox_units_allow_hermes_home_write(self) -> None:
+        for name in (
+            "agentimpact-gateway-inbox-hermes.service",
+            "agentimpact-gateway-inbox-ana.service",
+        ):
+            content = (self.SYSTEMD / name).read_text(encoding="utf-8")
+            self.assertIn("ProtectHome=read-only", content)
+            self.assertIn("ProtectSystem=strict", content)
+            self.assertRegex(
+                content,
+                r"(?m)^ReadWritePaths=.*(?:^|\s)/home/hermes/\.hermes(?:\s|$)",
+            )
 
     def test_installs_units_scripts_and_migration_without_start(self) -> None:
         self.assertIn("Installer unités systemd routeur, worker Grok et consumers inbox", self.content)
-        self.assertIn("Installer scripts wrapper et inbox consumer", self.content)
+        self.assertIn("Installer wrapper Grok (groupe grok-client)", self.content)
+        self.assertIn("Installer inbox consumer (exécutable par User=hermes)", self.content)
         self.assertIn("Appliquer migration 002 slack router", self.content)
         self.assertIn("systemctl daemon-reload", self.content)
-        daemon_idx = self.content.index("systemctl daemon-reload")
-        # Aucun démarrage après le reload
-        tail = self.content[daemon_idx:]
-        self.assertNotIn("state: started", tail)
-        self.assertNotIn("enabled: true", tail)
+        self.assertIn("Activer et démarrer consumer inbox Hermès", self.content)
+        self.assertIn("Activer et démarrer consumer inbox Ana", self.content)
+
+    def test_app_directory_permissions_for_grok_client_traverse(self) -> None:
+        self.assertIn("Sécuriser répertoire app pour traverse groupe grok-client", self.content)
+        block = self.content[
+            self.content.index("Sécuriser répertoire app pour traverse groupe grok-client") :
+            self.content.index("Créer et sécuriser workspace Grok")
+        ]
+        self.assertIn('mode: "0710"', block)
+        self.assertIn("owner: hermes", block)
+        self.assertIn("group: agentimpact-grok-client", block)
+        self.assertNotIn("0777", block)
+        self.assertNotIn("0755", block)
+
+    def test_grok_wrapper_owned_by_runner_group_grok_client(self) -> None:
+        self.assertIn("Installer wrapper Grok (groupe grok-client)", self.content)
+        block = self.content[
+            self.content.index("Installer wrapper Grok (groupe grok-client)") :
+            self.content.index("Installer inbox consumer")
+        ]
+        self.assertIn("owner: agentimpact-runner", block)
+        self.assertIn("group: agentimpact-grok-client", block)
+        self.assertIn('mode: "0750"', block)
+        self.assertIn(
+            "agentimpact-runner:agentimpact-grok-client 750",
+            self.content,
+        )
+
+    def test_cursor_grok_worker_in_grok_client_group(self) -> None:
+        self.assertIn("Ajouter cursor-grok-worker au groupe agentimpact-grok-client", self.content)
+        block = self.content[
+            self.content.index("Ajouter cursor-grok-worker au groupe agentimpact-grok-client") :
+            self.content.index("Créer utilisateur agentimpact-slack-router")
+        ]
+        self.assertIn("name: cursor-grok-worker", block)
+        self.assertIn("groups: agentimpact-grok-client", block)
+        self.assertIn("append: true", block)
+
+    def test_runtime_package_json_and_deps_required_before_deploy(self) -> None:
+        self.assertIn("Vérifier package.json runtime ESM présent", self.content)
+        self.assertIn("missing_runtime_package_json_run_hermesctl_first", self.content)
+        self.assertIn("Vérifier dépendances runtime critiques", self.content)
+        self.assertIn("node_modules/@slack/web-api", self.content)
+        self.assertIn("node_modules/@slack/socket-mode", self.content)
+        self.assertIn("node_modules/pg", self.content)
+
+    def test_grok_worker_readwritepaths_includes_cursor_home(self) -> None:
+        service = (self.SYSTEMD / "agentimpact-grok-worker.service").read_text(encoding="utf-8")
+        self.assertIn("ProtectSystem=strict", service)
+        self.assertIn("ProtectHome=read-only", service)
+        self.assertRegex(
+            service,
+            r"(?m)^ReadWritePaths=.*(?:^|\s)/var/lib/cursor-grok-worker(?:\s|$)",
+        )
+        self.assertIn("Retirer drop-in obsolète cursor-home", self.content)
+        self.assertIn(
+            "/etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf",
+            self.content,
+        )
+        self.assertIn("state: absent", self.content)
+
+    def test_no_secrets_in_non_secret_managed_files(self) -> None:
+        """Les fichiers non secrets et units ne doivent pas embarquer de tokens."""
+        for name in (
+            "agentimpact-slack-router.service",
+            "agentimpact-grok-worker.service",
+            "agentimpact-grok-worker.socket",
+        ):
+            text = (self.SYSTEMD / name).read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"xox[baprs]-")
+            self.assertNotRegex(text, r"CURSOR_API_KEY=[^\n%]")
+            self.assertNotIn("PGPASSWORD=", text)
+        self.assertIn("secret_in_non_secret_config", self.content)
+        self.assertNotRegex(self.content, r"Sauvegarder[^\n]*credentials")
 
     def test_credentials_checked_by_existence_and_permissions_only(self) -> None:
         self.assertIn("Vérifier credentials routeur Slack", self.content)
@@ -929,6 +1081,16 @@ class SystemdRegressionTest(unittest.TestCase):
         )
         self.assertIn("HERMES_PROFILE=nadir-operator", content)
         self.assertNotIn("HERMES_PROFILE=default", content)
+
+    def test_nadir_operator_env_example_resolves_chief_of_staff(self) -> None:
+        example = (
+            Path(__file__).resolve().parents[1]
+            / "agentimpact-profiles"
+            / "nadir-operator"
+            / ".env.example"
+        ).read_text(encoding="utf-8")
+        self.assertIn("HERMES_PROFILE=agentimpact-chief-of-staff", example)
+        self.assertNotIn("HERMES_PROFILE=default", example)
 
     def test_inbox_ana_uses_agentimpact_growth_profile(self) -> None:
         content = (self.SYSTEMD / "agentimpact-gateway-inbox-ana.service").read_text(

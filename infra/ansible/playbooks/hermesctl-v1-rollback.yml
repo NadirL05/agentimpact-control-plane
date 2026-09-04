@@ -79,6 +79,40 @@
         - dist_backup.stat.exists | default(false)
         - not (dist_absent_marker.stat.exists | default(false))
 
+    - name: Restaurer package.json runtime depuis rollback
+      copy:
+        src: "{{ rollback_bundle_dir }}/app-package.json"
+        dest: "{{ repo_root }}/app/package.json"
+        remote_src: true
+        owner: hermes
+        group: hermes
+        mode: "0644"
+      failed_when: false
+
+    - name: Restaurer package-lock.json runtime depuis rollback
+      copy:
+        src: "{{ rollback_bundle_dir }}/app-package-lock.json"
+        dest: "{{ repo_root }}/app/package-lock.json"
+        remote_src: true
+        owner: hermes
+        group: hermes
+        mode: "0644"
+      failed_when: false
+
+    - name: Régénérer node_modules runtime depuis lock (omit=dev)
+      become: true
+      become_user: hermes
+      shell: |
+        set -euo pipefail
+        cd "{{ repo_root }}/app"
+        test -f package.json
+        test -f package-lock.json
+        npm ci --omit=dev
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
     - name: Restaurer scripts versionnés pre-hermesctl-v1
       synchronize:
         src: "{{ rollback_scripts_dir }}/"
