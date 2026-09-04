@@ -74,11 +74,13 @@ describe('normalizeSocketModeSlackEvent (socket-mode 2.0.7)', () => {
 
     transport.handlers?.onMessage(normalizeSocketModeSlackEvent(sdkEvent()));
     expect(onEnvelope).toHaveBeenCalledTimes(1);
-    expect(onEnvelope.mock.calls[0][0]).toMatchObject({
-      envelope_id: 'env-1',
-      type: 'events_api',
-      payload,
-    });
+    expect(onEnvelope).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envelope_id: 'env-1',
+        type: 'events_api',
+        payload,
+      }),
+    );
   });
 });
 
