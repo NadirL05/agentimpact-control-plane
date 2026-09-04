@@ -5,9 +5,11 @@ import {
   createDispatchStores,
   handleSlackEnvelope,
 } from './event-handler.js';
+import { startAsyncInboxNotifier } from './async-inbox-notifier.js';
 import { startHealthServer } from './health-server.js';
 import { createMetrics, metricsSnapshot } from './metrics.js';
 import { createSlackSocketTransport, createSocketModeRunner } from './socket-mode-client.js';
+import { getSlackRouterPool } from './stores/pg-pool.js';
 import { WebClient } from '@slack/web-api';
 
 async function main(): Promise<void> {
@@ -31,6 +33,13 @@ async function main(): Promise<void> {
   const logLine = (line: string) => {
     process.stdout.write(`${line}\n`);
   };
+
+  const asyncNotifier = startAsyncInboxNotifier({
+    pool: getSlackRouterPool(),
+    poster,
+    logLine,
+    pollIntervalMs: 2_000,
+  });
 
   let shuttingDown = false;
 
@@ -67,6 +76,7 @@ async function main(): Promise<void> {
   async function shutdown(code = 0): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    asyncNotifier.stop();
     await socket.stop();
     health.close();
     process.exit(code);

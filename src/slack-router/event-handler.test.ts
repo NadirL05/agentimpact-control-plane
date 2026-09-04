@@ -329,6 +329,50 @@ describe('apps Slack natives', () => {
     expect(posts[0]).toBe('grok ok');
   });
 
+  it('mission longue Hermès → ACK immédiat posté, routes courtes non impactées', async () => {
+    const posts: string[] = [];
+    const config = testConfig();
+    const stores = createTestDispatchStores(config);
+    const hermesExecute = vi.fn(async () => ({
+      ok: true as const,
+      text: [
+        'Mission IMANE-PROJECT-AUDIT-V1 enregistrée.',
+        'ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        'Agent: Hermès',
+        'Statut: queued',
+      ].join('\n'),
+      run_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    }));
+    const grokExecute = vi.fn();
+
+    await handleSlackEnvelope(
+      envelope(
+        'E-async-mission',
+        'Mission réelle\nNom de mission :\nIMANE-PROJECT-AUDIT-V1\nhttps://github.com/NadirL05/imane-projet audit',
+      ),
+      stores,
+      {
+        config,
+        metrics: createMetrics(),
+        poster: {
+          postThreadReply: async (_c, _t, text) => {
+            posts.push(text);
+          },
+        },
+        logLine: () => undefined,
+        relays: [
+          { target: 'hermes' as const, execute: hermesExecute },
+          { target: 'grok' as const, execute: grokExecute },
+        ],
+      },
+    );
+
+    expect(hermesExecute).toHaveBeenCalledOnce();
+    expect(grokExecute).not.toHaveBeenCalled();
+    expect(posts[0]).toContain('enregistrée');
+    expect(posts[0]).toContain('queued');
+  });
+
   it('racine <@NATIVE_ID> + ROUTE GROK : ignore, aucun Grok, aucune réponse Slack', async () => {
     const posts: string[] = [];
     const grokExecute = vi.fn();
