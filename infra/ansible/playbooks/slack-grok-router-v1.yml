@@ -341,6 +341,16 @@
         executable: /bin/bash
       changed_when: true
 
+    - name: Appliquer migration 003 async long-running missions
+      shell: |
+        set -euo pipefail
+        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+          psql -v ON_ERROR_STOP=1 -U agentimpact_app -d agentimpact \
+          < "{{ repo_root }}/app/src/migrations/003_async_long_running_missions.sql"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
     - name: Installer unités systemd routeur, worker Grok et consumers inbox
       copy:
         src: "{{ work_src }}/infra/systemd/{{ item }}"

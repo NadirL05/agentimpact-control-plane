@@ -25,8 +25,12 @@ app.post('/claim', async (c) => {
       thread_ts: string;
       user_id: string;
       event_id: string;
+      delivery_mode: string;
+      mission_title: string | null;
     }>(
-      `SELECT id, prompt, channel_id, thread_ts, user_id, event_id
+      `SELECT id, prompt, channel_id, thread_ts, user_id, event_id,
+              coalesce(delivery_mode, 'sync') as delivery_mode,
+              mission_title
        FROM slack_gateway_inbox
        WHERE target = $1 AND status = 'pending'
        ORDER BY created_at ASC
@@ -56,6 +60,8 @@ app.post('/claim', async (c) => {
         thread_ts: row.thread_ts,
         user_id: row.user_id,
         event_id: row.event_id,
+        delivery_mode: row.delivery_mode,
+        mission_title: row.mission_title,
       },
     });
   } catch {
@@ -69,7 +75,7 @@ app.post('/claim', async (c) => {
 app.post('/:id/complete', async (c) => {
   const id = c.req.param('id');
   const body = (await c.req.json().catch(() => null)) as
-    | { text?: string; run_id?: string; error_code?: string }
+    | { text?: string; run_id?: string; error_code?: string; status?: string }
     | null;
 
   if (!body) {
@@ -86,11 +92,19 @@ app.post('/:id/complete', async (c) => {
     return c.json({ ok: true });
   }
 
+  const errorCode = (body.error_code ?? 'consumer_failed').slice(0, 120);
+  const terminal =
+    body.status === 'timeout' || errorCode === 'hermes_timeout' || errorCode === 'inbox_timeout'
+      ? 'timeout'
+      : body.status === 'cancelled'
+        ? 'cancelled'
+        : 'failed';
+
   await pool.query(
     `UPDATE slack_gateway_inbox
-     SET status = 'failed', error_code = $2, updated_at = now()
+     SET status = $2, error_code = $3, updated_at = now()
      WHERE id = $1 AND status = 'processing'`,
-    [id, body.error_code ?? 'consumer_failed'],
+    [id, terminal, errorCode],
   );
   return c.json({ ok: true });
 });
