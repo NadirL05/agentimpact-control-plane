@@ -1,5 +1,6 @@
 ---
-# Déploiement routeur Slack + worker Grok v1 (sans démarrage automatique du routeur)
+# Déploiement routeur Slack + worker Grok v1
+# (installe unités/scripts, applique migration 002, sans démarrage automatique)
 
 - name: Deploy slack-grok-router v1
   hosts: localhost
@@ -163,11 +164,13 @@
         set -euo pipefail
         for f in /etc/agentimpact/credentials/*; do
           [ -e "$f" ] || continue
+          [ ! -L "$f" ] || { echo "unsafe_permissions" >&2; exit 1; }
+          [ -f "$f" ] || { echo "unsafe_permissions" >&2; exit 1; }
           perms=$(stat -c '%a' "$f")
           other=$((perms % 10))
           group=$(((perms / 10) % 10))
           if [ "$other" -ge 4 ] || [ "$group" -ge 4 ]; then
-            echo "unsafe_permissions:$f:$perms" >&2
+            echo "unsafe_permissions" >&2
             exit 1
           fi
         done
@@ -267,33 +270,7 @@
       failed_when: false
 
     - name: Sauvegarde PostgreSQL pre-migration 002
-      shell: |
-        set -euo pipefail
-        stamp=$(date -u +%Y%m%d%H%M%S)
-        dump="{{ rollback_pg_backup_dir }}/pre-002-${stamp}.dump"
-        docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
-          pg_dump -U agentimpact_app -d agentimpact --format=custom \
-          > "$dump"
-        chmod 0600 "$dump"
-        echo "$dump" > "{{ rollback_pg_backup_dir }}/latest-002.path"
-      args:
-        executable: /bin/bash
-      changed_when: true
-      register: pg_backup_002
-
-    - name: Enregistrer chemin sauvegarde PostgreSQL 002 (sans contenu)
-      debug:
-        msg: "pg_backup_002={{ pg_backup_002.stdout_lines[-1] | default('unknown') }}"
-
-    - name: Vérifier sauvegarde PostgreSQL non vide
-      shell: |
-        set -euo pipefail
-        latest=$(ls -t "{{ rollback_pg_backup_dir }}"/*.dump 2>/dev/null | head -1)
-        test -n "$latest"
-        test -s "$latest"
-      args:
-        executable: /bin/bash
-      changed_when: false
+      include_tasks: ../tasks/slack_grok_pg_backup_002.yml
 
     - name: Appliquer migration 002 slack router (stdin via service db)
       shell: |
@@ -340,6 +317,6 @@
       command: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-slack-router.conf
       changed_when: false
 
-    - name: Recharger systemd (sans démarrage routeur ni consumers)
+    - name: Recharger systemd (sans démarrage routeur, worker ni consumers)
       command: systemctl daemon-reload
       changed_when: false

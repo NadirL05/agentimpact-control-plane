@@ -1,0 +1,205 @@
+# Sauvegarde PostgreSQL pre-migration 002 — atomique, 0600, reprise idempotente.
+# Vars requises : rollback_pg_backup_dir, repo_root
+# Vars optionnelles :
+#   slack_grok_pg_dump_mode: docker (défaut) | fixture
+#   slack_grok_require_root_owner: true (défaut) — false en tests non-root
+
+- name: Détecter pointeur latest-002.path réutilisable
+  shell: |
+    set -euo pipefail
+    pgdir="{{ rollback_pg_backup_dir }}"
+    pointer="$pgdir/latest-002.path"
+    require_root="{{ slack_grok_require_root_owner | default(true) | bool | lower }}"
+
+    if [ ! -e "$pointer" ]; then
+      echo "absent"
+      exit 0
+    fi
+
+    err() { echo "invalid_pg_backup_pointer" >&2; echo "invalid"; exit 0; }
+
+    [ ! -L "$pointer" ] || err
+    [ -f "$pointer" ] || err
+    perms=$(stat -c '%a' "$pointer")
+    [ "$perms" = "600" ] || err
+    if [ "$require_root" = "true" ]; then
+      owner=$(stat -c '%U:%G' "$pointer")
+      [ "$owner" = "root:root" ] || err
+    fi
+
+    [ "$(wc -l < "$pointer")" -eq 1 ] || err
+    IFS= read -r raw < "$pointer" || err
+    [ -n "$raw" ] || err
+    [ "${raw#/}" != "$raw" ] || err
+    [ "${raw#"$pgdir"/}" != "$raw" ] || err
+    [ ! -L "$raw" ] || err
+    [ -f "$raw" ] || err
+    [ -s "$raw" ] || err
+    dump_perms=$(stat -c '%a' "$raw")
+    [ "$dump_perms" = "600" ] || err
+    if [ "$require_root" = "true" ]; then
+      dump_owner=$(stat -c '%U:%G' "$raw")
+      [ "$dump_owner" = "root:root" ] || err
+    fi
+
+    canon_pgdir=$(readlink -f "$pgdir")
+    canon_dump=$(readlink -f "$raw")
+    [ "${canon_dump#"$canon_pgdir"/}" != "$canon_dump" ] || err
+    echo "complete"
+  args:
+    executable: /bin/bash
+  register: pg_backup_002_detect
+  changed_when: false
+
+- name: Échec si pointeur latest-002.path invalide
+  fail:
+    msg: invalid_pg_backup_pointer
+  when: (pg_backup_002_detect.stdout_lines | default([]) | first | default('')) == "invalid"
+
+- name: Mémoriser réutilisation du dump PostgreSQL 002
+  set_fact:
+    reuse_pg_backup_002: "{{ (pg_backup_002_detect.stdout_lines | default([]) | first | default('')) == 'complete' }}"
+
+- name: Annoncer reprise dump PostgreSQL 002 existant
+  debug:
+    msg: "reuse_pg_backup_002=true"
+  when: reuse_pg_backup_002 | bool
+
+- name: Sauvegarde PostgreSQL pre-migration 002 (docker)
+  shell: |
+    set -euo pipefail
+    pgdir="{{ rollback_pg_backup_dir }}"
+    pointer="$pgdir/latest-002.path"
+    require_root="{{ slack_grok_require_root_owner | default(true) | bool | lower }}"
+    stamp=$(date -u +%Y%m%d%H%M%S)
+    dump="$pgdir/pre-002-${stamp}.dump"
+
+    mkdir -p "$pgdir"
+    tmp_dump=$(mktemp "$pgdir/.pre-002.dump.XXXXXX")
+    cleanup() { rm -f "$tmp_dump" "$tmp_ptr" 2>/dev/null || true; }
+    trap cleanup EXIT
+    tmp_ptr=""
+
+    docker compose -f "{{ repo_root }}/compose.yml" exec -T db \
+      pg_dump -U agentimpact_app -d agentimpact --format=custom \
+      > "$tmp_dump"
+    [ -s "$tmp_dump" ] || { echo "empty_pg_dump" >&2; exit 1; }
+    [ ! -L "$tmp_dump" ] || { echo "invalid_pg_dump" >&2; exit 1; }
+    [ -f "$tmp_dump" ] || { echo "invalid_pg_dump" >&2; exit 1; }
+    chmod 0600 "$tmp_dump"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp_dump"
+    fi
+    mv -f "$tmp_dump" "$dump"
+    tmp_dump=""
+
+    [ ! -L "$pointer" ] || { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+    tmp_ptr=$(mktemp "$pgdir/.latest-002.path.XXXXXX")
+    printf '%s\n' "$dump" > "$tmp_ptr"
+    chmod 0600 "$tmp_ptr"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp_ptr"
+    fi
+    [ ! -L "$tmp_ptr" ] || { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+    [ -f "$tmp_ptr" ] || { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+    mv -f "$tmp_ptr" "$pointer"
+    tmp_ptr=""
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  changed_when: true
+  register: pg_backup_002
+  when:
+    - not (reuse_pg_backup_002 | bool)
+    - (slack_grok_pg_dump_mode | default('docker')) == 'docker'
+
+- name: Sauvegarde PostgreSQL pre-migration 002 (fixture test)
+  shell: |
+    set -euo pipefail
+    pgdir="{{ rollback_pg_backup_dir }}"
+    pointer="$pgdir/latest-002.path"
+    require_root="{{ slack_grok_require_root_owner | default(true) | bool | lower }}"
+    stamp=$(date -u +%Y%m%d%H%M%S)
+    dump="$pgdir/pre-002-${stamp}.dump"
+
+    mkdir -p "$pgdir"
+    tmp_dump=$(mktemp "$pgdir/.pre-002.dump.XXXXXX")
+    cleanup() { rm -f "$tmp_dump" "$tmp_ptr" 2>/dev/null || true; }
+    trap cleanup EXIT
+    tmp_ptr=""
+
+    printf 'fixture-pg-dump-002-%s\n' "$stamp" > "$tmp_dump"
+    [ -s "$tmp_dump" ] || { echo "empty_pg_dump" >&2; exit 1; }
+    chmod 0600 "$tmp_dump"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp_dump"
+    fi
+    mv -f "$tmp_dump" "$dump"
+    tmp_dump=""
+
+    [ ! -L "$pointer" ] || { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+    tmp_ptr=$(mktemp "$pgdir/.latest-002.path.XXXXXX")
+    printf '%s\n' "$dump" > "$tmp_ptr"
+    chmod 0600 "$tmp_ptr"
+    if [ "$require_root" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+      chown root:root "$tmp_ptr"
+    fi
+    mv -f "$tmp_ptr" "$pointer"
+    tmp_ptr=""
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  changed_when: true
+  register: pg_backup_002_fixture
+  when:
+    - not (reuse_pg_backup_002 | bool)
+    - (slack_grok_pg_dump_mode | default('docker')) == 'fixture'
+
+- name: Enregistrer résultat sauvegarde PostgreSQL 002 (sans chemin)
+  debug:
+    msg: "pg_backup_002=ok"
+  when:
+    - not (reuse_pg_backup_002 | bool)
+    - (pg_backup_002 is defined and pg_backup_002 is not skipped)
+      or (pg_backup_002_fixture is defined and pg_backup_002_fixture is not skipped)
+
+- name: Valider pointeur latest-002.path et dump associé
+  shell: |
+    set -euo pipefail
+    pgdir="{{ rollback_pg_backup_dir }}"
+    pointer="$pgdir/latest-002.path"
+    require_root="{{ slack_grok_require_root_owner | default(true) | bool | lower }}"
+    err() { echo "invalid_pg_backup_pointer" >&2; exit 1; }
+
+    [ -e "$pointer" ] || err
+    [ ! -L "$pointer" ] || err
+    [ -f "$pointer" ] || err
+    perms=$(stat -c '%a' "$pointer")
+    [ "$perms" = "600" ] || err
+    if [ "$require_root" = "true" ]; then
+      owner=$(stat -c '%U:%G' "$pointer")
+      [ "$owner" = "root:root" ] || err
+    fi
+
+    [ "$(wc -l < "$pointer")" -eq 1 ] || err
+    IFS= read -r raw < "$pointer" || err
+    [ -n "$raw" ] || err
+    [ "${raw#/}" != "$raw" ] || err
+    [ "${raw#"$pgdir"/}" != "$raw" ] || err
+    [ ! -L "$raw" ] || err
+    [ -f "$raw" ] || err
+    [ -s "$raw" ] || err
+    dump_perms=$(stat -c '%a' "$raw")
+    [ "$dump_perms" = "600" ] || err
+    if [ "$require_root" = "true" ]; then
+      dump_owner=$(stat -c '%U:%G' "$raw")
+      [ "$dump_owner" = "root:root" ] || err
+    fi
+
+    canon_pgdir=$(readlink -f "$pgdir")
+    canon_dump=$(readlink -f "$raw")
+    [ "${canon_dump#"$canon_pgdir"/}" != "$canon_dump" ] || err
+    echo ok
+  args:
+    executable: /bin/bash
+  changed_when: false

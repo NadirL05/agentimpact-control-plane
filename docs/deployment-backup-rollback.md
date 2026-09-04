@@ -10,9 +10,12 @@ Les playbooks produisent un `pg_dump` custom **avant** chaque migration :
 Propriétés :
 
 - format `pg_dump --format=custom` ;
-- permissions `0600` (root uniquement) ;
-- échec fail-closed si dump vide ;
-- chemin enregistré dans Ansible via `debug` (sans contenu).
+- dump et pointeur `root:root` `0600`, fichiers réguliers non symlink ;
+- écriture atomique du pointeur (`mktemp` + `chmod 0600` + `mv`) ;
+- cible du pointeur canonique confinée sous `pg-backup/` ;
+- échec fail-closed si dump vide ou pointeur invalide (`invalid_pg_backup_pointer`, sans chemin) ;
+- reprise idempotente : un `latest-00N.path` valide est réutilisé (dump initial non remplacé) ;
+- Ansible annonce `pg_backup_00N=ok` (sans chemin ni contenu).
 
 ## Restauration manuelle (ne pas exécuter sans validation Nadir)
 
@@ -52,6 +55,11 @@ Le rollback hermesctl-v1 ne restaure ni ne modifie les permissions des fichiers 
 | `systemd/` | unités systemd installées |
 | `tmpfiles/` | `agentimpact-slack-router.conf` |
 | `config/` | `slack-router.env`, `grok-worker.env`, `gateway-inbox.env` (non secrets) |
-| `pg-backup/*.dump` | dumps PostgreSQL (`0600`) |
+| `pg-backup/*.dump` | dumps PostgreSQL (`root:root` `0600`, régulier, non vide) |
+| `pg-backup/latest-002.path` | pointeur vers dump (cible régulière sous `pg-backup`, `root:root` `0600`, pas group/other) |
 
 **Exclus** : credentials, tokens, `.env` racine avec `DB_PASSWORD`
+
+**Reprise de déploiement** : si `latest-002.path` est déjà valide (régulier `0600`, dump associé non vide confiné sous `pg-backup/`), le playbook le réutilise et **n'écrase pas** le dump pre-002. Pointeur invalide → `invalid_pg_backup_pointer` (sans chemin).
+
+**Rollback** (`slack-grok-router-v1-rollback.yml`) : stop services + restauration bundle ; **aucune** suppression de tables SQL ni `pg_restore --clean`.

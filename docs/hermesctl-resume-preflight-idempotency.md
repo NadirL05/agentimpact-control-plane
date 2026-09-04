@@ -50,7 +50,7 @@ La tâche « Appliquer propriétaire bridge.env » reste `agentimpact-ctl:agenti
 | `hermes.env` / `admin.env` `root:root 0600` | Non — inchangés par le playbook | OK |
 | Bundle rollback : pointeur PG `latest-001.path` | Oui — une ancienne version créait le pointeur `root:root 0644`, alors que la validation exige désormais `0600` | Corrigé : migration exclusive `0644`→`0600` après validation complète de la cible ; autres états refusés |
 | Bundle rollback (reuse / legacy / partial) | Non — états `app-dist` déjà traités | OK |
-| Pointeur `latest-002.path` du bundle Slack-Grok | Risque prédictif : ancien flux écrit le pointeur sans mode explicite ; aucun mécanisme de reprise hermesctl ne le consomme | Hors périmètre de cette correction ; durcissement `0600` à planifier séparément |
+| Pointeur `latest-002.path` du bundle Slack-Grok | Ancien flux : écriture non atomique, sans `chmod 0600`/`chown` explicites, debug exposant le chemin, pas de reprise | Corrigé dans `fix/slack-grok-final-preflight` (`slack_grok_pg_backup_002.yml`) |
 | Staging `/var/lib/agentimpact-build` | Non — `file` + vérif `hermes:hermes 750` après création | OK |
 | Unités systemd bridge | Non — `copy` + `enabled/started` idempotents | OK |
 | `agentimpact-runner` ∈ `agentimpact-ctl` | Non — `append: true` | OK |

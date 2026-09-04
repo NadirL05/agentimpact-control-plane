@@ -1,0 +1,21 @@
+---
+# Runtime — sauvegarde / reprise PostgreSQL 002 (fixture, sans Docker ni secrets).
+- name: Test slack-grok pg-backup 002 resume
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    slack_grok_pg_dump_mode: fixture
+    slack_grok_require_root_owner: false
+  tasks:
+    - name: Préparer / réutiliser la sauvegarde PostgreSQL 002
+      include_tasks: "{{ playbook_dir }}/../../tasks/slack_grok_pg_backup_002.yml"
+
+    - name: Exporter l'état dump 002 pour assertions runtime
+      copy:
+        content: |
+          reuse_pg_backup_002={{ reuse_pg_backup_002 | bool | lower }}
+          detect={{ pg_backup_002_detect.stdout_lines[0] | default('unknown') }}
+        dest: "{{ runtime_report_path }}"
+        mode: "0640"
+      when: runtime_report_path is defined
