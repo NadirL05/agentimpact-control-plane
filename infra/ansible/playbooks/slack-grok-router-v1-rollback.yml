@@ -54,6 +54,40 @@
         delete: false
       when: dist_backup.stat.exists
 
+    - name: Restaurer package.json runtime depuis rollback
+      copy:
+        src: "{{ rollback_bundle_dir }}/app-package.json"
+        dest: "{{ repo_root }}/app/package.json"
+        remote_src: true
+        owner: hermes
+        group: hermes
+        mode: "0644"
+      failed_when: false
+
+    - name: Restaurer package-lock.json runtime depuis rollback
+      copy:
+        src: "{{ rollback_bundle_dir }}/app-package-lock.json"
+        dest: "{{ repo_root }}/app/package-lock.json"
+        remote_src: true
+        owner: hermes
+        group: hermes
+        mode: "0644"
+      failed_when: false
+
+    - name: Régénérer node_modules runtime depuis lock (omit=dev)
+      become: true
+      become_user: hermes
+      shell: |
+        set -euo pipefail
+        cd "{{ repo_root }}/app"
+        test -f package.json
+        test -f package-lock.json
+        npm ci --omit=dev
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
     - name: Restaurer scripts gérés versionnés
       copy:
         src: "{{ rollback_scripts_dir }}/{{ item }}"
@@ -61,6 +95,22 @@
         remote_src: true
         mode: "0750"
       loop: "{{ managed_scripts }}"
+      failed_when: false
+
+    - name: Réappliquer ownership wrapper Grok
+      file:
+        path: /opt/agentimpact/scripts/grok-agent-run.sh
+        owner: agentimpact-runner
+        group: agentimpact-grok-client
+        mode: "0750"
+      failed_when: false
+
+    - name: Réappliquer permissions répertoire app
+      file:
+        path: "{{ repo_root }}/app"
+        owner: hermes
+        group: agentimpact-grok-client
+        mode: "0710"
       failed_when: false
 
     - name: Restaurer unités systemd versionnées
@@ -75,6 +125,24 @@
         - agentimpact-grok-worker.socket
         - agentimpact-gateway-inbox-hermes.service
         - agentimpact-gateway-inbox-ana.service
+      failed_when: false
+
+    - name: Réappliquer drop-in cursor-home si unit restaurée sans ReadWritePaths HOME
+      shell: |
+        set -euo pipefail
+        unit=/etc/systemd/system/agentimpact-grok-worker.service
+        dropin_dir=/etc/systemd/system/agentimpact-grok-worker.service.d
+        dropin="$dropin_dir/10-cursor-home.conf"
+        if [ -f "$unit" ] && ! grep -q '/var/lib/cursor-grok-worker' "$unit"; then
+          mkdir -p "$dropin_dir"
+          printf '%s\n' '[Service]' 'ReadWritePaths=/var/lib/cursor-grok-worker' > "$dropin"
+          chmod 0644 "$dropin"
+        else
+          rm -f "$dropin"
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true
       failed_when: false
 
     - name: Restaurer tmpfiles versionné

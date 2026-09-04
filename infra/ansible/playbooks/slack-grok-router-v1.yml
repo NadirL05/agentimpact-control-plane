@@ -94,6 +94,12 @@
         create_home: true
       when: grok_user_getent.rc != 0
 
+    - name: Ajouter cursor-grok-worker au groupe agentimpact-grok-client
+      user:
+        name: cursor-grok-worker
+        groups: agentimpact-grok-client
+        append: true
+
     - name: Créer utilisateur agentimpact-slack-router
       user:
         name: agentimpact-slack-router
@@ -103,6 +109,14 @@
         shell: /usr/sbin/nologin
         create_home: false
         state: present
+
+    - name: Sécuriser répertoire app pour traverse groupe grok-client
+      file:
+        path: "{{ repo_root }}/app"
+        state: directory
+        owner: hermes
+        group: agentimpact-grok-client
+        mode: "0710"
 
     - name: Créer et sécuriser workspace Grok
       file:
@@ -192,6 +206,28 @@
           - host_dist_files.results | map(attribute='stat.exists') | list | min
         fail_msg: missing_required_host_dist_artifact
 
+    - name: Vérifier package.json runtime ESM présent
+      stat:
+        path: "{{ repo_root }}/app/package.json"
+      register: app_package_json
+
+    - name: Échec si package.json runtime absent
+      assert:
+        that:
+          - app_package_json.stat.exists
+        fail_msg: missing_runtime_package_json_run_hermesctl_first
+
+    - name: Vérifier dépendances runtime critiques
+      shell: |
+        set -euo pipefail
+        grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "{{ repo_root }}/app/package.json"
+        test -d "{{ repo_root }}/app/node_modules/@slack/web-api"
+        test -d "{{ repo_root }}/app/node_modules/@slack/socket-mode"
+        test -d "{{ repo_root }}/app/node_modules/pg"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Créer répertoire rollback bundle slack-grok-router-v1
       file:
         path: "{{ item }}"
@@ -219,6 +255,22 @@
         delete: false
       delegate_to: localhost
       when: existing_dist.stat.exists
+
+    - name: Sauvegarder package.json runtime pre-slack-grok
+      copy:
+        src: "{{ repo_root }}/app/package.json"
+        dest: "{{ rollback_bundle_dir }}/app-package.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
+
+    - name: Sauvegarder package-lock.json runtime pre-slack-grok
+      copy:
+        src: "{{ repo_root }}/app/package-lock.json"
+        dest: "{{ rollback_bundle_dir }}/app-package-lock.json"
+        remote_src: true
+        mode: "0644"
+      failed_when: false
 
     - name: Sauvegarder scripts gérés pre-slack-grok
       copy:
@@ -289,20 +341,41 @@
         mode: "0644"
       loop: "{{ systemd_units }}"
 
+    - name: Retirer drop-in obsolète cursor-home (désormais dans l unit git)
+      file:
+        path: /etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf
+        state: absent
+
     - name: Installer tmpfiles.d routeur
       copy:
         src: "{{ work_src }}/infra/systemd/agentimpact-slack-router.tmpfiles.conf"
         dest: /etc/tmpfiles.d/agentimpact-slack-router.conf
         mode: "0644"
 
-    - name: Installer scripts wrapper et inbox consumer
+    - name: Installer wrapper Grok (groupe grok-client)
       copy:
-        src: "{{ work_src }}/infra/scripts/{{ item.src }}"
-        dest: "/opt/agentimpact/scripts/{{ item.dest }}"
-        mode: "{{ item.mode }}"
-      loop:
-        - { src: grok-agent-run.sh, dest: grok-agent-run.sh, mode: "0750" }
-        - { src: gateway-inbox-consumer.py, dest: gateway-inbox-consumer.py, mode: "0750" }
+        src: "{{ work_src }}/infra/scripts/grok-agent-run.sh"
+        dest: /opt/agentimpact/scripts/grok-agent-run.sh
+        owner: agentimpact-runner
+        group: agentimpact-grok-client
+        mode: "0750"
+
+    - name: Installer inbox consumer
+      copy:
+        src: "{{ work_src }}/infra/scripts/gateway-inbox-consumer.py"
+        dest: /opt/agentimpact/scripts/gateway-inbox-consumer.py
+        mode: "0750"
+
+    - name: Vérifier ownership wrapper Grok et répertoire app
+      shell: |
+        set -euo pipefail
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/grok-agent-run.sh)" = "agentimpact-runner:agentimpact-grok-client 750"
+        test "$(stat -c '%U:%G %a' '{{ repo_root }}/app')" = "hermes:agentimpact-grok-client 710"
+        grep -q '/var/lib/cursor-grok-worker' /etc/systemd/system/agentimpact-grok-worker.service
+        test ! -f /etc/systemd/system/agentimpact-grok-worker.service.d/10-cursor-home.conf
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Installer template gateway-inbox.env si absent
       copy:

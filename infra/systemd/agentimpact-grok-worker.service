@@ -30,5 +30,5 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/agentimpact/grokbot/workspace /run/agentimpact-grok-worker
+ReadWritePaths=/opt/agentimpact/grokbot/workspace /run/agentimpact-grok-worker /var/lib/cursor-grok-worker
 ReadOnlyPaths=/etc/agentimpact/flags /opt/agentimpact/app/dist
