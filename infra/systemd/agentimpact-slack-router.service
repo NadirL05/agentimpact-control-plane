@@ -1,7 +1,9 @@
 [Unit]
 Description=AgentImpact Slack Router (Socket Mode)
-After=network-online.target agentimpact-grok-worker.socket postgresql.service
-Wants=network-online.target
+# PG tourne dans Docker Compose — pas d'unité PostgreSQL hôte.
+# docker.service actif ≠ Postgres ready : gate réel via ExecStartPre.
+After=network-online.target docker.service agentimpact-grok-worker.socket
+Wants=network-online.target docker.service
 Requires=agentimpact-grok-worker.socket
 StartLimitIntervalSec=300
 StartLimitBurst=5
@@ -27,12 +29,15 @@ Environment=GROK_WORKER_SOCKET=/run/agentimpact-grok-worker/grok.sock
 Environment=NODE_ENV=production
 EnvironmentFile=-/etc/agentimpact/slack-router.env
 
+# + = root : docker compose exec pg_isready (sans secret)
+ExecStartPre=+/opt/agentimpact/scripts/wait-postgres-ready.sh
 ExecStart=/usr/bin/node /opt/agentimpact/app/dist/slack-router/daemon.js
 RuntimeDirectory=agentimpact-slack-router
 RuntimeDirectoryMode=0750
 
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=120
 TimeoutStopSec=30
 KillSignal=SIGTERM
 

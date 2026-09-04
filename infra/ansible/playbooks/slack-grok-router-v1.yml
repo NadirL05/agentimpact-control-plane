@@ -33,6 +33,8 @@
     managed_scripts:
       - grok-agent-run.sh
       - gateway-inbox-consumer.py
+      - wait-postgres-ready.sh
+      - wait-control-plane-ready.sh
     managed_configs:
       - /etc/agentimpact/slack-router.env
       - /etc/agentimpact/grok-worker.env
@@ -373,11 +375,30 @@
         group: hermes
         mode: "0750"
 
+    - name: Installer wait-postgres-ready (ExecStartPre root)
+      copy:
+        src: "{{ work_src }}/infra/scripts/wait-postgres-ready.sh"
+        dest: /opt/agentimpact/scripts/wait-postgres-ready.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Installer wait-control-plane-ready (ExecStartPre hermes)
+      copy:
+        src: "{{ work_src }}/infra/scripts/wait-control-plane-ready.sh"
+        dest: /opt/agentimpact/scripts/wait-control-plane-ready.sh
+        owner: root
+        group: hermes
+        mode: "0750"
+
     - name: Vérifier ownership wrapper Grok, consumer inbox et répertoire app
       shell: |
         set -euo pipefail
         test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/grok-agent-run.sh)" = "agentimpact-runner:agentimpact-grok-client 750"
         test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/gateway-inbox-consumer.py)" = "root:hermes 750"
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/wait-postgres-ready.sh)" = "root:root 755"
+        test "$(stat -c '%U:%G %a' /opt/agentimpact/scripts/wait-control-plane-ready.sh)" = "root:hermes 750"
+        sudo -u hermes test -x /opt/agentimpact/scripts/wait-control-plane-ready.sh
         test "$(stat -c '%U:%G %a' '{{ repo_root }}/app')" = "hermes:agentimpact-grok-client 710"
         # hermes doit pouvoir exécuter le consumer (évite systemd 203/EXEC)
         sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py

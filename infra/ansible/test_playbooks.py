@@ -765,6 +765,14 @@ class SlackGrokPlaybookRegressionTest(unittest.TestCase):
         self.assertIn("owner: root", block)
         self.assertIn("group: hermes", block)
         self.assertIn('mode: "0750"', block)
+
+    def test_boot_readiness_scripts_installed(self) -> None:
+        self.assertIn("wait-postgres-ready.sh", self.content)
+        self.assertIn("wait-control-plane-ready.sh", self.content)
+        self.assertIn("Installer wait-postgres-ready (ExecStartPre root)", self.content)
+        self.assertIn("Installer wait-control-plane-ready (ExecStartPre hermes)", self.content)
+        self.assertIn("root:root 755", self.content)
+        self.assertIn("root:hermes 750", self.content)
         self.assertIn("root:hermes 750", self.content)
         self.assertIn("sudo -u hermes test -x /opt/agentimpact/scripts/gateway-inbox-consumer.py", self.content)
 
@@ -1098,6 +1106,34 @@ class SystemdRegressionTest(unittest.TestCase):
         )
         self.assertIn("HERMES_PROFILE=agentimpact-growth", content)
         self.assertNotIn("HERMES_PROFILE=default", content)
+
+    def test_router_waits_for_postgres_readiness_not_host_postgresql(self) -> None:
+        content = (self.SYSTEMD / "agentimpact-slack-router.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ExecStartPre=+/opt/agentimpact/scripts/wait-postgres-ready.sh", content)
+        self.assertIn("After=network-online.target docker.service", content)
+        self.assertRegex(content, r"(?m)^Wants=.*\bdocker\.service\b")
+        self.assertNotRegex(content, r"(?m)^(After|Wants|Requires)=.*postgresql\.service")
+        self.assertIn("TimeoutStartSec=120", content)
+        self.assertNotRegex(content, r"sleep\s+30")
+        self.assertNotRegex(content, r"ExecStartPre=.*sleep")
+
+    def test_inbox_consumers_wait_for_control_plane_readiness(self) -> None:
+        for name in (
+            "agentimpact-gateway-inbox-hermes.service",
+            "agentimpact-gateway-inbox-ana.service",
+        ):
+            content = (self.SYSTEMD / name).read_text(encoding="utf-8")
+            self.assertIn(
+                "ExecStartPre=/opt/agentimpact/scripts/wait-control-plane-ready.sh",
+                content,
+                name,
+            )
+            self.assertIn("After=network-online.target docker.service", content, name)
+            self.assertRegex(content, r"(?m)^Wants=.*\bdocker\.service\b")
+            self.assertIn("TimeoutStartSec=120", content, name)
+            self.assertNotRegex(content, r"ExecStartPre=.*sleep")
 
 
 class ComposeRegressionTest(unittest.TestCase):
