@@ -1,0 +1,178 @@
+---
+# Pérennise SSH officiel Mac→WireGuard→10.66.66.1→agentimpact-runner.
+# CRITIQUE : règle ALLOW wg0 AVANT le LIMIT 22/tcp public (break-glass).
+# Idempotent. Ne régénère aucune clé. Ne modifie pas les peers WireGuard.
+# Ne supprime pas les exceptions IP publiques temporaires.
+
+- name: Exiger root pour ce rôle
+  command: id -u
+  register: wg_ssh_uid
+  changed_when: false
+  failed_when: wg_ssh_uid.stdout | trim != "0"
+
+- name: Vérifier interface WireGuard présente
+  command: ip -br addr show {{ agentimpact_runner_ssh_interface }}
+  register: wg_iface
+  changed_when: false
+  failed_when: wg_iface.rc != 0
+
+- name: Vérifier adresse WireGuard VPS
+  assert:
+    that:
+      - agentimpact_runner_ssh_host in wg_iface.stdout
+    fail_msg: "Adresse {{ agentimpact_runner_ssh_host }} absente sur {{ agentimpact_runner_ssh_interface }}"
+
+- name: Vérifier ssh.service actif
+  command: systemctl is-active ssh
+  register: ssh_active
+  changed_when: false
+  failed_when: ssh_active.stdout | trim != "active"
+
+- name: Créer répertoire rollback bundle wireguard-ssh-runner
+  file:
+    path: "{{ rollback_bundle_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Sauvegarder ufw status numbered (preflight)
+  shell: |
+    set -euo pipefail
+    ufw status numbered > "{{ rollback_bundle_dir }}/ufw-status-numbered.pre.txt"
+    chmod 0640 "{{ rollback_bundle_dir }}/ufw-status-numbered.pre.txt"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Sauvegarder ufw status verbose (preflight)
+  shell: |
+    set -euo pipefail
+    ufw status verbose > "{{ rollback_bundle_dir }}/ufw-status-verbose.pre.txt"
+    chmod 0640 "{{ rollback_bundle_dir }}/ufw-status-verbose.pre.txt"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Sauvegarder iptables-save (preflight, sans secret)
+  shell: |
+    set -euo pipefail
+    iptables-save > "{{ rollback_bundle_dir }}/iptables-save.pre.txt"
+    chmod 0640 "{{ rollback_bundle_dir }}/iptables-save.pre.txt"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Assurer répertoire /usr/local/lib/agentimpact
+  file:
+    path: /usr/local/lib/agentimpact
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Déployer normaliseur UFW WireGuard SSH
+  copy:
+    src: normalize_ufw_wg_ssh.py
+    dest: /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Préflight dry-run normaliseur UFW
+  command: >
+    /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
+    --source {{ agentimpact_mac_wg_ip }}
+    --destination {{ agentimpact_runner_ssh_host }}
+    --interface {{ agentimpact_runner_ssh_interface }}
+    --port {{ agentimpact_runner_ssh_port }}
+    --proto {{ agentimpact_runner_ssh_proto }}
+    --check-only
+  register: ufw_normalize_preflight
+  changed_when: false
+  failed_when: ufw_normalize_preflight.rc != 0 or not (ufw_normalize_preflight.stdout | from_json).ok
+
+- name: Appliquer normalisation UFW WireGuard SSH (idempotent)
+  command: >
+    /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
+    --source {{ agentimpact_mac_wg_ip }}
+    --destination {{ agentimpact_runner_ssh_host }}
+    --interface {{ agentimpact_runner_ssh_interface }}
+    --port {{ agentimpact_runner_ssh_port }}
+    --proto {{ agentimpact_runner_ssh_proto }}
+    --apply
+  register: ufw_normalize_apply
+  changed_when: (ufw_normalize_apply.stdout | from_json).changed | default(false)
+  failed_when: ufw_normalize_apply.rc != 0 or not (ufw_normalize_apply.stdout | from_json).ok
+
+- name: Activer linger agentimpact-runner (survit au reboot)
+  command: loginctl enable-linger {{ agentimpact_runner_ssh_user }}
+  args:
+    creates: "/var/lib/systemd/linger/{{ agentimpact_runner_ssh_user }}"
+
+- name: Vérifier Linger=yes
+  command: loginctl show-user {{ agentimpact_runner_ssh_user }} -p Linger
+  register: linger_show
+  changed_when: false
+  failed_when: linger_show.stdout | trim != "Linger=yes"
+
+- name: Vérifier handshake WireGuard (wg show)
+  command: wg show {{ agentimpact_runner_ssh_interface }}
+  register: wg_show
+  changed_when: false
+  failed_when: wg_show.rc != 0
+
+- name: Vérifier ordre UFW post-apply (script check-only)
+  command: >
+    /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
+    --source {{ agentimpact_mac_wg_ip }}
+    --destination {{ agentimpact_runner_ssh_host }}
+    --interface {{ agentimpact_runner_ssh_interface }}
+    --port {{ agentimpact_runner_ssh_port }}
+    --proto {{ agentimpact_runner_ssh_proto }}
+    --check-only
+  register: ufw_normalize_verify
+  changed_when: false
+  failed_when: >-
+    ufw_normalize_verify.rc != 0
+    or not (ufw_normalize_verify.stdout | from_json).ok
+    or (ufw_normalize_verify.stdout | from_json).changed | default(false)
+
+- name: Sauvegarder ufw status numbered (post)
+  shell: |
+    set -euo pipefail
+    ufw status numbered > "{{ rollback_bundle_dir }}/ufw-status-numbered.post.txt"
+    chmod 0640 "{{ rollback_bundle_dir }}/ufw-status-numbered.post.txt"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Vérifier AgentImpact healthz
+  uri:
+    url: "{{ healthz_url }}"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: healthz
+  failed_when: healthz.content | trim != "ok"
+
+- name: Vérifier AgentImpact readyz
+  uri:
+    url: "{{ readyz_url }}"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: readyz
+  failed_when: readyz.content | trim != "ready"
+
+- name: Annoncer résultats (sans secret)
+  debug:
+    msg:
+      - "WG_SSH_RULE_IAC=PASS"
+      - "RUNNER_LINGER=PASS"
+      - "SSH_SERVICE={{ ssh_active.stdout | trim }}"
+      - "AGENTIMPACT_HEALTH={{ healthz.content | trim }}"
+      - "AGENTIMPACT_READY={{ readyz.content | trim }}"
+      - "ROLLBACK_PATH={{ rollback_bundle_dir }}"
+      - "TEMP_RULES_REMOVED=NO"
+      - "MAC_SMOKE_REQUIRED=YES"

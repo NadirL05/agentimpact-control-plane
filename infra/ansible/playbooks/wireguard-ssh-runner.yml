@@ -1,0 +1,23 @@
+---
+# Pérennise le chemin SSH officiel Cursor/Codex via WireGuard.
+# Mac (10.66.66.2) → wg0 → 10.66.66.1:22 → agentimpact-runner
+# SSH public reste break-glass (LIMIT 22/tcp Anywhere).
+#
+# Exécution (root, depuis la racine du dépôt) :
+#   ANSIBLE_CONFIG=infra/ansible/ansible.cfg \
+#     ansible-playbook -i localhost, -c local \
+#     infra/ansible/playbooks/wireguard-ssh-runner.yml
+#
+# PAS DE REBOOT. Ne régénère aucune clé. Ne touche pas aux peers WireGuard.
+
+- name: Persist WireGuard SSH runner path
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    repo_root: /opt/agentimpact
+    work_src: "{{ playbook_dir }}/../../../"
+  roles:
+    - role: wireguard_ssh_runner
+      # defaults fournis par roles/wireguard_ssh_runner/defaults/main.yml
