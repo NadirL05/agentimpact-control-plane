@@ -23,7 +23,8 @@
     "middleware/**/*.ts",
     "cli/**/*.ts",
     "slack-router/**/*.ts",
-    "grok-worker/**/*.ts"
+    "grok-worker/**/*.ts",
+    "codex-worker/**/*.ts"
   ],
   "exclude": [
     "node_modules",

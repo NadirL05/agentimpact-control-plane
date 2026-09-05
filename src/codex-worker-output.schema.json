@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "error_code", "retryable", "summary", "provider_session_id", "base_sha", "changed_paths", "test_results", "artifacts", "usage_observed"],
+  "properties": {
+    "outcome": {"enum": ["completed", "failed"]},
+    "error_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "retryable": {"type": "boolean"},
+    "summary": {"type": "string", "maxLength": 1000},
+    "provider_session_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_.:-]{1,200}$"},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "changed_paths": {"type": "array", "maxItems": 500, "items": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_./-]{1,300}$"}},
+    "test_results": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["name", "exit_code", "duration_ms"], "properties": {"name": {"type": "string"}, "exit_code": {"type": "integer"}, "duration_ms": {"type": "integer", "minimum": 0}}}},
+    "artifacts": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["kind", "relative_path", "sha256", "size_bytes"], "properties": {"kind": {"enum": ["diff", "test_report"]}, "relative_path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "size_bytes": {"type": "integer", "minimum": 0, "maximum": 10485760}}}},
+    "usage_observed": {"type": "object", "additionalProperties": false, "required": ["input_tokens", "output_tokens"], "properties": {"input_tokens": {"type": ["integer", "null"], "minimum": 0}, "output_tokens": {"type": ["integer", "null"], "minimum": 0}}}
+  }
+}

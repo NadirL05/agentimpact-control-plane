@@ -1,0 +1,58 @@
+[Unit]
+Description=AgentImpact V2 Codex worker attempt %i
+After=network.target
+ConditionPathExists=/etc/agentimpact/codex-worker.env
+ConditionPathExists=/opt/agentimpact/codex/bin/codex
+ConditionPathExists=/etc/agentimpact/codex-repositories.json
+
+[Service]
+Type=simple
+User=agentimpact-codex-worker
+Group=agentimpact-codex-worker
+WorkingDirectory=/var/lib/agentimpact-codex-worker/home
+Environment=AGENTIMPACT_V2_ENABLED=0
+Environment=AGENTIMPACT_V2_EXECUTION_ENABLED=0
+Environment=AGENTIMPACT_V2_CODEX_WORKER_ENABLED=0
+Environment=AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED=0
+Environment=CODEX_HOME=/var/lib/agentimpact-codex-worker/codex-home
+EnvironmentFile=-/etc/agentimpact/codex-worker.env
+UnsetEnvironment=SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN CODEX_API_KEY OPENAI_API_KEY
+LoadCredential=control-hmac:/etc/agentimpact/credentials/codex-worker-control-hmac
+Environment=AGENTIMPACT_CODEX_CONTROL_CREDENTIAL=%d/control-hmac
+ExecStartPre=/usr/bin/test -S /run/agentimpact-codex-worker/control.sock
+ExecStartPre=/usr/bin/test -f /run/agentimpact-codex-worker/%i/assignment.json
+ExecStart=/usr/bin/node /opt/agentimpact/app/dist/codex-worker/daemon.js %i
+Restart=no
+TimeoutStartSec=1h
+TimeoutStopSec=20s
+KillMode=control-group
+KillSignal=SIGTERM
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+UMask=0077
+ReadOnlyPaths=/opt/agentimpact/app/dist /opt/agentimpact/codex/bin/codex /etc/agentimpact/codex-repositories.json /var/lib/agentimpact-codex-worker/codex-home/agentimpact-worker.config.toml
+ReadWritePaths=/var/lib/agentimpact-codex-worker/workspaces/attempts/%i /var/lib/agentimpact-codex-worker/codex-home /var/lib/agentimpact-codex-worker/home /run/agentimpact-codex-worker/%i
+InaccessiblePaths=/run/docker.sock /var/run/docker.sock /root /home /etc/agentimpact/credentials /opt/agentimpact/grokbot /opt/agentimpact/scripts /opt/agentimpact/tokens /opt/agentimpact/app/src /opt/agentimpact/app/.git /var/lib/hermes /var/lib/cursor-grok-worker
+LimitNOFILE=1024
+TasksMax=128
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+# Intentionally no WantedBy: an authorized attempt must start the instance explicitly.

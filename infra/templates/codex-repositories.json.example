@@ -1,0 +1,9 @@
+{
+  "repositories": [
+    {
+      "repoId": "canary-fixture",
+      "mirrorPath": "/srv/agentimpact-git/canary-fixture.git",
+      "allowedPaths": ["src", "tests"]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
   "contract": "v2-foundation-future-registry",
   "agents": [
     {"id":"hermes","role":"decision_orchestrator","enabled":false,"adapter":null},
-    {"id":"codex","role":"development","enabled":false,"adapter":null},
+    {"id":"codex","role":"development","enabled":false,"adapter":"codex-cli-1.0.0"},
     {"id":"cursor","role":"development","enabled":false,"adapter":null},
     {"id":"devin","role":"development","enabled":false,"adapter":null},
     {"id":"grok","role":"review","enabled":false,"adapter":null},

@@ -1,0 +1,135 @@
+---
+- name: Installer le worker Codex V2 désactivé
+  hosts: localhost
+  become: true
+  gather_facts: false
+  vars:
+    repo_root: "{{ playbook_dir }}/../../.."
+    codex_source_binary: /home/agentimpact-runner/.local/bin/codex
+  tasks:
+    - name: Créer le groupe worker sans privilège
+      ansible.builtin.group:
+        name: agentimpact-codex-worker
+        system: true
+
+    - name: Créer le compte worker sans login
+      ansible.builtin.user:
+        name: agentimpact-codex-worker
+        group: agentimpact-codex-worker
+        home: /var/lib/agentimpact-codex-worker/home
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+        groups: ""
+
+    - name: Autoriser le control-plane à déposer les contrats IPC
+      ansible.builtin.user:
+        name: agentimpact-ctl
+        groups: agentimpact-codex-worker
+        append: true
+
+    - name: Qualifier le binaire Codex source sans l'exécuter
+      ansible.builtin.stat:
+        path: "{{ codex_source_binary }}"
+        follow: true
+      register: codex_binary
+
+    - name: Résoudre le lien du binaire Codex sans shell
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/readlink
+          - -f
+          - "{{ codex_source_binary }}"
+      register: codex_binary_realpath
+      changed_when: false
+
+    - name: Refuser une source Codex absente ou non exécutable
+      ansible.builtin.assert:
+        that:
+          - codex_binary.stat.exists
+          - codex_binary.stat.isreg
+          - codex_binary.stat.executable
+          - codex_binary_realpath.stdout is match('^/home/agentimpact-runner/[.]codex/packages/standalone/releases/[A-Za-z0-9._/-]+/codex$')
+        fail_msg: codex_binary_not_qualified
+
+    - name: Créer le répertoire binaire Codex immuable par le worker
+      ansible.builtin.file:
+        path: /opt/agentimpact/codex/bin
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Installer une copie root du binaire Codex qualifié
+      ansible.builtin.copy:
+        src: "{{ codex_binary_realpath.stdout }}"
+        dest: /opt/agentimpact/codex/bin/codex
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Installer les règles tmpfiles
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/systemd/agentimpact-codex-worker.tmpfiles.conf"
+        dest: /etc/tmpfiles.d/agentimpact-codex-worker.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Créer les répertoires worker privés
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/agentimpact-codex-worker.conf
+      changed_when: false
+
+    - name: Installer le profil Codex worker contrôlé
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/templates/codex-worker-config.toml.example"
+        dest: /var/lib/agentimpact-codex-worker/codex-home/agentimpact-worker.config.toml
+        owner: root
+        group: agentimpact-codex-worker
+        mode: "0440"
+
+    - name: Installer le schéma de sortie borné
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/src/codex-worker-output.schema.json"
+        dest: /opt/agentimpact/app/codex-worker-output.schema.json
+        owner: root
+        group: agentimpact-codex-worker
+        mode: "0440"
+
+    - name: Installer le template systemd désactivé
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/systemd/agentimpact-codex-worker@.service"
+        dest: /etc/systemd/system/agentimpact-codex-worker@.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Installer les flags worker OFF par défaut
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/templates/codex-worker.env.example"
+        dest: /etc/agentimpact/codex-worker.env
+        owner: root
+        group: agentimpact-codex-worker
+        mode: "0640"
+        force: false
+
+    - name: Vérifier la présence du credential de transport sans le lire
+      ansible.builtin.stat:
+        path: /etc/agentimpact/credentials/codex-worker-control-hmac
+        get_checksum: false
+        get_mime: false
+      register: codex_transport_credential
+      no_log: true
+
+    - name: Confirmer que le worker reste inactif après installation
+      ansible.builtin.command:
+        cmd: systemctl is-active agentimpact-codex-worker@canary.service
+      register: codex_worker_active
+      changed_when: false
+      failed_when: codex_worker_active.rc == 0
+
+    - name: Recharger systemd sans activer de worker
+      ansible.builtin.systemd_service:
+        daemon_reload: true

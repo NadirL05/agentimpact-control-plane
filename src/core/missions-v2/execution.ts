@@ -6,15 +6,16 @@ import { assertV2, digest, MissionError, type State } from './model.js';
 import type { Mission, Mutation } from './store.js';
 
 export type ExecutionConfig = { enabled: boolean; projects: ReadonlySet<string>; workerIds: ReadonlySet<string>;
-  leaseSeconds?: number; deadlineSeconds?: number; quotaAmount?: number | null };
+  leaseSeconds?: number; deadlineSeconds?: number; quotaAmount?: number | null; workerTypes?: ReadonlySet<'fake'|'codex'>;
+  workspaceRoots?: Partial<Record<'fake'|'codex',string>>; repoIds?: ReadonlySet<string> };
 export type WorkerProof = { attempt_id: string; worker_instance_id: string; fencing_token: string };
 export type Attempt = {
-  id: string; attempt_id: string; mission_id: string; attempt_number: number; plan_version: number; worker_type: 'fake'; worker_instance_id: string;
+  id: string; attempt_id: string; mission_id: string; attempt_number: number; plan_version: number; worker_type: 'fake'|'codex'; worker_instance_id: string;
   status: 'queued'|'claimed'|'running'|'completing'|'completed'|'stale'|'cancelled'|'failed';
   fencing_token: string; execution_payload_hash: string; head_sha: string|null; base_sha: string|null;
   created_at: Date; started_at: Date|null; updated_at: Date; completed_at: Date|null;
   lease_expires_at: Date|null; heartbeat_at: Date|null; deadline_at: Date;
-  retryable: boolean; error_code: string|null; error_summary: string|null; provider_session_id: null;
+  retryable: boolean; error_code: string|null; error_summary: string|null; provider_session_id: string|null;
   reconciled_at: Date|null; stop_proof_at: Date|null; callback_hash: string|null; approval_required: boolean;
 };
 type ExecutionMission = Mission & { current_attempt_id: string|null; phase: string|null; blocked_reason: string|null;
@@ -26,32 +27,33 @@ const proofSchema = z.object({ attempt_id: z.string().uuid(), worker_instance_id
   fencing_token: z.string().regex(/^[1-9][0-9]{0,18}$/) }).strict();
 const workspaceSchema = z.object({ repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/), base_sha: sha,
   branch: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/),
-  workspace_root: z.literal('/fake').optional(),
-  worktree_path: z.string().min(1).max(300),
+  workspace_root: z.string().startsWith('/').max(200).optional(),
+  worktree_path: z.string().min(1).max(300).optional(),
 }).strict().refine(w => ![w.repo,w.branch].some(v => v.includes('..') || v.includes('//')));
-const optionsSchema = z.object({ worker_instance_id: identity.optional(), workspace: workspaceSchema.optional(),
+const optionsSchema = z.object({ worker_instance_id: identity.optional(), worker_type:z.enum(['fake','codex']).optional(), workspace: workspaceSchema.optional(),
   budget: z.object({ max_amount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     reserved_amount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), currency: z.literal('FAKE').optional(),
   }).strict().refine(b => b.reserved_amount <= b.max_amount).optional(),
   payload_hash: hash.optional(), head_sha: sha.optional(), approval_required: z.boolean().optional(),
 }).strict();
 export type QueueOptions = z.infer<typeof optionsSchema>;
-export type CanonicalWorkspacePath = {workspace_root:'/fake';candidate_path:string;canonical_path:string};
+export type CanonicalWorkspacePath = {workspace_root:string;candidate_path:string;canonical_path:string};
 export type ProviderQuotaStatus = {quota_source:'none';quota_state:'UNKNOWN';quota_checked_at:null};
 const unknownProviderQuota: ProviderQuotaStatus = {quota_source:'none',quota_state:'UNKNOWN',quota_checked_at:null};
 
 /** Lexical normalization only. A real worker must additionally resolve symlinks
  * inside its sandbox before touching the filesystem. */
 export function canonicalWorkspacePath(candidatePath: string,workspaceRoot = '/fake'): CanonicalWorkspacePath {
-  if (workspaceRoot !== '/fake' || !path.isAbsolute(candidatePath) || candidatePath.includes('\0'))
+  if (!path.isAbsolute(workspaceRoot) || path.normalize(workspaceRoot)!==workspaceRoot || workspaceRoot==='/' ||
+    !path.isAbsolute(candidatePath) || candidatePath.includes('\0'))
     throw new MissionError('invalid_workspace_path',400);
   const canonicalPath = path.normalize(candidatePath);
   if (canonicalPath === workspaceRoot || !canonicalPath.startsWith(`${workspaceRoot}/`))
     throw new MissionError('workspace_path_escape',400);
-  return {workspace_root:'/fake',candidate_path:candidatePath,canonical_path:canonicalPath};
+  return {workspace_root:workspaceRoot,candidate_path:candidatePath,canonical_path:canonicalPath};
 }
 const completionSchema = z.object({ outcome: z.enum(['completed','failed']),retryable: z.boolean().optional(),
-  head_sha: sha.optional(),error_code: z.enum(['fake_failure','deadline_exceeded']).optional(),
+  head_sha: sha.optional(),error_code: z.enum(['fake_failure','worker_failed','validation_failed','deadline_exceeded']).optional(),
 }).strict();
 export type Completion = z.infer<typeof completionSchema>;
 const terminalMissions: State[] = ['completed','failed_permanent','cancelled','rejected'];
@@ -210,13 +212,23 @@ export class ExecutionControl {
     const p = optionsSchema.safeParse(input);
     if (!p.success) throw new MissionError('invalid_execution_options',400);
     if (!p.data.workspace) return p.data;
-    const normalized = canonicalWorkspacePath(p.data.workspace.worktree_path,p.data.workspace.workspace_root);
+    const workerType=p.data.worker_type??'fake';
+    const configuredRoot=this.config.workspaceRoots?.[workerType]??(workerType==='fake'?'/fake':undefined);
+    if(!configuredRoot||p.data.workspace.workspace_root && p.data.workspace.workspace_root!==configuredRoot)throw new MissionError('invalid_workspace_path',400);
+    if(workerType==='codex'&&this.config.repoIds&&!this.config.repoIds.has(p.data.workspace.repo))throw new MissionError('repo_not_allowed',403);
+    if(workerType==='codex'){if(p.data.workspace.worktree_path)throw new MissionError('codex_workspace_path_is_server_derived',400);
+      return {...p.data,workspace:{...p.data.workspace,workspace_root:configuredRoot}};}
+    if(!p.data.workspace.worktree_path)throw new MissionError('invalid_workspace_path',400);
+    const normalized = canonicalWorkspacePath(p.data.workspace.worktree_path,configuredRoot);
     return {...p.data,workspace:{...p.data.workspace,workspace_root:normalized.workspace_root,
       worktree_path:normalized.canonical_path}};
   }
   private workerId(options: QueueOptions): string {
     const worker = options.worker_instance_id ?? [...this.config.workerIds].sort()[0];
-    if (!worker || !worker.startsWith('fake-') || !this.config.workerIds.has(worker)) throw new MissionError('worker_not_allowed',403);
+    const workerType = options.worker_type ?? 'fake';
+    const types = this.config.workerTypes ?? new Set<'fake'|'codex'>(['fake']);
+    if (!worker || !worker.startsWith(`${workerType}-`) || !types.has(workerType) || !this.config.workerIds.has(worker))
+      throw new MissionError('worker_not_allowed',403);
     return worker;
   }
   private async create(c: PoolClient,m: ExecutionMission,options: QueueOptions,retry: boolean): Promise<Attempt> {
@@ -230,16 +242,21 @@ export class ExecutionControl {
     }
     const id = randomUUID();
     const worker = this.workerId(options);
+    const workerType=options.worker_type??'fake';
     const payloadHash = options.payload_hash ?? digest({mission_id:m.id,plan_version:m.plan_version,base_sha:options.workspace?.base_sha ?? null});
     const r = await c.query(`INSERT INTO mission_attempts(id,mission_id,project,attempt_number,worker_type,worker_instance_id,status,
       deadline_at,execution_payload_hash,head_sha,base_sha,plan_version,approval_required)
-      SELECT $1,$2,$3,COALESCE(max(attempt_number),0)+1,'fake',$4,'queued',
+      SELECT $1,$2,$3,COALESCE(max(attempt_number),0)+1,$11,$4,'queued',
       clock_timestamp()+make_interval(secs=>$5),$6,$7,$8,$9,$10 FROM mission_attempts WHERE mission_id=$2 RETURNING *`,
-    [id,m.id,m.project,worker,this.deadlineSeconds,payloadHash,options.head_sha ?? null,options.workspace?.base_sha ?? null,m.plan_version,options.approval_required ?? false]);
+    [id,m.id,m.project,worker,this.deadlineSeconds,payloadHash,options.head_sha ?? null,options.workspace?.base_sha ?? null,m.plan_version,
+      workerType==='codex'||(options.approval_required??false),workerType]);
     const a = attemptRow(r.rows[0]);
-    if (options.workspace) await c.query(`INSERT INTO worktree_leases(id,mission_id,attempt_id,repo,base_sha,branch,worktree_path,status,owner_worker,fencing_token)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'reserved',$8,$9)`,[randomUUID(),m.id,id,options.workspace.repo,options.workspace.base_sha,
-      options.workspace.branch,options.workspace.worktree_path,worker,a.fencing_token]);
+    if (options.workspace) {const worktreePath=workerType==='codex'?`${this.config.workspaceRoots!.codex}/attempts/${id}/workspace`:options.workspace.worktree_path!;
+      const values=[randomUUID(),m.id,id,options.workspace.repo,options.workspace.base_sha,options.workspace.branch,worktreePath,worker,a.fencing_token];
+      if(workerType==='codex')await c.query(`INSERT INTO worktree_leases(id,mission_id,attempt_id,repo,base_sha,branch,worktree_path,status,owner_worker,fencing_token,worker_type)
+        VALUES($1,$2,$3,$4,$5,$6,$7,'reserved',$8,$9,'codex')`,values);
+      else await c.query(`INSERT INTO worktree_leases(id,mission_id,attempt_id,repo,base_sha,branch,worktree_path,status,owner_worker,fencing_token)
+        VALUES($1,$2,$3,$4,$5,$6,$7,'reserved',$8,$9)`,values);}
     if (options.budget) await c.query(`INSERT INTO budget_reservations(id,mission_id,attempt_id,provider,cost_class,currency,max_amount,reserved_amount,consumed_amount,status)
       VALUES($1,$2,$3,'fake','test','FAKE',$4,$5,0,'reserved')`,[randomUUID(),m.id,id,options.budget.max_amount,options.budget.reserved_amount]);
     await c.query(`UPDATE agent_missions SET current_attempt_id=$2,execution_payload_hash=$3,head_sha=$4,base_sha=$5 WHERE id=$1`,
@@ -451,11 +468,15 @@ export class ExecutionControl {
       if (!m.current_attempt_id || !['retry_wait','blocked'].includes(m.lifecycle_state)) throw new MissionError('retry_not_permitted');
       const previous = await this.attempt(c,m.current_attempt_id);
       if (!previous.retryable || !['failed','stale'].includes(previous.status) || !previous.stop_proof_at || !previous.reconciled_at) throw new MissionError('retry_requires_stop_proof');
+      if(previous.worker_type==='codex'){
+        const policy=await c.query('SELECT max_attempts FROM codex_attempt_metadata WHERE attempt_id=$1',[previous.id]);
+        if(!policy.rows[0]||previous.attempt_number>=Number(policy.rows[0].max_attempts))throw new MissionError('max_attempts_exhausted');}
       let nextOptions = options;
+      if (!nextOptions && previous.worker_type === 'codex') throw new MissionError('codex_retry_requires_new_workspace');
       if (!nextOptions) {
         const w = (await c.query('SELECT * FROM worktree_leases WHERE attempt_id=$1',[previous.id])).rows[0];
         const b = (await c.query('SELECT * FROM budget_reservations WHERE attempt_id=$1',[previous.id])).rows[0];
-        nextOptions = this.parseOptions({worker_instance_id:previous.worker_instance_id,payload_hash:previous.execution_payload_hash,
+        nextOptions = this.parseOptions({worker_instance_id:previous.worker_instance_id,worker_type:previous.worker_type,payload_hash:previous.execution_payload_hash,
           head_sha:previous.head_sha ?? undefined,approval_required:previous.approval_required,
           workspace:w ? {repo:w.repo,base_sha:w.base_sha,branch:`${w.branch}/attempt-${previous.attempt_number+1}`,
             worktree_path:`${w.worktree_path}/attempt-${previous.attempt_number+1}`} : undefined,
@@ -536,11 +557,20 @@ export class ExecutionControl {
     const dependencies = (await c.query(`SELECT d.depends_on_id,d.dependency_type,d.reference,d.plan_version,m.lifecycle_state,m.head_sha
       FROM mission_dependencies d JOIN agent_missions m ON m.id=d.depends_on_id WHERE d.mission_id=$1 ORDER BY d.plan_version,d.depends_on_id`,[id])).rows;
     const budget = a ? (await c.query('SELECT provider,currency,max_amount,reserved_amount,consumed_amount,status FROM budget_reservations WHERE attempt_id=$1',[a.id])).rows[0] ?? null : null;
+    const workspace = a ? (await c.query('SELECT repo,base_sha,branch,status FROM worktree_leases WHERE attempt_id=$1',[a.id])).rows[0] ?? null : null;
     const reviewPhase = ['reviewing','awaiting_nadir_approval','completed'].includes(m.lifecycle_state);
     const approval = a ? await this.approvalState(c,m,a,reviewPhase?'review':'execute',reviewPhase?m.head_sha:a.head_sha) : 'not_required';
+    const codexTable = (await c.query("SELECT to_regclass('public.codex_attempt_metadata') AS name")).rows[0]?.name;
+    const codex = a && codexTable ? (await c.query(`SELECT adapter_version,contract_version,max_attempts,auth_mode,billing_mode,quota_source,quota_state,
+      quota_checked_at,workspace_id,canonical_path,validation_state,publisher_state,provider_session_present,result_hash,process_id,cgroup_name
+      FROM codex_attempt_metadata WHERE attempt_id=$1`,[a.id])).rows[0] ?? null : null;
     return {...m,mission_state:m.lifecycle_state,active_attempt:a,attempt_number:a?.attempt_number ?? null,assigned_worker:a?.worker_instance_id ?? null,
       ...timing,dependencies,budget,budget_state:budget?.status ?? 'missing',
-      budget_reservation_state:budget?.status ?? 'missing',...unknownProviderQuota,
+      budget_reservation_state:budget?.status ?? 'missing',...(codex?{quota_source:codex.quota_source,quota_state:codex.quota_state,quota_checked_at:codex.quota_checked_at}:unknownProviderQuota),
+      agent:a?.worker_type ?? null,adapter_version:codex?.adapter_version ?? null,auth_mode:codex?.auth_mode ?? null,
+      billing_mode:codex?.billing_mode ?? null,deadline:a?.deadline_at ?? null,workspace_state:workspace?.status ?? 'missing',
+      validation_state:codex?.validation_state ?? null,publisher_state:codex?.publisher_state ?? null,
+      provider_session_present:codex?.provider_session_present ?? false,codex,
       approval_state:approval};
   }
   private async snapshot<T>(run:(c:PoolClient)=>Promise<T>): Promise<T> {
@@ -564,11 +594,16 @@ export class ExecutionControl {
   async metrics(): Promise<Record<string,number>> {
     this.gate();
     const result: Record<string,number> = Object.fromEntries(['attempts_created_total','attempts_running','attempts_stale_total','leases_expired_total',
-      'callbacks_rejected_total','fencing_rejections_total','cancellations_total','retries_total','budget_reservations_active','dependency_blocks_total'].map(k=>[k,0]));
+      'callbacks_rejected_total','fencing_rejections_total','cancellations_total','retries_total','budget_reservations_active','dependency_blocks_total',
+      'codex_attempts_total','codex_attempts_running','codex_attempts_failed_total','codex_timeouts_total','codex_cancellations_total',
+      'codex_output_invalid_total','codex_validation_failures_total','codex_publish_requests_total','codex_publish_failures_total'].map(k=>[k,0]));
     const r = await this.pool.query('SELECT name,value FROM execution_metrics ORDER BY name');
     for (const row of r.rows) if (row.name in result) result[row.name] = Number(row.value);
     result.attempts_running = Number((await this.pool.query(`SELECT count(*) FROM mission_attempts WHERE status IN ('claimed','running','completing')`)).rows[0].count);
     result.budget_reservations_active = Number((await this.pool.query(`SELECT count(*) FROM budget_reservations WHERE status IN ('reserved','consuming','exhausted')`)).rows[0].count);
+    if ((await this.pool.query("SELECT to_regclass('public.codex_attempt_metadata') AS name")).rows[0]?.name) {
+      result.codex_attempts_running = Number((await this.pool.query(`SELECT count(*) FROM mission_attempts WHERE worker_type='codex' AND status IN ('claimed','running','completing')`)).rows[0].count);
+    }
     return result;
   }
 }
