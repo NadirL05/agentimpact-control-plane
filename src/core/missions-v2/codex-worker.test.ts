@@ -44,7 +44,8 @@ describe('V2-B Codex worker boundary',()=>{
   it('runs a deterministic fake Codex binary without a shell or provider call',async()=>{
     const fake=join(temp,'fake-codex');const runtimeRoot=join(temp,'runtime'),work=contract({workspace_path:temp});
     await mkdir(join(runtimeRoot,work.attempt_id),{recursive:true});
-    await writeFile(fake,`#!/usr/bin/node\nconst fs=require('fs');let s='';process.stdin.on('data',b=>s+=b);process.stdin.on('end',()=>{JSON.parse(s);const a=process.argv;const p=a[a.indexOf('--output-last-message')+1];fs.writeFileSync(p,JSON.stringify(${JSON.stringify(output())}));});\n`);
+    const fixtureOutput=JSON.stringify(JSON.stringify(output()));
+    await writeFile(fake,`#!/usr/bin/python3\nimport json,sys\njson.load(sys.stdin)\np=sys.argv[sys.argv.index('--output-last-message')+1]\nopen(p,'w',encoding='utf-8').write(${fixtureOutput})\n`);
     await chmod(fake,0o700);const config={...enabledConfig(),binary:fake,runtimeRoot};const runtime=new NodeCodexRuntime();
     const invocation=codexInvocation(work,config),session=await runtime.launch(invocation),result=await runtime.collect(session.id,invocation.resultFile);
     expect(result.exitCode).toBe(0);expect(codexOutputSchema.parse(result.output)).toMatchObject({outcome:'completed'});
