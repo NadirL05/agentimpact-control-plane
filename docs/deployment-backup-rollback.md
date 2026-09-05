@@ -28,6 +28,19 @@ docker compose -f /opt/agentimpact/compose.yml exec -T db \
 
 ## Contenu des bundles rollback (sans secrets)
 
+### wireguard-ssh-runner (`/var/lib/agentimpact/rollback/wireguard-ssh-runner/`)
+
+| Chemin | Contenu |
+| --- | --- |
+| `ufw-status-numbered.pre.txt` | `ufw status numbered` avant normalisation |
+| `ufw-status-verbose.pre.txt` | `ufw status verbose` avant normalisation |
+| `iptables-save.pre.txt` | `iptables-save` avant normalisation |
+| `ufw-status-numbered.post.txt` | `ufw status numbered` après normalisation |
+
+**Exclus** : clés WireGuard, credentials, tokens, clés SSH privées.
+
+Voir [ops/wireguard-ssh-runner.md](ops/wireguard-ssh-runner.md).
+
 ### hermesctl-v1 (`/var/lib/agentimpact/rollback/hermesctl-v1/`)
 
 | Chemin | Contenu |

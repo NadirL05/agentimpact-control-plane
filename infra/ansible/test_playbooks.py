@@ -1252,5 +1252,83 @@ class GatewayInboxConsumerRegressionTest(unittest.TestCase):
         self.assertIn("target_mismatch", self.script)
 
 
+class WireguardSshRunnerPlaybookRegressionTest(unittest.TestCase):
+    """Régressions IaC pour le chemin SSH officiel WireGuard → runner."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.playbook = (PLAYBOOKS / "wireguard-ssh-runner.yml").read_text(encoding="utf-8")
+        cls.role_root = Path(__file__).resolve().parent / "roles" / "wireguard_ssh_runner"
+        cls.defaults = (cls.role_root / "defaults" / "main.yml").read_text(encoding="utf-8")
+        cls.tasks = (cls.role_root / "tasks" / "main.yml").read_text(encoding="utf-8")
+        cls.normalizer = (
+            cls.role_root / "files" / "normalize_ufw_wg_ssh.py"
+        ).read_text(encoding="utf-8")
+        cls.docs = (
+            Path(__file__).resolve().parents[2] / "docs" / "ops" / "wireguard-ssh-runner.md"
+        ).read_text(encoding="utf-8")
+
+    def test_playbook_uses_role_and_localhost(self) -> None:
+        self.assertIn("hosts: localhost", self.playbook)
+        self.assertIn("connection: local", self.playbook)
+        self.assertIn("role: wireguard_ssh_runner", self.playbook)
+        self.assertNotRegex(self.playbook, r"(?m)^\s*-\s*reboot:")
+        self.assertNotIn("ansible.builtin.reboot", self.playbook)
+
+    def test_defaults_encode_official_ssh_path(self) -> None:
+        self.assertIn('agentimpact_runner_ssh_host: "10.66.66.1"', self.defaults)
+        self.assertIn('agentimpact_runner_ssh_user: "agentimpact-runner"', self.defaults)
+        self.assertIn('agentimpact_runner_ssh_interface: "wg0"', self.defaults)
+        self.assertIn('agentimpact_mac_wg_ip: "10.66.66.2"', self.defaults)
+        self.assertIn('agentimpact_runner_ssh_port: "22"', self.defaults)
+        self.assertIn('agentimpact_runner_ssh_proto: "tcp"', self.defaults)
+
+    def test_tasks_require_root_and_preserve_public_limit(self) -> None:
+        self.assertIn('failed_when: wg_ssh_uid.stdout | trim != "0"', self.tasks)
+        self.assertIn("normalize_ufw_wg_ssh.py", self.tasks)
+        self.assertIn("loginctl enable-linger", self.tasks)
+        self.assertIn("/var/lib/systemd/linger/", self.tasks)
+        self.assertIn("ufw status numbered", self.tasks)
+        self.assertIn("iptables-save", self.tasks)
+        self.assertIn("TEMP_RULES_REMOVED=NO", self.tasks)
+        self.assertNotIn("ufw allow 22/tcp", self.tasks)
+        self.assertNotIn("ALLOW Anywhere", self.tasks)
+
+    def test_normalizer_enforces_order_and_forbids_global_allow(self) -> None:
+        self.assertIn("wg_ssh_not_before_limit", self.normalizer)
+        self.assertIn("public_ssh_allow_anywhere_present", self.normalizer)
+        self.assertIn("public_ssh_limit_missing", self.normalizer)
+        self.assertIn("insert", self.normalizer)
+        self.assertIn("10.66.66", self.defaults)
+
+    def test_docs_cover_mac_ssh_config_template_without_private_key(self) -> None:
+        self.assertIn("AGENTIMPACT_RUNNER_SSH_HOST=10.66.66.1", self.docs)
+        self.assertIn("Host agentimpact", self.docs)
+        self.assertIn("HostName 10.66.66.1", self.docs)
+        self.assertIn("User agentimpact-runner", self.docs)
+        self.assertIn("IdentityFile ~/.ssh/agentimpact_runner_ed25519", self.docs)
+        self.assertIn("CURSOR_ROOT_REMOTE_DEBT", self.docs)
+        self.assertIn("CURSOR_PROCESS_ARG_SECRET_EXPOSURE", self.docs)
+        self.assertNotIn("BEGIN OPENSSH PRIVATE KEY", self.docs)
+        self.assertNotIn("BEGIN PRIVATE KEY", self.docs)
+
+    def test_no_private_keys_in_role_tree(self) -> None:
+        for path in self.role_root.rglob("*"):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            self.assertNotIn("BEGIN OPENSSH PRIVATE KEY", text)
+            self.assertNotIn("BEGIN PRIVATE KEY", text)
+            self.assertNotIn("BEGIN RSA PRIVATE KEY", text)
+
+    def test_playbook_does_not_auto_delete_temp_public_ips(self) -> None:
+        self.assertIn("normalize_remove_temp_public_ips: false", self.defaults)
+        self.assertNotIn("45.144.113.141", self.tasks)
+        self.assertNotIn("176.171.153.193", self.tasks)
+        # documentés, pas supprimés automatiquement
+        self.assertIn("45.144.113.141", self.docs)
+        self.assertIn("82.224.78.70", self.docs)
+
+
 if __name__ == "__main__":
     unittest.main()
