@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { approvalPayload, approvalPayloadHash, ExecutionControl } from './execution.js';
+import { approvalPayload, approvalPayloadHash, canonicalWorkspacePath, ExecutionControl } from './execution.js';
 import { FakeSupervisor, FakeWorker } from './supervisor.js';
 import { MissionStore } from './store.js';
 import { digest } from './model.js';
@@ -103,6 +103,23 @@ describe('V2-F isolated PostgreSQL execution control', () => {
     const options = testExecutionOptions();
     await expect(execution.queue(mission.id, testMutation(), {...options, workspace: {...options.workspace, worktree_path: '/opt/production'}})).rejects.toThrow();
     expect((await fixture.db.query('SELECT id FROM mission_attempts WHERE mission_id=$1', [mission.id])).rows).toHaveLength(0);
+  });
+
+  it('canonicalizes fake workspace paths before reservation and rejects lexical escape', async () => {
+    expect(canonicalWorkspacePath('/fake/job/.').canonical_path).toBe('/fake/job');
+    expect(canonicalWorkspacePath('/fake//job').canonical_path).toBe('/fake/job');
+    expect(canonicalWorkspacePath('/fake/a/../job').canonical_path).toBe('/fake/job');
+    expect(() => canonicalWorkspacePath('/fake/job/../../etc')).toThrow();
+    expect(() => canonicalWorkspacePath('fake/job')).toThrow();
+
+    const suffix = randomUUID(), first = await readyMission(fixture.pool), second = await readyMission(fixture.pool);
+    const firstOptions = testExecutionOptions(), secondOptions = testExecutionOptions();
+    firstOptions.workspace.worktree_path = `/fake/${suffix}/.`;
+    secondOptions.workspace.worktree_path = `/fake//${suffix}`;
+    await execution.queue(first.id, testMutation(), firstOptions);
+    await expect(execution.queue(second.id, testMutation(), secondOptions)).rejects.toMatchObject({code: 'execution_ownership_conflict'});
+    expect((await fixture.db.query('SELECT worktree_path FROM worktree_leases WHERE mission_id=$1',[first.id])).rows)
+      .toEqual([{worktree_path:`/fake/${suffix}`}]);
   });
 
   it('refuses to claim without a budget reservation', async () => {
@@ -374,6 +391,41 @@ describe('V2-F isolated PostgreSQL execution control', () => {
     expect((await fixture.db.query('SELECT status FROM mission_attempts WHERE id=$1', [attempt.id])).rows).toEqual([{status: 'queued'}]);
   });
 
+  it('reports approval status from the same current binding and decision invariants as authorization', async () => {
+    async function bound() {
+      const mission = await readyMission(fixture.pool);
+      const attempt = await execution.queue(mission.id,testMutation(),{...testExecutionOptions(),approval_required:true});
+      const payloadHash = approvalPayloadHash(attempt,'execute'),action = await approval('execute',payloadHash);
+      await execution.bindApproval(mission.id,attempt.id,{action_id:action,action_type:'execute',payload_hash:payloadHash},testMutation());
+      return {mission,attempt,action};
+    }
+    const valid = await bound();
+    expect(await execution.status(valid.mission.id)).toMatchObject({approval_state:'valid'});
+
+    const payload = await bound();
+    await fixture.db.query('UPDATE agent_missions SET execution_payload_hash=$2 WHERE id=$1',[payload.mission.id,digest({changed:'payload'})]);
+    expect(await execution.status(payload.mission.id)).toMatchObject({approval_state:'invalid'});
+
+    const head = await bound();
+    await fixture.db.query('UPDATE agent_missions SET head_sha=$2 WHERE id=$1',[head.mission.id,'b'.repeat(40)]);
+    expect(await execution.status(head.mission.id)).toMatchObject({approval_state:'invalid'});
+
+    const changedAttempt = await bound();
+    await execution.claim(changedAttempt.attempt.id,worker,proof(changedAttempt.attempt),testMutation());
+    await execution.start(proof(changedAttempt.attempt),worker,testMutation());
+    await execution.complete(proof(changedAttempt.attempt),worker,{outcome:'failed',retryable:true},testMutation());
+    await execution.retry(changedAttempt.mission.id,testMutation(),{...testExecutionOptions(),approval_required:true});
+    expect(await execution.status(changedAttempt.mission.id)).toMatchObject({approval_state:'invalid'});
+
+    const expired = await bound();
+    await fixture.db.query("UPDATE agent_approvals SET expires_at=clock_timestamp()-interval '1 second' WHERE action_id=$1",[expired.action]);
+    expect(await execution.status(expired.mission.id)).toMatchObject({approval_state:'invalid'});
+
+    const rejected = await bound();
+    await fixture.db.query("UPDATE agent_actions SET status='rejected' WHERE id=$1",[rejected.action]);
+    expect(await execution.status(rejected.mission.id)).toMatchObject({approval_state:'invalid'});
+  });
+
   it('exports an approval payload compatible with the existing actions JSON hashing contract', async () => {
     const item = await queued();
     for (const actionType of ['execute', 'review'] as const) {
@@ -429,6 +481,7 @@ describe('V2-F isolated PostgreSQL execution control', () => {
   it('returns database-backed mission/project status and rejects unknown or V1 missions', async () => {
     const item = await running();
     const status = await execution.status(item.mission.id);
+    expect(status).toMatchObject({budget_reservation_state:'consuming',quota_source:'none',quota_state:'UNKNOWN',quota_checked_at:null});
     expect(JSON.stringify(status)).toContain(item.mission.id);
     expect(JSON.stringify(status)).toContain(item.attempt.id);
     expect(JSON.stringify(status)).toContain(worker);
@@ -474,6 +527,19 @@ describe('V2-F isolated PostgreSQL execution control', () => {
     expect(complete.attempts_running).toBe(before.attempts_running);
     expect(complete.budget_reservations_active).toBe(before.budget_reservations_active);
   });
+});
+
+it('treats migration 005 as one-shot and rolls back a detected re-run', async () => {
+  const isolated = await executionDatabase();
+  try {
+    const migration = await readFile(new URL('../../migrations/005_v2_execution_control.sql',import.meta.url),'utf8');
+    await expect(isolated.db.exec(migration)).rejects.toMatchObject({code:'42701'});
+    await isolated.db.exec('ROLLBACK');
+    expect((await isolated.db.query("SELECT to_regclass('public.mission_attempts') AS name")).rows)
+      .toEqual([{name:'mission_attempts'}]);
+    expect((await isolated.db.query('SELECT count(*)::int AS count FROM execution_metrics')).rows)
+      .toEqual([{count:10}]);
+  } finally { await isolated.db.close(); }
 });
 
 it('recovers an active execution and stale scanner after closing and reopening PostgreSQL storage', async () => {

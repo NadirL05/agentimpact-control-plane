@@ -73,6 +73,7 @@ export function formatExecutionStatus(status: Awaited<ReturnType<ExecutionContro
     `Tentative : ${attempt ? `${attempt.attempt_number} (${attempt.id}, ${attempt.status})` : 'aucune'} ; worker : ${status.assigned_worker ?? 'aucun'}`,
     `Lease : ${status.lease_status} ; heartbeat : ${heartbeatAge}`,
     `Dépendances : ${dependencyStates}`,
-    `Budget : ${status.budget_state} ; approval : ${status.approval_state}`,
+    `Budget de test : ${status.budget_reservation_state} ; quota fournisseur : ${status.quota_state}`,
+    `Source quota : ${status.quota_source} ; vérifié à : ${status.quota_checked_at ?? 'jamais'} ; approval : ${status.approval_state}`,
   ].join('\n');
 }

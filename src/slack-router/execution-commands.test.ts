@@ -35,9 +35,11 @@ describe('Slack execution commands',()=>{
   it('STATUS exposes bounded requested execution fields from the DB snapshot',async()=>{
     const status={id,project:'IMANE',mission_state:'running',phase:'executing',blocked_reason:null,
       active_attempt:{id:'attempt',attempt_number:1,status:'running'},assigned_worker:'fake-supervisor',
-      lease_status:'valid',heartbeat_age:4.5,dependencies:[],budget_state:'consuming',approval_state:'valid'};
+      lease_status:'valid',heartbeat_age:4.5,dependencies:[],budget_state:'consuming',budget_reservation_state:'consuming',
+      quota_source:'none',quota_state:'UNKNOWN',quota_checked_at:null,approval_state:'valid'};
     const execution={status:async()=>status} as unknown as ExecutionControl;
     const text=await handleV2Command({...base,text:`STATUS ${id}`},store,'U_NADIR',()=>{},execution);
-    for(const part of ['running','executing','fake-supervisor','Lease : valid','heartbeat : 4 s','Dépendances : aucune','Budget : consuming','approval : valid']) expect(text).toContain(part);
+    for(const part of ['running','executing','fake-supervisor','Lease : valid','heartbeat : 4 s','Dépendances : aucune',
+      'Budget de test : consuming','quota fournisseur : UNKNOWN','Source quota : none','vérifié à : jamais','approval : valid']) expect(text).toContain(part);
   });
 });

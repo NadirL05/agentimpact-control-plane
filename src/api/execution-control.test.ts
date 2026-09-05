@@ -15,7 +15,10 @@ function setup(scope: AuthScope='hermes', enabled=true) {
   const calls={cancel:vi.fn(async()=>({id,lifecycle_state:'cancel_requested'})),
     retry:vi.fn(async()=>({id:attemptId,attempt_number:2})),review:vi.fn(async()=>({id,lifecycle_state:'completed'})),
     bindApproval:vi.fn(async()=>({id})),metrics:vi.fn(async()=>({attempts_running:0})),
-    status:vi.fn(async()=>({id,phase:'executing'})),statusProject:vi.fn(async()=>[{id,phase:'executing'}])};
+    status:vi.fn(async()=>({id,phase:'executing',budget_reservation_state:'consuming',quota_source:'none',
+      quota_state:'UNKNOWN',quota_checked_at:null})),
+    statusProject:vi.fn(async()=>[{id,phase:'executing',budget_reservation_state:'consuming',quota_source:'none',
+      quota_state:'UNKNOWN',quota_checked_at:null}])};
   const app=new Hono<AppEnv>();
   app.use('*',async(c,next)=>{c.set('authScope',scope);await next();});
   app.route('/api/v2',createMissionsV2Api({} as MissionStore,enabled ? calls as unknown as ExecutionControl : undefined));
@@ -55,8 +58,14 @@ describe('execution operator boundary',()=>{
   });
   it('returns deterministic extended status and unlabeled metrics',async()=>{
     const {app,calls}=setup();
-    expect((await app.request(`/api/v2/missions/${id}`)).status).toBe(200);
-    expect((await app.request('/api/v2/status?project=IMANE')).status).toBe(200);
+    const mission=await app.request(`/api/v2/missions/${id}`);
+    expect(mission.status).toBe(200);
+    const missionBody=await mission.json() as {item:Record<string,unknown>};
+    expect(missionBody.item).toMatchObject({budget_reservation_state:'consuming',quota_source:'none',quota_state:'UNKNOWN',quota_checked_at:null});
+    const project=await app.request('/api/v2/status?project=IMANE');
+    expect(project.status).toBe(200);
+    const projectBody=await project.json() as {items:Array<Record<string,unknown>>};
+    expect(projectBody.items[0]).toMatchObject({budget_reservation_state:'consuming',quota_state:'UNKNOWN'});
     expect((await (await app.request('/api/v2/metrics')).json())).toEqual({attempts_running:0});
     expect(calls.status).toHaveBeenCalledWith(id);
   });
