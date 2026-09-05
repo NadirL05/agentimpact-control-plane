@@ -25,13 +25,16 @@ export class CodexStateStore implements CodexStateRecorder {
     WHERE attempt_id=$1`,[attemptId,pid]);}
   async persistAcceptedCompletion(c:Pick<PoolClient,'query'>,attemptId:string,output:CodexOutput,resultHash:string,
     artifacts:CodexOutput['artifacts'],validationState:'passed'|'failed'|'quarantined'){
+    const uniqueArtifacts=new Map<string,CodexOutput['artifacts'][number]>();
+    for(const item of artifacts){const key=`${item.kind}\0${item.relative_path}\0${item.sha256}`,existing=uniqueArtifacts.get(key);
+      if(existing&&existing.size_bytes!==item.size_bytes)throw new MissionError('codex_artifact_conflict',409);
+      uniqueArtifacts.set(key,item);}
     const metadata=await c.query(`UPDATE codex_attempt_metadata SET provider_session_present=$2,result_hash=$3,
       validation_state=$4,updated_at=clock_timestamp() WHERE attempt_id=$1 AND result_hash IS NULL RETURNING attempt_id`,
     [attemptId,output.provider_session_id!==null,resultHash,validationState]);
     if(!metadata.rowCount)throw new MissionError('codex_result_already_persisted',409);
     const sessionReference=output.provider_session_id===null?null:`sha256:${digest(output.provider_session_id)}`;
     if(sessionReference!==null)await c.query('UPDATE mission_attempts SET provider_session_id=$2,updated_at=clock_timestamp() WHERE id=$1',[attemptId,sessionReference]);
-    const uniqueArtifacts=new Map(artifacts.map(item=>[`${item.kind}\0${item.relative_path}\0${item.sha256}`,item]));
     for(const item of uniqueArtifacts.values())await c.query(`INSERT INTO codex_artifacts(attempt_id,kind,relative_path,sha256,size_bytes)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(attempt_id,kind,relative_path,sha256) DO NOTHING`,
     [attemptId,item.kind,item.relative_path,item.sha256,item.size_bytes]);

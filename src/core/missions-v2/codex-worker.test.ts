@@ -140,6 +140,8 @@ describe('V2-B Codex worker boundary',()=>{
     await state.persistAcceptedCompletion({query} as unknown as Pick<PoolClient,'query'>,randomUUID(),workerOutput,digest(workerOutput),
       [artifact,artifact],'passed');
     expect(query.mock.calls.filter(([sql])=>String(sql).includes('INSERT INTO codex_artifacts'))).toHaveLength(1);
+    await expect(state.persistAcceptedCompletion({query} as unknown as Pick<PoolClient,'query'>,randomUUID(),workerOutput,digest(workerOutput),
+      [artifact,{...artifact,size_bytes:13}],'passed')).rejects.toMatchObject({code:'codex_artifact_conflict'});
   });
 
   it('uses a trusted repository registry and rejects branch, SHA and attempt tricks before git',async()=>{
