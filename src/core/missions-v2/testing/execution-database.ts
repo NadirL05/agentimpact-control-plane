@@ -34,6 +34,15 @@ export async function executionDatabase(path?: string) {
   return fixture;
 }
 
+export async function codexDatabase(path?: string) {
+  const fixture=await executionDatabase(path);
+  const exists=await fixture.db.query("SELECT to_regclass('public.codex_attempt_metadata') AS name");
+  if (!(exists.rows[0] as {name:string|null}).name) {
+    await fixture.db.exec(await readFile(new URL('../../../migrations/006_v2_codex_worker.sql',import.meta.url),'utf8'));
+  }
+  return fixture;
+}
+
 export async function readyMission(pool: Pool, dependencies: Plan['dependencies'] = []) {
   const store = new MissionStore(pool, executionTestConfig);
   let mission = await store.admit({

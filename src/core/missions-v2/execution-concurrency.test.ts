@@ -28,7 +28,7 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     try { await bootstrap.query(`CREATE SCHEMA ${schema}`); } finally { await bootstrap.end(); }
     pool = new Pool({...connection, max: 8, options: `-c search_path=${schema}`});
     await pool.query(await readFile(new URL('./testing/schema.sql', import.meta.url), 'utf8'));
-    for (const migration of ['001_cursor_proposals.sql', '002_slack_router.sql', '003_async_long_running_missions.sql', '004_v2_mission_foundation.sql', '005_v2_execution_control.sql']) {
+    for (const migration of ['001_cursor_proposals.sql', '002_slack_router.sql', '003_async_long_running_missions.sql', '004_v2_mission_foundation.sql', '005_v2_execution_control.sql', '006_v2_codex_worker.sql']) {
       await pool.query(await readFile(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'));
     }
     execution = new ExecutionControl(pool, executionTestConfig);
@@ -90,6 +90,18 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     expect((await pool.query('SELECT worktree_path FROM worktree_leases WHERE mission_id=ANY($1::uuid[])',[[first.id,second.id]])).rows)
       .toEqual([{worktree_path:`/fake/${suffix}`}]);
+  });
+
+  it('allows one Codex writer for a registered path under the dedicated root',async()=>{
+    const codex=new ExecutionControl(pool,{...executionTestConfig,workerIds:new Set(['codex-one']),workerTypes:new Set(['codex']),
+      workspaceRoots:{codex:'/var/lib/agentimpact-codex-worker/workspaces'},repoIds:new Set(['control-plane'])});
+    const first=await readyMission(pool),second=await readyMission(pool),suffix=randomUUID();
+    const options={worker_type:'codex' as const,worker_instance_id:'codex-one',workspace:{repo:'control-plane',base_sha:'a'.repeat(40),
+      branch:`codex/${suffix}`,workspace_root:'/var/lib/agentimpact-codex-worker/workspaces'},
+      budget:{max_amount:10,reserved_amount:10,currency:'FAKE' as const}};
+    const results=await Promise.allSettled([codex.queue(first.id,testMutation(),options),codex.queue(second.id,testMutation(),{...options,workspace:{...options.workspace,branch:`codex/${randomUUID()}`}})]);
+    expect(results.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    expect(results.filter(result=>result.status==='rejected')).toHaveLength(1);
   });
 
   it('checks dependencies after waiting for a concurrent failed prerequisite transaction', async () => {

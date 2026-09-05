@@ -67,6 +67,8 @@ export function formatExecutionStatus(status: Awaited<ReturnType<ExecutionContro
     ? status.dependencies.map((d: {depends_on_id:string;lifecycle_state:string}) => `${d.depends_on_id}:${d.lifecycle_state}`).join(', ')
     : 'aucune';
   const heartbeatAge = status.heartbeat_age == null ? 'inconnu' : `${Math.max(0,Math.floor(status.heartbeat_age))} s`;
+  const codex = status.agent==='codex' ? `Agent : codex ; adapter : ${status.adapter_version} ; auth : ${status.auth_mode} ; facturation : ${status.billing_mode}\n`+
+    `Workspace : ${status.workspace_state} ; validation : ${status.validation_state} ; publisher : ${status.publisher_state} ; session fournisseur : ${status.provider_session_present?'présente':'absente'}` : null;
   return [
     `${status.id} — ${status.project} : ${status.mission_state}`,
     `Phase : ${status.phase ?? 'aucune'} ; blocage : ${status.blocked_reason ?? 'aucun'}`,
@@ -75,5 +77,6 @@ export function formatExecutionStatus(status: Awaited<ReturnType<ExecutionContro
     `Dépendances : ${dependencyStates}`,
     `Budget de test : ${status.budget_reservation_state} ; quota fournisseur : ${status.quota_state}`,
     `Source quota : ${status.quota_source} ; vérifié à : ${status.quota_checked_at ?? 'jamais'} ; approval : ${status.approval_state}`,
-  ].join('\n');
+    codex,
+  ].filter(Boolean).join('\n');
 }
