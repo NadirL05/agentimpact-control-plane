@@ -64,7 +64,7 @@ async function insertOrGetInbox(
 
   const existing = await pool.query<InboxRow>(
     `SELECT id, status, delivery_mode, mission_title, response_text, run_id, error_code
-     FROM slack_gateway_inbox WHERE event_id = $1`,
+     FROM slack_gateway_inbox i WHERE event_id = $1 AND coalesce(to_jsonb(i)->>'orchestration_version','1')='1'`,
     [ctx.eventId],
   );
   return existing.rows[0] ?? null;
@@ -137,7 +137,7 @@ export function createGatewayInboxRelay(
             error_code: string | null;
           }>(
             `SELECT status, response_text, run_id, error_code
-             FROM slack_gateway_inbox WHERE id = $1`,
+             FROM slack_gateway_inbox i WHERE id = $1 AND coalesce(to_jsonb(i)->>'orchestration_version','1')='1'`,
             [row.id],
           );
           const item = polled.rows[0];

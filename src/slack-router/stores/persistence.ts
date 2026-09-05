@@ -4,6 +4,7 @@ import type { SlackMessageEvent, SlackRouteTarget } from '../../core/slack-route
 export type PersistencePrepareResult =
   | { status: 'deduplicated' }
   | { status: 'unowned_thread' }
+  | { status: 'v2_thread' }
   | { status: 'storage_error' }
   | { status: 'ready'; owner: SlackRouteTarget; thread_key: string };
 

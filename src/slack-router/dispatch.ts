@@ -71,6 +71,7 @@ export async function dispatchSlackMessage(
   if (prep.status === 'storage_error') {
     return { action: 'reject', reason: 'storage_unavailable', thread_key: tKey };
   }
+  if (prep.status === 'v2_thread') return {action:'ignore',reason:'v2_thread_requires_explicit_command'};
   if (prep.status === 'unowned_thread') {
     return { action: 'ignore', reason: 'thread_unowned' };
   }

@@ -80,6 +80,7 @@ describe('normalizeSocketModeSlackEvent (socket-mode 2.0.7)', () => {
         type: 'events_api',
         payload,
       }),
+      expect.any(Function),
     );
   });
 });
@@ -150,5 +151,26 @@ describe('createSocketModeRunner reconnect', () => {
     );
 
     vi.useRealTimers();
+  });
+});
+
+describe('durable acceptance', () => {
+  const envelope = {envelope_id:'durable',type:'events_api',payload:{team_id:'T1',event_id:'E1',
+    event:{type:'message',channel:'C1',user:'U1',text:'hello',ts:'1.0'}}};
+  it('does not ACK while admission is pending, and ACKs once after commit',async()=>{
+    const transport=mockTransport();const ack=vi.fn();let accepted!:()=>void;
+    let finish!:()=>void;
+    createSocketModeRunner(transport,{onEnvelope:async(_e,callback)=>{
+      accepted=callback!;await new Promise<void>(resolve=>{finish=resolve;});
+    }},ack);
+    transport.handlers!.onMessage(envelope);
+    expect(ack).not.toHaveBeenCalled();accepted();expect(ack).toHaveBeenCalledOnce();
+    finish();await Promise.resolve();await Promise.resolve();expect(ack).toHaveBeenCalledOnce();
+  });
+  it('does not ACK a failed admission or expose its error details',async()=>{
+    const transport=mockTransport(),ack=vi.fn(),fatal=vi.fn();
+    createSocketModeRunner(transport,{onEnvelope:async()=>{throw new Error('PRIVATE_INPUT_SENTINEL');},onFatalError:fatal},ack);
+    transport.handlers!.onMessage(envelope);await Promise.resolve();await Promise.resolve();
+    expect(ack).not.toHaveBeenCalled();expect(fatal).toHaveBeenCalledWith(new Error('envelope_processing_failed'));
   });
 });

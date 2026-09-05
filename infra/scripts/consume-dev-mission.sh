@@ -17,7 +17,7 @@ mission="$(
 
 MISSION_ID="$(printf '%s' "$mission" | python3 -c "
 import sys, json
-items = json.load(sys.stdin).get('items', [])
+items = [m for m in json.load(sys.stdin).get('items', []) if m.get('orchestration_version', 1) == 1]
 print(items[0]['id'] if items else '')
 ")"
 

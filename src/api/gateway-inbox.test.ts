@@ -55,7 +55,7 @@ describe('gateway-inbox claim isolation', () => {
     });
     expect(res.status).toBe(200);
     expect(mockQuery).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE target = $1'),
+      expect.stringContaining('AND target = $1'),
       ['hermes'],
     );
   });
@@ -72,7 +72,7 @@ describe('gateway-inbox claim isolation', () => {
       body: JSON.stringify({ target: 'ana' }),
     });
     expect(res.status).toBe(204);
-    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('WHERE target = $1'), ['ana']);
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('AND target = $1'), ['ana']);
   });
 
   it('rejette target inconnu (grok)', async () => {

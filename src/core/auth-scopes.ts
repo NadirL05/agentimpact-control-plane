@@ -24,6 +24,10 @@ const BRIDGE_RULES: RouteRule[] = [
 
 const HERMES_RULES: RouteRule[] = [
   ...BRIDGE_RULES,
+  { method: 'GET', pattern: /^\/api\/v2\/status$/ },
+  { method: 'GET', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}(\/(plan|events))?$/i },
+  { method: 'POST', pattern: /^\/api\/v2\/missions$/ },
+  { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(plan|state)$/i },
   { method: 'GET', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/api\/actions$/ },

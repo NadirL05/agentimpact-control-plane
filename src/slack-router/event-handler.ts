@@ -1,3 +1,7 @@
+import type { MissionStore } from '../core/missions-v2/store.js';
+import { handleV2Command } from './missions-v2.js';
+import { isHumanSlackMessage } from '../core/slack-router/event-filter.js';
+import { messageMentionsNativeAgent } from '../core/slack-router/native-agent-mentions.js';
 import { createMemoryRateLimitStore } from '../core/slack-router/rate-limit.js';
 import type { SlackRouterEnvConfig } from './config.js';
 import { dispatchSlackMessage, type DispatchStores } from './dispatch.js';
@@ -20,6 +24,7 @@ export type SlackPoster = {
 
 export type EventHandlerDeps = {
   config: SlackRouterEnvConfig;
+  missionsV2?: MissionStore;
   poster: SlackPoster;
   metrics: RouterMetrics;
   logLine: (line: string) => void;
@@ -80,6 +85,7 @@ export async function handleSlackEnvelope(
   envelope: SlackSocketEnvelope,
   stores: DispatchStores,
   deps: EventHandlerDeps,
+  accepted: () => void = () => undefined,
 ): Promise<void> {
   const started = Date.now();
   deps.metrics.events_received += 1;
@@ -87,6 +93,18 @@ export async function handleSlackEnvelope(
 
   const message = parseMessageEvent(envelope);
   if (!message) return;
+  if (!deps.missionsV2 && isHumanSlackMessage(message) && /^MISSION V2(?:\s|$)/.test((message.text ?? '').trim())) {
+    await deps.poster.postThreadReply(message.channel,threadReplyTs(message),'V2 désactivée.');
+    return;
+  }
+  if (deps.missionsV2 && isHumanSlackMessage(message) &&
+      !messageMentionsNativeAgent(message.text ?? '', deps.config.nativeAgentUserIds)) {
+    const response = await handleV2Command(message,deps.missionsV2,deps.config.nadirUserId,accepted);
+    if (response !== null) {
+      await deps.poster.postThreadReply(message.channel,threadReplyTs(message),response);
+      return;
+    }
+  }
 
   const dispatch = await dispatchSlackMessage(message, stores, {
     nadirUserId: deps.config.nadirUserId,
@@ -125,6 +143,8 @@ export async function handleSlackEnvelope(
     return;
   }
 
+  if (dispatch.action === 'reject' && dispatch.reason === 'storage_unavailable') throw new Error('admission_unavailable');
+
   if (dispatch.action === 'reject') {
     deps.metrics.events_rejected += 1;
     await deps.poster.postThreadReply(message.channel, threadTs, rejectUserMessage(dispatch.reason));
@@ -140,6 +160,8 @@ export async function handleSlackEnvelope(
     return;
   }
 
+  // PostgreSQL preparation has already persisted inbox admission atomically.
+  if (dispatch.target === 'hermes' || dispatch.target === 'ana') accepted();
   deps.metrics.events_delegated += 1;
   const relays = deps.relays ?? createDefaultRelays(deps.config);
   const relay = relayForTarget(relays, dispatch.target);

@@ -21,6 +21,7 @@ app.get('/', async (c) => {
   const result = await pool.query(
     `select
        m.id,
+       1 as orchestration_version,
        m.created_at,
        m.updated_at,
        m.action_id,
@@ -41,7 +42,7 @@ app.get('/', async (c) => {
        a.status as action_status
      from agent_missions m
      join agent_actions a on a.id = m.action_id
-     where ($1::text is null or m.target_agent = $1)
+     where coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1' AND ($1::text is null or m.target_agent = $1)
        and ($2::text is null or m.status = $2)
      order by m.created_at desc
      limit $3 offset $4`,
@@ -64,6 +65,7 @@ app.get('/:id', async (c) => {
   const result = await pool.query(
     `select
        m.id,
+       1 as orchestration_version,
        m.created_at,
        m.updated_at,
        m.action_id,
@@ -84,7 +86,7 @@ app.get('/:id', async (c) => {
        a.status as action_status
      from agent_missions m
      join agent_actions a on a.id = m.action_id
-     where m.id = $1`,
+     where m.id = $1 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'`,
     [missionId],
   );
 
@@ -295,7 +297,7 @@ app.post('/:id/dispatch', async (c) => {
       `select m.id, m.status as mission_status, a.status as action_status
        from agent_missions m
        join agent_actions a on a.id = m.action_id
-       where m.id = $1
+       where m.id = $1 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'
        for update`,
       [missionId],
     );
@@ -317,9 +319,9 @@ app.post('/:id/dispatch', async (c) => {
     }
 
     const updated = await client.query(
-      `update agent_missions
+      `update agent_missions m
        set status = 'in_progress', updated_at = now()
-       where id = $1
+       where id = $1 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'
        returning *`,
       [missionId],
     );
@@ -327,7 +329,7 @@ app.post('/:id/dispatch', async (c) => {
     await client.query(
       `insert into agent_audit_events (action_id, event_type, actor, details)
        select action_id, 'dispatched', 'dispatch-missions', $2::jsonb
-       from agent_missions where id = $1`,
+       from agent_missions m where id = $1 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'`,
       [
         missionId,
         JSON.stringify({ mission_id: missionId, source: 'dispatch-api' }),
@@ -382,8 +384,8 @@ app.patch('/:id/result', async (c) => {
 
     const currentResult = await client.query(
       `select id, action_id, status
-       from agent_missions
-       where id = $1
+       from agent_missions m
+       where id = $1 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'
        for update`,
       [missionId],
     );
@@ -407,13 +409,13 @@ app.patch('/:id/result', async (c) => {
     }
 
     const missionResult = await client.query(
-      `update agent_missions
+      `update agent_missions m
        set result = $1,
            status = $2,
            processed_at = now(),
            updated_at = now(),
            error_message = $3
-       where id = $4
+       where id = $4 AND coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'
        returning *`,
       [
         JSON.stringify(body.result),

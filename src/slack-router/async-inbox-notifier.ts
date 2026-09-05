@@ -57,8 +57,8 @@ export async function drainAsyncInboxNotifications(
   const startCandidates = await pool.query<NotifyRow>(
     `SELECT id, status, channel_id, thread_ts, mission_title, response_text, error_code,
             slack_started_at, slack_notified_at, target
-     FROM slack_gateway_inbox
-     WHERE delivery_mode = 'async'
+     FROM slack_gateway_inbox i
+     WHERE coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND delivery_mode = 'async'
        AND status = 'processing'
        AND slack_started_at IS NULL
      ORDER BY updated_at ASC
@@ -68,9 +68,9 @@ export async function drainAsyncInboxNotifications(
   for (const row of startCandidates.rows) {
     await poster.postThreadReply(row.channel_id, row.thread_ts, startedMessage(row));
     await pool.query(
-      `UPDATE slack_gateway_inbox
+      `UPDATE slack_gateway_inbox i
        SET slack_started_at = now(), updated_at = now()
-       WHERE id = $1 AND slack_started_at IS NULL`,
+       WHERE coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND id = $1 AND slack_started_at IS NULL`,
       [row.id],
     );
     started += 1;
@@ -79,8 +79,8 @@ export async function drainAsyncInboxNotifications(
   const finalCandidates = await pool.query<NotifyRow>(
     `SELECT id, status, channel_id, thread_ts, mission_title, response_text, error_code,
             slack_started_at, slack_notified_at, target
-     FROM slack_gateway_inbox
-     WHERE delivery_mode = 'async'
+     FROM slack_gateway_inbox i
+     WHERE coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND delivery_mode = 'async'
        AND status IN ('done', 'failed', 'timeout', 'cancelled')
        AND slack_notified_at IS NULL
      ORDER BY updated_at ASC
@@ -90,9 +90,9 @@ export async function drainAsyncInboxNotifications(
   for (const row of finalCandidates.rows) {
     await poster.postThreadReply(row.channel_id, row.thread_ts, finalMessage(row));
     await pool.query(
-      `UPDATE slack_gateway_inbox
+      `UPDATE slack_gateway_inbox i
        SET slack_notified_at = now(), updated_at = now()
-       WHERE id = $1 AND slack_notified_at IS NULL`,
+       WHERE coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND id = $1 AND slack_notified_at IS NULL`,
       [row.id],
     );
     finalized += 1;

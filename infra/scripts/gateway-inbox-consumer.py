@@ -196,6 +196,9 @@ def process_once(token: str) -> str:
         return "failed"
 
     item = payload["item"]
+    if item.get("orchestration_version", 1) != 1:
+        sys.stderr.write("wrong_orchestration_version\n")
+        return "wrong_orchestration_version"
     item_id = item["id"]
     item_target = item.get("target", "")
     if item_target != target:

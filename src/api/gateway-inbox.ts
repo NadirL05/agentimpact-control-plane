@@ -31,8 +31,8 @@ app.post('/claim', async (c) => {
       `SELECT id, prompt, channel_id, thread_ts, user_id, event_id,
               coalesce(delivery_mode, 'sync') as delivery_mode,
               mission_title
-       FROM slack_gateway_inbox
-       WHERE target = $1 AND status = 'pending'
+       FROM slack_gateway_inbox i
+       WHERE coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND target = $1 AND status = 'pending'
        ORDER BY created_at ASC
        FOR UPDATE SKIP LOCKED
        LIMIT 1`,
@@ -46,7 +46,7 @@ app.post('/claim', async (c) => {
 
     const row = claimed.rows[0]!;
     await client.query(
-      `UPDATE slack_gateway_inbox SET status = 'processing', updated_at = now() WHERE id = $1`,
+      `UPDATE slack_gateway_inbox i SET status = 'processing', updated_at = now() WHERE id = $1 AND coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1'`,
       [row.id],
     );
     await client.query('COMMIT');
@@ -54,6 +54,7 @@ app.post('/claim', async (c) => {
     return c.json({
       item: {
         id: row.id,
+        orchestration_version: 1,
         target,
         prompt: row.prompt,
         channel_id: row.channel_id,
@@ -83,12 +84,13 @@ app.post('/:id/complete', async (c) => {
   }
 
   if (body.text && body.text.trim()) {
-    await pool.query(
-      `UPDATE slack_gateway_inbox
+    const result = await pool.query(
+      `UPDATE slack_gateway_inbox i
        SET status = 'done', response_text = $2, run_id = $3, updated_at = now()
-       WHERE id = $1 AND status = 'processing'`,
+       WHERE id = $1 AND coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND status = 'processing'`,
       [id, body.text.trim(), body.run_id ?? null],
     );
+    if (!result.rowCount) return c.json({ error: 'inbox_not_processable' }, 409);
     return c.json({ ok: true });
   }
 
@@ -100,12 +102,13 @@ app.post('/:id/complete', async (c) => {
         ? 'cancelled'
         : 'failed';
 
-  await pool.query(
-    `UPDATE slack_gateway_inbox
+  const result = await pool.query(
+    `UPDATE slack_gateway_inbox i
      SET status = $2, error_code = $3, updated_at = now()
-     WHERE id = $1 AND status = 'processing'`,
+     WHERE id = $1 AND coalesce(to_jsonb(i)->>'orchestration_version', '1') = '1' AND status = 'processing'`,
     [id, terminal, errorCode],
   );
+  if (!result.rowCount) return c.json({ error: 'inbox_not_processable' }, 409);
   return c.json({ ok: true });
 });
 
