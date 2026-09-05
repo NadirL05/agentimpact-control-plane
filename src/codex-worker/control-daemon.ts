@@ -20,9 +20,10 @@ const registrySchema=z.object({repositories:z.array(z.object({repoId:safeId,mirr
 
 export class CodexControlDaemon {
   private stopping=false;
-  constructor(private server:LocalWorkerServer,private listenFd:number|undefined,private log:(code:string)=>void=code=>process.stdout.write(`${code}\n`)){}
+  constructor(private server:LocalWorkerServer,private listenFd:number|undefined,private log:(code:string)=>void=code=>process.stdout.write(`${code}\n`),
+    private cleanup:()=>Promise<void>=async()=>{}){}
   async start(){await this.server.listen(this.listenFd);this.log('codex_control_ready');}
-  async stop(){if(this.stopping)return;this.stopping=true;await this.server.close();this.log('codex_control_stopped');}
+  async stop(){if(this.stopping)return;this.stopping=true;await this.server.close();await this.cleanup();this.log('codex_control_stopped');}
   installSignalHandlers(){for(const signal of ['SIGTERM','SIGINT'] as const)process.once(signal,()=>void this.stop().catch(()=>{process.exitCode=1;}));}
 }
 
@@ -68,9 +69,8 @@ async function production(){
     return{maxDiffBytes:entry.maxDiffBytes,requiredTests:entry.requiredTests};
   },config);
   const server=new LocalWorkerServer(socketPath,auth,request=>dispatcher.dispatch(request));
-  const daemon=new CodexControlDaemon(server,socketActivationFd());daemon.installSignalHandlers();
+  const daemon=new CodexControlDaemon(server,socketActivationFd(),code=>process.stdout.write(`${code}\n`),()=>pool.end());daemon.installSignalHandlers();
   await daemon.start();
-  process.once('beforeExit',()=>void pool.end());
 }
 
 if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url){
