@@ -8,7 +8,11 @@ DO $$
 DECLARE
   index_row record;
   status_contract text;
+  target_table regclass := to_regclass('worktree_leases');
 BEGIN
+  IF target_table IS NULL THEN
+    RAISE EXCEPTION 'missing_worktree_leases' USING ERRCODE='55000';
+  END IF;
   SELECT i.indisunique, i.indisvalid, i.indisready, i.indnkeyatts, i.indnatts,
          a.attname AS key_name, pg_get_expr(i.indpred, i.indrelid) AS predicate
     INTO index_row
@@ -16,9 +20,9 @@ BEGIN
     JOIN pg_namespace n ON n.oid=x.relnamespace
     JOIN pg_index i ON i.indexrelid=x.oid
     JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=i.indkey[0]
-   WHERE n.nspname='public'
+   WHERE n.nspname=current_schema()
      AND x.relname='worktree_leases_one_codex_writer_per_repo'
-     AND i.indrelid='public.worktree_leases'::regclass;
+     AND i.indrelid=target_table;
 
   IF NOT FOUND
      OR NOT index_row.indisunique OR NOT index_row.indisvalid OR NOT index_row.indisready
@@ -31,7 +35,7 @@ BEGIN
 
   SELECT pg_get_constraintdef(oid) INTO status_contract
     FROM pg_constraint
-   WHERE conrelid='public.worktree_leases'::regclass
+   WHERE conrelid=target_table
      AND conname='worktree_leases_status_check' AND contype='c' AND convalidated;
   IF status_contract IS NULL
      OR status_contract !~ $pattern$'reserved'$pattern$ OR status_contract !~ $pattern$'leased'$pattern$
