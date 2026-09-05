@@ -14,6 +14,7 @@ import {LocalWorkerServer,localWorkerRequest,WorkerTransportAuthenticator} from 
 import {digest,MissionError} from './model.js';
 import {approvalPayloadHash,ExecutionControl} from './execution.js';
 import {codexDatabase,readyMission,testMutation} from './testing/execution-database.js';
+import type {PoolClient} from 'pg';
 
 const run=promisify(execFile);
 let fixture:Awaited<ReturnType<typeof codexDatabase>>;
@@ -129,6 +130,16 @@ describe('V2-B Codex worker boundary',()=>{
     expect(()=>adapter.validate(contract())).toThrowError(expect.objectContaining({code:'feature_disabled'}));
     const unknown=new CodexWorkerAdapter({} as ExecutionControl,{} as NodeCodexRuntime,state,enabledConfig({AGENTIMPACT_CODEX_QUOTA_STATE:'UNKNOWN'}));
     expect(()=>unknown.validate(contract())).toThrowError(expect.objectContaining({code:'codex_quota_not_admissible'}));
+  });
+
+  it('deduplicates repeated artifacts inside accepted completion persistence',async()=>{
+    const artifact={kind:'diff' as const,relative_path:'artifacts/change.diff',sha256:'b'.repeat(64),size_bytes:12};
+    const workerOutput=codexOutputSchema.parse(output());
+    const query=vi.fn(async(_sql:unknown,_params?:unknown[])=>({rowCount:1,rows:[]}));
+    const state=new CodexStateStore({} as never);
+    await state.persistAcceptedCompletion({query} as unknown as Pick<PoolClient,'query'>,randomUUID(),workerOutput,digest(workerOutput),
+      [artifact,artifact],'passed');
+    expect(query.mock.calls.filter(([sql])=>String(sql).includes('INSERT INTO codex_artifacts'))).toHaveLength(1);
   });
 
   it('uses a trusted repository registry and rejects branch, SHA and attempt tricks before git',async()=>{

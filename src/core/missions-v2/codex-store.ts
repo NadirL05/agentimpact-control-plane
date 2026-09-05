@@ -30,9 +30,11 @@ export class CodexStateStore implements CodexStateRecorder {
     [attemptId,output.provider_session_id!==null,resultHash,validationState]);
     if(!metadata.rowCount)throw new MissionError('codex_result_already_persisted',409);
     const sessionReference=output.provider_session_id===null?null:`sha256:${digest(output.provider_session_id)}`;
-    await c.query('UPDATE mission_attempts SET provider_session_id=$2,updated_at=clock_timestamp() WHERE id=$1',[attemptId,sessionReference]);
-    for(const item of artifacts)await c.query(`INSERT INTO codex_artifacts(attempt_id,kind,relative_path,sha256,size_bytes)
-      VALUES($1,$2,$3,$4,$5)`,[attemptId,item.kind,item.relative_path,item.sha256,item.size_bytes]);
+    if(sessionReference!==null)await c.query('UPDATE mission_attempts SET provider_session_id=$2,updated_at=clock_timestamp() WHERE id=$1',[attemptId,sessionReference]);
+    const uniqueArtifacts=new Map(artifacts.map(item=>[`${item.kind}\0${item.relative_path}\0${item.sha256}`,item]));
+    for(const item of uniqueArtifacts.values())await c.query(`INSERT INTO codex_artifacts(attempt_id,kind,relative_path,sha256,size_bytes)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(attempt_id,kind,relative_path,sha256) DO NOTHING`,
+    [attemptId,item.kind,item.relative_path,item.sha256,item.size_bytes]);
   }
   async metric(name:string,delta=1){const allowed=new Set(['codex_attempts_total','codex_attempts_failed_total','codex_timeouts_total','codex_cancellations_total',
     'codex_output_invalid_total','codex_validation_failures_total','codex_publish_requests_total','codex_publish_failures_total']);
