@@ -1,0 +1,9 @@
+---
+# Métadonnées du rôle wireguard_ssh_runner
+galaxy_info:
+  role_name: wireguard_ssh_runner
+  description: >-
+    Pérennise SSH Cursor/Codex via WireGuard (règle UFW prioritaire + linger runner).
+  license: proprietary
+  min_ansible_version: "2.14"
+dependencies: []

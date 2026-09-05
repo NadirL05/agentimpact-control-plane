@@ -1,0 +1,16 @@
+---
+# Constantes réseau (pas des secrets) — chemin SSH officiel Cursor/Codex.
+agentimpact_runner_ssh_host: "10.66.66.1"
+agentimpact_runner_ssh_user: "agentimpact-runner"
+agentimpact_runner_ssh_interface: "wg0"
+agentimpact_mac_wg_ip: "10.66.66.2"
+agentimpact_runner_ssh_port: "22"
+agentimpact_runner_ssh_proto: "tcp"
+
+rollback_bundle_dir: /var/lib/agentimpact/rollback/wireguard-ssh-runner
+normalize_remove_duplicates: true
+# Ne jamais supprimer les exceptions IP publiques temporaires depuis ce rôle.
+normalize_remove_temp_public_ips: false
+
+healthz_url: "http://127.0.0.1:9120/healthz"
+readyz_url: "http://127.0.0.1:9120/readyz"
