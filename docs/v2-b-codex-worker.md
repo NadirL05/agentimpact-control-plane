@@ -115,7 +115,7 @@ propre, appliquer le patch validé, relancer les tests, vérifier l'ownership de
 branche et retrouver la PR avant toute création. Elle ne pourra ni merger ni
 déployer.
 
-## Migration 006 et rollback
+## Migrations 006, 007 et rollback
 
 006 s'applique en transaction sur une base isolée ayant reçu 004 puis 005. Elle
 étend les contraintes de type worker et de workspace, ajoute uniquement les
@@ -128,6 +128,35 @@ arrêt opérateur et ne doit pas être masqué par `IF NOT EXISTS`.
 Le rollback fonctionnel met les quatre flags à zéro, arrête les cgroups et
 conserve missions, attempts, événements et workspaces pour réconciliation. La
 migration n'est pas appliquée en production par cette mission.
+
+007 est une correction additive one-shot à appliquer uniquement après une 006
+complète. Elle vérifie la définition de l'index incorrect livré par 006 et le
+contrat des états avant de remplacer cet index. Le prédicat final bloque
+`reserved`, `leased` et `quarantined`. La quarantaine reste exclusive car elle
+signale un processus ou un workspace dont l'arrêt n'est pas encore réconcilié ;
+seul `released` autorise une nouvelle réservation. Un index absent, déjà
+modifié, non unique, invalide, portant sur une autre colonne, ou un contrat
+d'états inattendu fait échouer 007 avant le `DROP INDEX`. Un second passage
+échoue également : il ne masque donc jamais un schéma partiel.
+
+## Daemon de contrôle local
+
+`agentimpact-codex-control.socket` est l'unique propriétaire de
+`/run/agentimpact-codex-worker/control.sock`. systemd crée le socket en `0600`
+pour l'utilisateur et le groupe dédiés, puis transmet le descripteur au daemon
+`agentimpact-codex-control.service`. Le daemon instancie réellement
+`LocalWorkerServer`, charge l'URL PostgreSQL bornée et les HMAC par tentative
+uniquement par `LoadCredential`, puis relie le transport à
+`CodexControlDispatcher`. Il ne contient aucun chemin de lancement Codex.
+
+Le déploiement flags OFF choisit l'option B : service et socket sont installés,
+arrêtés et désactivés. Après création de l'assignment, du registre et du HMAC
+propres au canari, l'opérateur démarre explicitement le socket. La première
+connexion active alors le daemon. Si un flag, l'authentification, la facturation
+ou le quota manque, le dispatcher répond avec un code borné et aucune mutation
+worker ou exécution fournisseur n'a lieu. Pour arrêter le transport, arrêter
+d'abord le socket puis le service ; systemd retire le chemin du socket. Le
+rollback exécute ces deux arrêts et conserve les données et workspaces.
 
 ## Authentification manuelle ultérieure
 
@@ -172,7 +201,7 @@ migration n'est pas appliquée en production par cette mission.
 
 ## Procédure de canari contrôlé
 
-1. Confirmer migration 006 sur une base non production et tous les tests verts.
+1. Confirmer la chaîne 004 → 005 → 006 → 007 sur une base non production et tous les tests verts.
 2. Vérifier `systemd-analyze verify`, l'utilisateur, les permissions, les
    cgroups, l'absence d'accès Docker/GitHub et la connexion Codex dédiée.
 3. Enregistrer un miroir de fixture sans secret, avec une seule branche canari
