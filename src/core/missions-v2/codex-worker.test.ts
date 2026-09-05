@@ -51,6 +51,14 @@ describe('V2-B Codex worker boundary',()=>{
     expect(result.exitCode).toBe(0);expect(codexOutputSchema.parse(result.output)).toMatchObject({outcome:'completed'});
   });
 
+  it('treats a signal-terminated child as stopped',async()=>{
+    const runtime=new NodeCodexRuntime();
+    const session=await runtime.launch({file:'/usr/bin/python3',args:['-c','import time; time.sleep(60)'],cwd:temp,stdin:'',
+      env:{PATH:'/usr/bin:/bin'},resultFile:join(temp,'unused-result.json')});
+    await expect(runtime.cancel(session.id,1000)).resolves.toBe('stopped');
+    await expect(runtime.inspect(session.id)).resolves.toMatchObject({state:'stopped'});
+  });
+
   it('rejects malformed output, unknown fields and raw secret-like provider ids',()=>{
     expect(codexOutputSchema.safeParse({...output(),extra:true}).success).toBe(false);
     expect(codexOutputSchema.safeParse({...output(),provider_session_id:'token with spaces'}).success).toBe(false);
@@ -72,6 +80,17 @@ describe('V2-B Codex worker boundary',()=>{
       timestamp:Math.floor(Date.now()/1000),nonce:randomUUID(),payload_hash:digest(payload)};
     const server=new LocalWorkerServer(path,serverAuth,async request=>({accepted:request.message.operation}),root);await server.listen();
     try{await expect(localWorkerRequest(path,{message,payload,signature:clientAuth.sign(message)},root)).resolves.toEqual({accepted:'progress'});}
+    finally{await server.close();}
+  });
+
+  it('rejects a signature made with another attempt credential',async()=>{
+    const root=join(temp,`socket-${randomUUID()}`);await mkdir(root);const path=join(root,'control.sock');
+    const firstId=randomUUID(),first=new WorkerTransportAuthenticator(Buffer.alloc(32,1));
+    const second=new WorkerTransportAuthenticator(Buffer.alloc(32,2));
+    const server=new LocalWorkerServer(path,attemptId=>attemptId===firstId?first:second,async()=>({accepted:true}),root);await server.listen();
+    const payload={phase:'executing'},message={attempt_id:firstId,worker_instance_id:'codex-one',fencing_token:'2',operation:'progress',
+      timestamp:Math.floor(Date.now()/1000),nonce:randomUUID(),payload_hash:digest(payload)};
+    try{await expect(localWorkerRequest(path,{message,payload,signature:second.sign(message)},root)).rejects.toMatchObject({code:'worker_transport_rejected'});}
     finally{await server.close();}
   });
 
@@ -133,6 +152,16 @@ describe('V2-B Codex worker boundary',()=>{
     await expect(validator.validate(input)).rejects.toMatchObject({code:'validation_secret_detected'});
     await writeFile(join(repo,'src','item.ts'),'after\n');await symlink('/etc/passwd',join(repo,'src','escape'));
     await expect(validator.validate({...input,reportedPaths:['src/escape','src/item.ts']})).rejects.toMatchObject({code:'validation_symlink_escape'});
+  });
+
+  it('fails closed when any Git validation output exceeds its capture limit',async()=>{
+    const repo=join(temp,`overflow-${randomUUID()}`);await mkdir(repo);
+    const git=vi.fn(async(args:string[])=>args.includes('--binary')
+      ? {exitCode:0,stdout:'truncated',overflowed:true}
+      : {exitCode:0,stdout:''});
+    const validator=new CodexResultValidator(git);
+    await expect(validator.validate({workspaceRoot:temp,workspacePath:repo,baseSha:base,allowedPaths:['src'],reportedPaths:['src/item.ts'],
+      testResults:[],maxDiffBytes:2*1024*1024})).rejects.toMatchObject({code:'validation_git_failed'});
   });
 
   it('keeps publication behind a disabled credential-free boundary with deterministic fake idempotency',async()=>{

@@ -123,6 +123,14 @@
       register: codex_transport_credential
       no_log: true
 
+    - name: Exiger le répertoire root des credentials par tentative
+      ansible.builtin.assert:
+        that:
+          - codex_transport_credential.stat.exists
+          - codex_transport_credential.stat.isdir
+          - codex_transport_credential.stat.pw_name == 'root'
+        fail_msg: codex_attempt_credentials_not_configured
+
     - name: Confirmer que le worker reste inactif après installation
       ansible.builtin.command:
         cmd: systemctl is-active agentimpact-codex-worker@canary.service

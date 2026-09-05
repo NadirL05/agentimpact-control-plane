@@ -1,4 +1,4 @@
-import type {Pool} from 'pg';
+import type {Pool,PoolClient} from 'pg';
 import {digest,MissionError} from './model.js';
 import type {CodexOutput, CodexStateRecorder, CodexWork, CodexWorkerConfig} from './codex-worker.js';
 
@@ -23,16 +23,17 @@ export class CodexStateStore implements CodexStateRecorder {
   }
   async process(attemptId:string,pid:number|null){await this.pool.query(`UPDATE codex_attempt_metadata SET process_id=$2,updated_at=clock_timestamp()
     WHERE attempt_id=$1`,[attemptId,pid]);}
-  async validation(attemptId:string,state:'running'|'passed'|'failed'|'quarantined'){await this.pool.query(`UPDATE codex_attempt_metadata SET validation_state=$2,updated_at=clock_timestamp()
-    WHERE attempt_id=$1`,[attemptId,state]);}
-  async artifacts(attemptId:string,items:CodexOutput['artifacts']){for(const item of items)await this.pool.query(`INSERT INTO codex_artifacts(attempt_id,kind,relative_path,sha256,size_bytes)
-    VALUES($1,$2,$3,$4,$5) ON CONFLICT(attempt_id,kind,relative_path,sha256) DO NOTHING`,[attemptId,item.kind,item.relative_path,item.sha256,item.size_bytes]);}
-  async result(attemptId:string,output:CodexOutput,resultHash:string){const client=await this.pool.connect();try{await client.query('BEGIN');
-    await client.query(`UPDATE codex_attempt_metadata SET provider_session_present=$2,result_hash=$3,updated_at=clock_timestamp() WHERE attempt_id=$1`,
-      [attemptId,output.provider_session_id!==null,resultHash]);
+  async persistAcceptedCompletion(c:Pick<PoolClient,'query'>,attemptId:string,output:CodexOutput,resultHash:string,
+    artifacts:CodexOutput['artifacts'],validationState:'passed'|'failed'|'quarantined'){
+    const metadata=await c.query(`UPDATE codex_attempt_metadata SET provider_session_present=$2,result_hash=$3,
+      validation_state=$4,updated_at=clock_timestamp() WHERE attempt_id=$1 AND result_hash IS NULL RETURNING attempt_id`,
+    [attemptId,output.provider_session_id!==null,resultHash,validationState]);
+    if(!metadata.rowCount)throw new MissionError('codex_result_already_persisted',409);
     const sessionReference=output.provider_session_id===null?null:`sha256:${digest(output.provider_session_id)}`;
-    await client.query('UPDATE mission_attempts SET provider_session_id=$2,updated_at=clock_timestamp() WHERE id=$1',[attemptId,sessionReference]);
-    await client.query('COMMIT');}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}
+    await c.query('UPDATE mission_attempts SET provider_session_id=$2,updated_at=clock_timestamp() WHERE id=$1',[attemptId,sessionReference]);
+    for(const item of artifacts)await c.query(`INSERT INTO codex_artifacts(attempt_id,kind,relative_path,sha256,size_bytes)
+      VALUES($1,$2,$3,$4,$5)`,[attemptId,item.kind,item.relative_path,item.sha256,item.size_bytes]);
+  }
   async metric(name:string,delta=1){const allowed=new Set(['codex_attempts_total','codex_attempts_failed_total','codex_timeouts_total','codex_cancellations_total',
     'codex_output_invalid_total','codex_validation_failures_total','codex_publish_requests_total','codex_publish_failures_total']);
     if(!allowed.has(name))throw new MissionError('codex_metric_invalid',400);

@@ -44,9 +44,12 @@ sorties complètes et stderr fournisseur sont écartés. Seuls des codes bornés
 empreintes, états et références d'artefacts peuvent être persistés.
 
 Les mutations utilisent un socket Unix sous `/run/agentimpact-codex-worker`,
-une enveloppe HMAC chargée par `LoadCredential`, un timestamp, un nonce non
-réutilisable et le hash du payload. Le control-plane revérifie attempt, worker,
-fence, lease et état avec PostgreSQL. Le socket n'est pas une API publique.
+une enveloppe HMAC par attempt chargée par `LoadCredential`, un timestamp, un
+nonce non réutilisable et le hash du payload. Le serveur sélectionne le secret
+avec l'`attempt_id` avant de vérifier la signature : un worker ne peut donc pas
+signer le callback d'une autre tentative. Le control-plane revérifie attempt,
+worker, fence, lease et état avec PostgreSQL. Le socket n'est pas une API
+publique.
 
 ## Activation fail-closed
 
@@ -80,8 +83,12 @@ Le template systemd utilise l'utilisateur sans login
 attempt, `ProtectSystem=strict`, `ProtectHome=yes`, aucune capability, des
 limites de mémoire/processus/fichiers et des chemins d'écriture bornés. Le
 socket Docker, `/root`, `/home` et les credentials généraux sont inaccessibles.
-Le credential HMAC monté par systemd est le seul credential de contrôle ; aucun
-credential GitHub ou SSH agent n'est fourni.
+Le credential HMAC propre à l'instance, monté depuis le fichier root `%i` par
+systemd, est le seul credential de contrôle. Chaque unité reçoit une vue tmpfs
+privée de `/run/credentials` et du runtime ; seuls son répertoire `%i` et le
+socket de contrôle y sont remontés. Le répertoire source reste inaccessible au
+worker et le répertoire `%d` n'expose que son secret. Aucun credential GitHub
+ou SSH agent n'est fourni.
 
 CANCEL persiste d'abord `cancel_requested`. SIGTERM puis la grâce systemd
 s'appliquent au cgroup. Seule une inspection `stopped` avec le fence et le
@@ -126,7 +133,8 @@ migration n'est pas appliquée en production par cette mission.
 
 1. Nadir valide l'identité et le mode de facturation dédiés au worker.
 2. L'opérateur installe l'IaC, vérifie le compte sans sudo et l'absence du groupe
-   Docker, puis crée le credential HMAC hors Git.
+   Docker, puis configure hors Git un credential HMAC distinct pour chaque
+   attempt autorisée. Aucun secret partagé entre attempts n'est admis.
 3. Après le merge seulement, depuis une session opérateur administrée, il lance
    la connexion interactive sous l'identité système dédiée avec un environnement
    vide :

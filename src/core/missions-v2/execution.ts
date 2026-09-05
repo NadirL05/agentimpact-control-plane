@@ -370,7 +370,8 @@ export class ExecutionControl {
     await c.query(`UPDATE worktree_leases SET status='released',released_at=clock_timestamp(),lease_expires_at=NULL WHERE attempt_id=$1 AND status<>'released'`,[a.id]);
     await c.query(`UPDATE budget_reservations SET status=$2,released_at=clock_timestamp() WHERE attempt_id=$1 AND status NOT IN ('released','cancelled')`,[a.id,cancelled?'cancelled':'released']);
   }
-  async complete(proof: WorkerProof,worker: string,input: Completion,meta: Mutation): Promise<Attempt> {
+  async complete(proof: WorkerProof,worker: string,input: Completion,meta: Mutation,
+    persistAccepted?: (c: PoolClient) => Promise<void>): Promise<Attempt> {
     const parsed = completionSchema.safeParse(input);
     if (!parsed.success) throw new MissionError('invalid_completion',400);
     const result = parsed.data;
@@ -391,6 +392,7 @@ export class ExecutionControl {
       await c.query('UPDATE agent_missions SET head_sha=$2 WHERE id=$1',[m.id,result.head_sha ?? m.head_sha]);
       await this.release(c,a,false);
       await this.event(c,m,nextState,failed?'finished':'reviewing',failed?(result.error_code ?? 'fake_failure'):null,failed?'attempt_failed':'attempt_completed');
+      if (persistAccepted) await persistAccepted(c);
       return attemptRow(r.rows[0]);
     },true);
   }

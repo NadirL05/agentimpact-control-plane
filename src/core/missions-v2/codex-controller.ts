@@ -4,6 +4,7 @@ import {CodexResultValidator,type ValidationInput} from './codex-workspace.js';
 import type {SignedWorkerRequest} from './codex-transport.js';
 import {ExecutionControl} from './execution.js';
 import {digest,MissionError} from './model.js';
+import type {PoolClient} from 'pg';
 
 export type AssignmentProvider=(attemptId:string)=>Promise<CodexWork>;
 export type ValidationPolicy=(work:CodexWork)=>Pick<ValidationInput,'maxDiffBytes'|'requiredTests'>;
@@ -43,20 +44,20 @@ export class CodexControlDispatcher {
   private async complete(work:CodexWork,payload:unknown,meta:{principal:string;key:string}){
     const body=payload as {exit_code?:unknown;output?:unknown},parsed=codexOutputSchema.safeParse(body?.output);
     if(!parsed.success){await this.state.metric('codex_output_invalid_total');throw new MissionError('codex_output_invalid',400);}
-    await this.state.result(work.attempt_id,parsed.data,digest(parsed.data));
-    await this.state.artifacts(work.attempt_id,parsed.data.artifacts);
+    const proof={attempt_id:work.attempt_id,worker_instance_id:work.worker_instance_id,fencing_token:work.fencing_token};
+    const persist=(validationState:'passed'|'failed'|'quarantined')=>(c:Pick<PoolClient,'query'>)=>
+      this.state.persistAcceptedCompletion(c,work.attempt_id,parsed.data,digest(parsed.data),parsed.data.artifacts,validationState);
     if(body.exit_code!==0||parsed.data.outcome==='failed'){await this.state.metric('codex_attempts_failed_total');
-      return this.control.complete({attempt_id:work.attempt_id,worker_instance_id:work.worker_instance_id,fencing_token:work.fencing_token},work.worker_instance_id,
-        {outcome:'failed',retryable:parsed.data.retryable,error_code:'worker_failed'},meta);}
+      return this.control.complete(proof,work.worker_instance_id,
+        {outcome:'failed',retryable:parsed.data.retryable,error_code:'worker_failed'},meta,persist('failed'));}
     if(parsed.data.base_sha!==work.base_sha)throw new MissionError('codex_base_sha_mismatch',409);
-    await this.state.validation(work.attempt_id,'running');
+    let validationError:unknown=null;
     try{await this.validator.validate({workspaceRoot:this.config.workspaceRoot,workspacePath:work.workspace_path,baseSha:work.base_sha,
       allowedPaths:work.allowed_paths,reportedPaths:parsed.data.changed_paths,testResults:parsed.data.test_results,maxDiffBytes:this.policy(work).maxDiffBytes,
-      requiredTests:this.policy(work).requiredTests});await this.state.validation(work.attempt_id,'passed');}
-    catch(error){await this.state.validation(work.attempt_id,'quarantined');await this.state.metric('codex_validation_failures_total');
-      await this.control.complete({attempt_id:work.attempt_id,worker_instance_id:work.worker_instance_id,fencing_token:work.fencing_token},work.worker_instance_id,
-        {outcome:'failed',retryable:false,error_code:'validation_failed'},meta);throw error;}
-    return this.control.complete({attempt_id:work.attempt_id,worker_instance_id:work.worker_instance_id,fencing_token:work.fencing_token},work.worker_instance_id,
-      {outcome:'completed'},meta);
+      requiredTests:this.policy(work).requiredTests});}
+    catch(error){validationError=error;await this.state.metric('codex_validation_failures_total');}
+    if(validationError){await this.control.complete(proof,work.worker_instance_id,
+      {outcome:'failed',retryable:false,error_code:'validation_failed'},meta,persist('quarantined'));throw validationError;}
+    return this.control.complete(proof,work.worker_instance_id,{outcome:'completed'},meta,persist('passed'));
   }
 }

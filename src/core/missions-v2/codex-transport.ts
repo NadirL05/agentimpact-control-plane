@@ -19,6 +19,7 @@ export class WorkerTransportAuthenticator{
 }
 
 export type SignedWorkerRequest={message:LocalWorkerMessage;signature:string;payload:unknown};
+export type AttemptAuthenticator=(attemptId:string)=>WorkerTransportAuthenticator;
 const MAX_FRAME_BYTES=1024*1024;
 export async function writeSignedAssignment(runtimeRoot:string,payload:{attempt_id:string;worker_instance_id:string;fencing_token:string},auth:WorkerTransportAuthenticator){
   if(runtimeRoot!=='/run/agentimpact-codex-worker')throw new MissionError('worker_runtime_root_invalid',400);
@@ -29,7 +30,7 @@ export async function writeSignedAssignment(runtimeRoot:string,payload:{attempt_
 }
 export class LocalWorkerServer {
   private server:Server|null=null;
-  constructor(private socketPath:string,private auth:WorkerTransportAuthenticator,
+  constructor(private socketPath:string,private auth:WorkerTransportAuthenticator|AttemptAuthenticator,
     private dispatch:(request:SignedWorkerRequest)=>Promise<unknown>,private socketRoot='/run/agentimpact-codex-worker'){}
   async listen(){if(!this.socketPath.startsWith(`${this.socketRoot}/`))throw new MissionError('worker_socket_path_invalid',400);
     this.server=createServer(socket=>{let body='';socket.setEncoding('utf8');socket.on('data',chunk=>{
@@ -38,8 +39,10 @@ export class LocalWorkerServer {
         error=>socket.end(`${JSON.stringify({ok:false,error:error instanceof MissionError?error.code:'worker_transport_error'})}\n`));});});
     await new Promise<void>((resolveListen,reject)=>{this.server!.once('error',reject);this.server!.listen(this.socketPath,resolveListen);});}
   private async handle(raw:string){let request:SignedWorkerRequest;try{request=JSON.parse(raw) as SignedWorkerRequest;}catch{throw new MissionError('worker_transport_rejected',400);}
+    if(!messageSchema.safeParse(request.message).success)throw new MissionError('worker_transport_rejected',403);
     if(request.message.payload_hash!==digest(request.payload))throw new MissionError('worker_transport_rejected',403);
-    this.auth.verify(request.message,request.signature);return this.dispatch(request);}
+    const authenticator=this.auth instanceof WorkerTransportAuthenticator?this.auth:this.auth(request.message.attempt_id);
+    authenticator.verify(request.message,request.signature);return this.dispatch(request);}
   async close(){if(!this.server)return;await new Promise<void>((resolveClose,reject)=>this.server!.close(error=>error?reject(error):resolveClose()));this.server=null;}
 }
 

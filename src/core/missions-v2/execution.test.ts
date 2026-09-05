@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -241,6 +241,22 @@ describe('V2-F isolated PostgreSQL execution control', () => {
     await expect(execution.complete(item.proof, worker, {...output, head_sha: 'd'.repeat(40)}, mutation)).rejects.toMatchObject({code: 'idempotency_conflict'});
     await expect(execution.complete(item.proof, worker, {...output, head_sha: 'd'.repeat(40)}, testMutation())).rejects.toThrow();
     expect((await store.get(item.mission.id)).lifecycle_state).toBe('reviewing');
+  });
+
+  it('runs accepted completion persistence once and in the completion transaction', async () => {
+    const item = await running();
+    const persist = vi.fn(async () => undefined);
+    const output = {outcome: 'completed' as const, head_sha: 'c'.repeat(40)};
+    await execution.complete(item.proof, worker, output, testMutation(), persist);
+    await execution.complete(item.proof, worker, output, testMutation(), persist);
+    expect(persist).toHaveBeenCalledTimes(1);
+
+    const rollback = await running();
+    await expect(execution.complete(rollback.proof, worker, output, testMutation(), async () => {
+      throw new Error('persist failed');
+    })).rejects.toMatchObject({code:'execution_storage_unavailable'});
+    expect((await fixture.db.query('SELECT status,callback_hash FROM mission_attempts WHERE id=$1',[rollback.attempt.id])).rows)
+      .toEqual([{status:'running',callback_hash:null}]);
   });
 
   it('durably cancels and retains attempts and leases until positive stop evidence', async () => {
