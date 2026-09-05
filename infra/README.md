@@ -49,6 +49,14 @@ MCP Brevo (profil `agentimpact-growth` uniquement) : voir
 [docs/brevo-mcp-growth.md](../docs/brevo-mcp-growth.md) et
 `infra/scripts/deploy-brevo-mcp-growth.sh`.
 
+## ansible/ — SSH WireGuard runner
+
+Playbook `infra/ansible/playbooks/wireguard-ssh-runner.yml` + rôle
+`wireguard_ssh_runner` : pérennise la règle UFW prioritaire
+`10.66.66.2 → 10.66.66.1:22 on wg0` **avant** le `LIMIT 22/tcp` public, et
+le linger `agentimpact-runner`. Doc :
+[docs/ops/wireguard-ssh-runner.md](../docs/ops/wireguard-ssh-runner.md).
+
 ## agentimpact-profiles/
 
 `.env.example` (gabarits) des 5 profils AgentImpact
