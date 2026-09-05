@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentImpact V2 Codex local control socket
+
+[Socket]
+ListenStream=/run/agentimpact-codex-worker/control.sock
+SocketUser=agentimpact-codex-worker
+SocketGroup=agentimpact-codex-worker
+SocketMode=0600
+DirectoryMode=0750
+RemoveOnStop=yes
+Service=agentimpact-codex-control.service
+
+[Install]
+# Explicit canary activation only; never enabled by the flags-off deployment.

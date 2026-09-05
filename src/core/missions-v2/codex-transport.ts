@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createConnection, createServer, type Server } from 'node:net';
-import {mkdir,writeFile} from 'node:fs/promises';
+import {chmod,mkdir,unlink,writeFile} from 'node:fs/promises';
 import { MissionError, digest } from './model.js';
 import {z} from 'zod';
 
@@ -30,20 +30,25 @@ export async function writeSignedAssignment(runtimeRoot:string,payload:{attempt_
 }
 export class LocalWorkerServer {
   private server:Server|null=null;
+  private ownsSocketPath=false;
   constructor(private socketPath:string,private auth:WorkerTransportAuthenticator|AttemptAuthenticator,
     private dispatch:(request:SignedWorkerRequest)=>Promise<unknown>,private socketRoot='/run/agentimpact-codex-worker'){}
-  async listen(){if(!this.socketPath.startsWith(`${this.socketRoot}/`))throw new MissionError('worker_socket_path_invalid',400);
+  async listen(fd?:number){if(!this.socketPath.startsWith(`${this.socketRoot}/`))throw new MissionError('worker_socket_path_invalid',400);
     this.server=createServer(socket=>{let body='';socket.setEncoding('utf8');socket.on('data',chunk=>{
       body+=chunk;if(Buffer.byteLength(body)>MAX_FRAME_BYTES){socket.destroy();return;}const newline=body.indexOf('\n');if(newline<0)return;
       socket.pause();void this.handle(body.slice(0,newline)).then(result=>socket.end(`${JSON.stringify({ok:true,result})}\n`),
         error=>socket.end(`${JSON.stringify({ok:false,error:error instanceof MissionError?error.code:'worker_transport_error'})}\n`));});});
-    await new Promise<void>((resolveListen,reject)=>{this.server!.once('error',reject);this.server!.listen(this.socketPath,resolveListen);});}
+    await new Promise<void>((resolveListen,reject)=>{this.server!.once('error',reject);
+      if(fd===undefined)this.server!.listen(this.socketPath,resolveListen);else this.server!.listen({fd},resolveListen);});
+    this.ownsSocketPath=fd===undefined;
+    if(this.ownsSocketPath)await chmod(this.socketPath,0o600);}
   private async handle(raw:string){let request:SignedWorkerRequest;try{request=JSON.parse(raw) as SignedWorkerRequest;}catch{throw new MissionError('worker_transport_rejected',400);}
     if(!messageSchema.safeParse(request.message).success)throw new MissionError('worker_transport_rejected',403);
     if(request.message.payload_hash!==digest(request.payload))throw new MissionError('worker_transport_rejected',403);
     const authenticator=this.auth instanceof WorkerTransportAuthenticator?this.auth:this.auth(request.message.attempt_id);
     authenticator.verify(request.message,request.signature);return this.dispatch(request);}
-  async close(){if(!this.server)return;await new Promise<void>((resolveClose,reject)=>this.server!.close(error=>error?reject(error):resolveClose()));this.server=null;}
+  async close(){if(!this.server)return;await new Promise<void>((resolveClose,reject)=>this.server!.close(error=>error?reject(error):resolveClose()));this.server=null;
+    if(this.ownsSocketPath)await unlink(this.socketPath).catch(error=>{if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;});this.ownsSocketPath=false;}
 }
 
 export async function localWorkerRequest(socketPath:string,request:SignedWorkerRequest,socketRoot='/run/agentimpact-codex-worker'):Promise<unknown>{

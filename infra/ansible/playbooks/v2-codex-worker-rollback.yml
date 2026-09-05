@@ -4,6 +4,16 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Arrêter le transport local Codex
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      failed_when: false
+      loop:
+        - agentimpact-codex-control.socket
+        - agentimpact-codex-control.service
+
     - name: Arrêter toutes les instances Codex sans supprimer les workspaces
       ansible.builtin.command:
         cmd: systemctl stop 'agentimpact-codex-worker@*.service'

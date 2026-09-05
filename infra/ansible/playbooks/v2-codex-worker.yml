@@ -98,10 +98,69 @@
         group: agentimpact-codex-worker
         mode: "0440"
 
+    - name: Créer les répertoires runtime Codex V2
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/agentimpact/app/dist/codex-worker
+        - /opt/agentimpact/app/dist/core/missions-v2
+
+    - name: Installer uniquement les entrypoints Codex V2 runtime
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/src/dist/codex-worker/{{ item }}"
+        dest: "/opt/agentimpact/app/dist/codex-worker/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - control-daemon.js
+        - daemon.js
+
+    - name: Installer uniquement les modules Codex V2 runtime
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/src/dist/core/missions-v2/{{ item }}"
+        dest: "/opt/agentimpact/app/dist/core/missions-v2/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - codex-controller.js
+        - codex-publisher.js
+        - codex-store.js
+        - codex-supervisor.js
+        - codex-transport.js
+        - codex-worker.js
+        - codex-workspace.js
+        - execution-config.js
+        - execution.js
+        - model.js
+        - store.js
+        - supervisor.js
+
     - name: Installer le template systemd désactivé
       ansible.builtin.copy:
         src: "{{ repo_root }}/infra/systemd/agentimpact-codex-worker@.service"
         dest: /etc/systemd/system/agentimpact-codex-worker@.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Installer le service de contrôle local désactivé
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/systemd/agentimpact-codex-control.service"
+        dest: /etc/systemd/system/agentimpact-codex-control.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Installer le socket de contrôle local désactivé
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/systemd/agentimpact-codex-control.socket"
+        dest: /etc/systemd/system/agentimpact-codex-control.socket
         owner: root
         group: root
         mode: "0644"
@@ -123,13 +182,41 @@
       register: codex_transport_credential
       no_log: true
 
+    - name: Vérifier la présence du credential PostgreSQL borné sans le lire
+      ansible.builtin.stat:
+        path: /etc/agentimpact/credentials/codex-control-database-url
+        get_checksum: false
+        get_mime: false
+      register: codex_database_credential
+      no_log: true
+
     - name: Exiger le répertoire root des credentials par tentative
       ansible.builtin.assert:
         that:
           - codex_transport_credential.stat.exists
           - codex_transport_credential.stat.isdir
           - codex_transport_credential.stat.pw_name == 'root'
+          - codex_database_credential.stat.exists
+          - codex_database_credential.stat.isreg
+          - codex_database_credential.stat.pw_name == 'root'
+          - codex_database_credential.stat.mode == '0600'
         fail_msg: codex_attempt_credentials_not_configured
+
+    - name: Recharger systemd sans activer de composant Codex
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Maintenir le socket de contrôle désactivé avant canari
+      ansible.builtin.systemd_service:
+        name: agentimpact-codex-control.socket
+        enabled: false
+        state: stopped
+
+    - name: Maintenir le daemon de contrôle désactivé avant canari
+      ansible.builtin.systemd_service:
+        name: agentimpact-codex-control.service
+        enabled: false
+        state: stopped
 
     - name: Confirmer que le worker reste inactif après installation
       ansible.builtin.command:
@@ -137,7 +224,3 @@
       register: codex_worker_active
       changed_when: false
       failed_when: codex_worker_active.rc == 0
-
-    - name: Recharger systemd sans activer de worker
-      ansible.builtin.systemd_service:
-        daemon_reload: true
