@@ -131,9 +131,17 @@ export class MissionStore {
     await this.get(id);
     return (await this.pool.query('SELECT * FROM mission_events WHERE mission_id=$1 AND id>$2::bigint ORDER BY id LIMIT 100', [id,after])).rows;
   }
+  private async assertFoundationOnly(c: PoolClient, id: string): Promise<void> {
+    // Works before 005; after allocation, only execution control may mutate lifecycle.
+    const result = await c.query(
+      "SELECT to_jsonb(m)->>'current_attempt_id' AS attempt_id FROM agent_missions m WHERE id=$1", [id]);
+    if (result.rows[0]?.attempt_id) throw new MissionError('execution_control_required');
+  }
+
   async transition(id: string, version: number, to: State, meta: Mutation): Promise<Mission> {
     return this.mutate(meta,{op:'transition',id,version,to},async c => {
       const row = await this.getTx(c,id);
+      await this.assertFoundationOnly(c,id);
       if (row.state_version !== version) throw new MissionError('state_version_conflict');
       assertTransition(row.lifecycle_state,to);
       const r = await c.query(`UPDATE agent_missions SET lifecycle_state=$2,state_version=state_version+1,updated_at=now()
@@ -149,6 +157,7 @@ export class MissionStore {
     const plan = parsed.data;
     return this.mutate(meta,{op:'plan',id,version,plan},async c => {
       const row = await this.getTx(c,id);
+      await this.assertFoundationOnly(c,id);
       if (row.state_version !== version) throw new MissionError('state_version_conflict');
       if (row.lifecycle_state !== 'planning') throw new MissionError('plan_requires_planning');
       const next = row.plan_version + 1;
