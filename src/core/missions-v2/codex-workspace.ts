@@ -5,11 +5,12 @@ import { spawn } from 'node:child_process';
 import { MissionError } from './model.js';
 
 export type RepoRegistration={repoId:string;mirrorPath:string;allowedPaths:string[]};
-export type GitCommand=(args:string[],cwd?:string)=>Promise<{exitCode:number;stdout:string}>;
+export type GitCommand=(args:string[],cwd?:string)=>Promise<{exitCode:number;stdout:string;overflowed?:boolean}>;
 export const nodeGitCommand:GitCommand=(args,cwd)=>new Promise((resolveCommand,reject)=>{
   const child=spawn('/usr/bin/git',args,{cwd,env:{PATH:'/usr/bin:/bin',HOME:'/nonexistent'},shell:false,stdio:['ignore','pipe','pipe']});
-  let stdout='',bytes=0;child.stdout.on('data',(b:Buffer)=>{bytes+=b.length;if(bytes<=1048576)stdout+=b.toString('utf8');});
-  child.stderr.on('data',()=>undefined);child.once('error',reject);child.once('close',code=>resolveCommand({exitCode:code??1,stdout}));
+  let stdout='',bytes=0,overflowed=false;child.stdout.on('data',(b:Buffer)=>{bytes+=b.length;
+    if(bytes<=1048576)stdout+=b.toString('utf8');else if(!overflowed){overflowed=true;child.kill('SIGTERM');}});
+  child.stderr.on('data',()=>undefined);child.once('error',reject);child.once('close',code=>resolveCommand({exitCode:code??1,stdout,overflowed}));
 });
 export class CodexWorkspaceManager {
   private repos:Map<string,RepoRegistration>;
@@ -47,13 +48,13 @@ export class CodexResultValidator {
   async validate(input:ValidationInput){const root=await realpath(input.workspaceRoot),workspace=await realpath(input.workspacePath);
     if(relative(root,workspace).startsWith('..'))throw new MissionError('workspace_escape');
     const untrackedResult=await this.git(['-C',workspace,'ls-files','--others','--exclude-standard','-z']);
-    if(untrackedResult.exitCode!==0)throw new MissionError('validation_git_failed');
+    if(untrackedResult.exitCode!==0||untrackedResult.overflowed)throw new MissionError('validation_git_failed');
     const untracked=untrackedResult.stdout.split('\0').filter(Boolean).map(file=>posix.normalize(file));
     if(untracked.length>500||untracked.some(file=>file.startsWith('../')||file.startsWith('/')||!allowedWorkspacePath(file,input.allowedPaths)))
       throw new MissionError('validation_path_forbidden');
     if(untracked.length){const intent=await this.git(['-C',workspace,'add','--intent-to-add','--',...untracked]);if(intent.exitCode!==0)throw new MissionError('validation_git_failed');}
-    const diff=await this.git(['-C',workspace,'diff','--binary',input.baseSha,'--']);if(diff.exitCode!==0)throw new MissionError('validation_git_failed');
-    const names=await this.git(['-C',workspace,'diff','--name-only','-z',input.baseSha,'--']);if(names.exitCode!==0)throw new MissionError('validation_git_failed');
+    const diff=await this.git(['-C',workspace,'diff','--binary',input.baseSha,'--']);if(diff.exitCode!==0||diff.overflowed)throw new MissionError('validation_git_failed');
+    const names=await this.git(['-C',workspace,'diff','--name-only','-z',input.baseSha,'--']);if(names.exitCode!==0||names.overflowed)throw new MissionError('validation_git_failed');
     const changed=names.stdout.split('\0').filter(Boolean).map(file=>posix.normalize(file));
     if(!changed.length||Buffer.byteLength(diff.stdout)>input.maxDiffBytes)throw new MissionError('validation_diff_invalid');
     if(changed.some(file=>file.startsWith('../')||file.startsWith('/')||!allowedWorkspacePath(file,input.allowedPaths)))throw new MissionError('validation_path_forbidden');

@@ -70,7 +70,6 @@ export type RuntimeInspection={state:'running'|'stopped'|'unknown';pid:number|nu
 export interface CodexRuntime { launch(invocation:CodexInvocation):Promise<{id:string;pid:number|null}>; inspect(id:string):Promise<RuntimeInspection>;
   cancel(id:string,graceMs:number):Promise<'stopped'|'unknown'>; collect(id:string,resultFile:string):Promise<{exitCode:number;output:unknown}>; }
 export interface CodexStateRecorder {register(work:CodexWork,config:CodexWorkerConfig):Promise<void>;process(attemptId:string,pid:number|null):Promise<void>;
-  result(attemptId:string,output:CodexOutput,resultHash:string):Promise<void>;artifacts(attemptId:string,items:CodexOutput['artifacts']):Promise<void>;
   metric(name:string,delta?:number):Promise<void>;}
 type Session={child:ChildProcessWithoutNullStreams;done:Promise<number>};
 export class NodeCodexRuntime implements CodexRuntime {
@@ -84,8 +83,9 @@ export class NodeCodexRuntime implements CodexRuntime {
     const id=randomUUID();this.sessions.set(id,{child,done});return{id,pid:child.pid??null};
   }
   async inspect(id:string):Promise<RuntimeInspection>{const s=this.sessions.get(id);return !s?{state:'unknown',pid:null}:
-    {state:s.child.exitCode===null?'running':'stopped',pid:s.child.pid??null};}
-  async cancel(id:string,graceMs:number){const s=this.sessions.get(id);if(!s)return'unknown';if(s.child.exitCode!==null)return'stopped';
+    {state:s.child.exitCode===null&&s.child.signalCode===null?'running':'stopped',pid:s.child.pid??null};}
+  async cancel(id:string,graceMs:number){const s=this.sessions.get(id);if(!s)return'unknown';
+    if(s.child.exitCode!==null||s.child.signalCode!==null)return'stopped';
     s.child.kill('SIGTERM');const stopped=await Promise.race([s.done.then(()=>true),new Promise<boolean>(r=>setTimeout(()=>r(false),graceMs))]);
     if(!stopped){s.child.kill('SIGKILL');await Promise.race([s.done,new Promise<number>(r=>setTimeout(()=>r(1),2000))]);}
     return (await this.inspect(id)).state==='stopped'?'stopped':'unknown';}

@@ -17,7 +17,7 @@ Environment=AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED=0
 Environment=CODEX_HOME=/var/lib/agentimpact-codex-worker/codex-home
 EnvironmentFile=-/etc/agentimpact/codex-worker.env
 UnsetEnvironment=SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN CODEX_API_KEY OPENAI_API_KEY
-LoadCredential=control-hmac:/etc/agentimpact/credentials/codex-worker-control-hmac
+LoadCredential=control-hmac:/etc/agentimpact/credentials/codex-worker-control-hmac/%i
 Environment=AGENTIMPACT_CODEX_CONTROL_CREDENTIAL=%d/control-hmac
 ExecStartPre=/usr/bin/test -S /run/agentimpact-codex-worker/control.sock
 ExecStartPre=/usr/bin/test -f /run/agentimpact-codex-worker/%i/assignment.json
@@ -30,6 +30,10 @@ KillSignal=SIGTERM
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
+PrivateMounts=yes
+TemporaryFileSystem=/run/credentials:ro /run/agentimpact-codex-worker:ro
+BindReadOnlyPaths=/run/agentimpact-codex-worker/control.sock
+BindPaths=/run/agentimpact-codex-worker/%i
 ProtectProc=invisible
 ProcSubset=pid
 ProtectSystem=strict
@@ -47,7 +51,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 UMask=0077
 ReadOnlyPaths=/opt/agentimpact/app/dist /opt/agentimpact/codex/bin/codex /etc/agentimpact/codex-repositories.json /var/lib/agentimpact-codex-worker/codex-home/agentimpact-worker.config.toml
-ReadWritePaths=/var/lib/agentimpact-codex-worker/workspaces/attempts/%i /var/lib/agentimpact-codex-worker/codex-home /var/lib/agentimpact-codex-worker/home /run/agentimpact-codex-worker/%i
+ReadWritePaths=/var/lib/agentimpact-codex-worker/workspaces/attempts/%i /var/lib/agentimpact-codex-worker/codex-home /var/lib/agentimpact-codex-worker/home
 InaccessiblePaths=/run/docker.sock /var/run/docker.sock /root /home /etc/agentimpact/credentials /opt/agentimpact/grokbot /opt/agentimpact/scripts /opt/agentimpact/tokens /opt/agentimpact/app/src /opt/agentimpact/app/.git /var/lib/hermes /var/lib/cursor-grok-worker
 LimitNOFILE=1024
 TasksMax=128
