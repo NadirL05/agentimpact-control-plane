@@ -1,10 +1,11 @@
+import type { ExecutionControl } from '../core/missions-v2/execution.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../core/hono-env.js';
 import { MissionStore } from '../core/missions-v2/store.js';
 import { admissionSchema, MissionError, planSchema, projectSchema, states } from '../core/missions-v2/model.js';
 
-export function createMissionsV2Api(store: MissionStore) {
+export function createMissionsV2Api(store: MissionStore, execution?: ExecutionControl) {
   const app = new Hono<AppEnv>();
   app.onError((error,c) => error instanceof MissionError
     ? c.json({error:error.code},error.status) : c.json({error:'v2_request_failed'},503));
@@ -21,7 +22,7 @@ export function createMissionsV2Api(store: MissionStore) {
     if (!data.success || data.data.source_type === 'slack') return c.json({error:'invalid_admission'},400);
     return c.json({item:await store.admit(data.data,meta(c.get('authScope'),c.req.header('Idempotency-Key')))},201);
   });
-  app.get('/missions/:id',async c => c.json({item:await store.get(c.req.param('id'))}));
+  app.get('/missions/:id',async c => c.json({item:execution ? await execution.status(c.req.param('id')) : await store.get(c.req.param('id'))}));
   app.get('/missions/:id/plan',async c => c.json({item:await store.plan(c.req.param('id'))}));
   app.get('/missions/:id/events',async c => {
     const after = c.req.query('after') ?? '0';
@@ -31,7 +32,7 @@ export function createMissionsV2Api(store: MissionStore) {
   app.get('/status',async c => {
     const project = projectSchema.safeParse(c.req.query('project'));
     if (!project.success) return c.json({error:'invalid_project'},400);
-    return c.json({items:await store.status(project.data),limit:100});
+    return c.json({items:execution ? await execution.statusProject(project.data) : await store.status(project.data),limit:100});
   });
   app.post('/missions/:id/plan',async c => {
     const body = z.object({state_version:z.number().int().nonnegative(),plan:planSchema}).strict().safeParse(await c.req.json().catch(() => null));
@@ -42,6 +43,45 @@ export function createMissionsV2Api(store: MissionStore) {
     const body = z.object({state_version:z.number().int().nonnegative(),state:z.enum(states)}).strict().safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({error:'invalid_state'},400);
     return c.json({item:await store.transition(c.req.param('id'),body.data.state_version,body.data.state,meta(c.get('authScope'),c.req.header('Idempotency-Key')))});
+  });
+  // These are operator commands. Worker claims/callbacks are internal library calls
+  // with an injected trusted identity, not HTTP endpoints authenticated by a shared scope.
+  app.post('/missions/:id/cancel',async c => {
+    if (!execution) return c.json({error:'v2_execution_disabled'},503);
+    const id = c.req.param('id');
+    if (!z.string().uuid().safeParse(id).success) return c.json({error:'invalid_mission_id'},400);
+    return c.json({item:await execution.cancel(id,meta(c.get('authScope'),c.req.header('Idempotency-Key')))});
+  });
+  app.post('/missions/:id/retry',async c => {
+    if (!execution) return c.json({error:'v2_execution_disabled'},503);
+    const id = c.req.param('id');
+    if (!z.string().uuid().safeParse(id).success) return c.json({error:'invalid_mission_id'},400);
+    // Reuse the stored fake policy; a caller cannot grant a new budget by request body.
+    return c.json({item:await execution.retry(id,meta(c.get('authScope'),c.req.header('Idempotency-Key')))});
+  });
+  app.post('/missions/:id/review',async c => {
+    if (c.get('authScope') !== 'admin') return c.json({error:'forbidden'},403);
+    if (!execution) return c.json({error:'v2_execution_disabled'},503);
+    const data = z.object({state:z.enum(['awaiting_nadir_approval','completed'])}).strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!data.success || !z.string().uuid().safeParse(c.req.param('id')).success) return c.json({error:'invalid_review'},400);
+    return c.json({item:await execution.review(c.req.param('id'),data.data.state,meta(c.get('authScope'),c.req.header('Idempotency-Key')))});
+  });
+  app.post('/missions/:id/approvals/bind',async c => {
+    if (c.get('authScope') !== 'admin') return c.json({error:'forbidden'},403);
+    if (!execution) return c.json({error:'v2_execution_disabled'},503);
+    const data = z.object({attempt_id:z.string().uuid(),action_id:z.string().uuid(),
+      action_type:z.enum(['execute','review']),payload_hash:z.string().regex(/^[0-9a-f]{64}$/),
+      head_sha:z.string().regex(/^[0-9a-f]{40}$/).optional()}).strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!data.success || !z.string().uuid().safeParse(c.req.param('id')).success) return c.json({error:'invalid_binding'},400);
+    const {attempt_id,...binding}=data.data;
+    return c.json({item:await execution.bindApproval(c.req.param('id'),attempt_id,binding,
+      meta(c.get('authScope'),c.req.header('Idempotency-Key')))});
+  });
+  app.get('/metrics',async c => {
+    if (!execution) return c.json({error:'v2_execution_disabled'},503);
+    return c.json(await execution.metrics());
   });
   return app;
 }

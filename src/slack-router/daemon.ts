@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { configuredExecution } from '../core/missions-v2/execution-config.js';
 import { MissionStore } from '../core/missions-v2/store.js';
 import { enabled, projects } from '../core/missions-v2/model.js';
 import { loadSlackRouterConfig, assertRouterHasNoCursorKeyEnv } from './config.js';
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
   assertRouterHasNoCursorKeyEnv();
   const config = loadSlackRouterConfig();
   const metrics = createMetrics();
+  const executionV2 = configuredExecution(getSlackRouterPool());
   const stores = createDispatchStores(config);
   const relays = createDefaultRelays(config);
   const missionsV2 = enabled() ? new MissionStore(getSlackRouterPool(), {enabled:true,projects:projects()}) : undefined;
@@ -64,6 +66,7 @@ async function main(): Promise<void> {
           logLine,
           relays,
           missionsV2,
+          executionV2,
         }, accepted);
       },
       onReconnect: () => {

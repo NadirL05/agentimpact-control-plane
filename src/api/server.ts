@@ -30,6 +30,7 @@ import demos from './demos.js';
 import training from './training.js';
 import proposals from './proposals.js';
 import gatewayInbox from './gateway-inbox.js';
+import { configuredExecution } from '../core/missions-v2/execution-config.js';
 import { createMissionsV2Api } from './missions-v2.js';
 import { MissionStore } from '../core/missions-v2/store.js';
 import { enabled, projects } from '../core/missions-v2/model.js';
@@ -67,7 +68,7 @@ app.route('/dashboard', dashboardRoutes);
 
 app.route('/leads', leads);
 app.route('/missions', missions);
-app.route('/api/v2', createMissionsV2Api(new MissionStore(pool, {enabled:enabled(),projects:projects()})));
+app.route('/api/v2', createMissionsV2Api(new MissionStore(pool, {enabled:enabled(),projects:projects()}),configuredExecution(pool)));
 app.route('/api/fullenrich', fullenrich);
 // Remplace l'ancien POST /api/approvals inline : celui-ci verifie le
 // payload_hash, l'expiration, l'auto-approbation et le rejeu.

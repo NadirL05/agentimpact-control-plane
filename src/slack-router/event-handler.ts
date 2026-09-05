@@ -1,3 +1,4 @@
+import type { ExecutionControl } from '../core/missions-v2/execution.js';
 import type { MissionStore } from '../core/missions-v2/store.js';
 import { handleV2Command } from './missions-v2.js';
 import { isHumanSlackMessage } from '../core/slack-router/event-filter.js';
@@ -25,6 +26,7 @@ export type SlackPoster = {
 export type EventHandlerDeps = {
   config: SlackRouterEnvConfig;
   missionsV2?: MissionStore;
+  executionV2?: ExecutionControl;
   poster: SlackPoster;
   metrics: RouterMetrics;
   logLine: (line: string) => void;
@@ -93,13 +95,18 @@ export async function handleSlackEnvelope(
 
   const message = parseMessageEvent(envelope);
   if (!message) return;
-  if (!deps.missionsV2 && isHumanSlackMessage(message) && /^MISSION V2(?:\s|$)/.test((message.text ?? '').trim())) {
+  const reservedControl = /^(?:CANCEL|RETRY)(?:\s|$)/.test((message.text ?? '').trim());
+  const nativeMention = messageMentionsNativeAgent(message.text ?? '', deps.config.nativeAgentUserIds);
+  if (!deps.missionsV2 && isHumanSlackMessage(message) && /^(?:MISSION V2|CANCEL|RETRY)(?:\s|$)/.test((message.text ?? '').trim())) {
     await deps.poster.postThreadReply(message.channel,threadReplyTs(message),'V2 désactivée.');
     return;
   }
-  if (deps.missionsV2 && isHumanSlackMessage(message) &&
-      !messageMentionsNativeAgent(message.text ?? '', deps.config.nativeAgentUserIds)) {
-    const response = await handleV2Command(message,deps.missionsV2,deps.config.nadirUserId,accepted);
+  if (isHumanSlackMessage(message) && reservedControl && nativeMention) {
+    await deps.poster.postThreadReply(message.channel,threadReplyTs(message),'Commande V2 refusée avec une mention d’agent natif.');
+    return;
+  }
+  if (deps.missionsV2 && isHumanSlackMessage(message) && !nativeMention) {
+    const response = await handleV2Command(message,deps.missionsV2,deps.config.nadirUserId,accepted,deps.executionV2);
     if (response !== null) {
       await deps.poster.postThreadReply(message.channel,threadReplyTs(message),response);
       return;
