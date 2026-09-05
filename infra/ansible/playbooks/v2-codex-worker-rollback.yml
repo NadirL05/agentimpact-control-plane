@@ -1,0 +1,30 @@
+---
+- name: Désactiver fonctionnellement le worker Codex V2
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Arrêter toutes les instances Codex sans supprimer les workspaces
+      ansible.builtin.command:
+        cmd: systemctl stop 'agentimpact-codex-worker@*.service'
+      changed_when: false
+      failed_when: false
+
+    - name: Forcer tous les feature flags OFF
+      ansible.builtin.copy:
+        dest: /etc/agentimpact/codex-worker.env
+        owner: root
+        group: agentimpact-codex-worker
+        mode: "0640"
+        content: |
+          AGENTIMPACT_V2_ENABLED=0
+          AGENTIMPACT_V2_EXECUTION_ENABLED=0
+          AGENTIMPACT_V2_CODEX_WORKER_ENABLED=0
+          AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED=0
+          AGENTIMPACT_CODEX_AUTH_MODE=unknown
+          AGENTIMPACT_CODEX_BILLING_MODE=unknown
+          AGENTIMPACT_CODEX_QUOTA_STATE=UNKNOWN
+
+    - name: Conserver les données pour réconciliation opérateur
+      ansible.builtin.debug:
+        msg: codex_worker_disabled_workspaces_preserved

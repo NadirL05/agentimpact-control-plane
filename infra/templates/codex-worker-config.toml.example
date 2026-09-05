@@ -1,0 +1,2 @@
+# This versioned profile is intentionally minimal. Safety-critical options are
+# fixed in argv and --strict-config rejects unknown future entries.
