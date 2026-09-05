@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { posix as path } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { assertV2, digest, MissionError, type State } from './model.js';
@@ -25,8 +26,9 @@ const proofSchema = z.object({ attempt_id: z.string().uuid(), worker_instance_id
   fencing_token: z.string().regex(/^[1-9][0-9]{0,18}$/) }).strict();
 const workspaceSchema = z.object({ repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/), base_sha: sha,
   branch: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/),
-  worktree_path: z.string().regex(/^\/fake\/[A-Za-z0-9][A-Za-z0-9_.\/-]{0,250}$/),
-}).strict().refine(w => ![w.repo,w.branch,w.worktree_path].some(v => v.includes('..') || v.includes('//')));
+  workspace_root: z.literal('/fake').optional(),
+  worktree_path: z.string().min(1).max(300),
+}).strict().refine(w => ![w.repo,w.branch].some(v => v.includes('..') || v.includes('//')));
 const optionsSchema = z.object({ worker_instance_id: identity.optional(), workspace: workspaceSchema.optional(),
   budget: z.object({ max_amount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     reserved_amount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), currency: z.literal('FAKE').optional(),
@@ -34,6 +36,20 @@ const optionsSchema = z.object({ worker_instance_id: identity.optional(), worksp
   payload_hash: hash.optional(), head_sha: sha.optional(), approval_required: z.boolean().optional(),
 }).strict();
 export type QueueOptions = z.infer<typeof optionsSchema>;
+export type CanonicalWorkspacePath = {workspace_root:'/fake';candidate_path:string;canonical_path:string};
+export type ProviderQuotaStatus = {quota_source:'none';quota_state:'UNKNOWN';quota_checked_at:null};
+const unknownProviderQuota: ProviderQuotaStatus = {quota_source:'none',quota_state:'UNKNOWN',quota_checked_at:null};
+
+/** Lexical normalization only. A real worker must additionally resolve symlinks
+ * inside its sandbox before touching the filesystem. */
+export function canonicalWorkspacePath(candidatePath: string,workspaceRoot = '/fake'): CanonicalWorkspacePath {
+  if (workspaceRoot !== '/fake' || !path.isAbsolute(candidatePath) || candidatePath.includes('\0'))
+    throw new MissionError('invalid_workspace_path',400);
+  const canonicalPath = path.normalize(candidatePath);
+  if (canonicalPath === workspaceRoot || !canonicalPath.startsWith(`${workspaceRoot}/`))
+    throw new MissionError('workspace_path_escape',400);
+  return {workspace_root:'/fake',candidate_path:candidatePath,canonical_path:canonicalPath};
+}
 const completionSchema = z.object({ outcome: z.enum(['completed','failed']),retryable: z.boolean().optional(),
   head_sha: sha.optional(),error_code: z.enum(['fake_failure','deadline_exceeded']).optional(),
 }).strict();
@@ -175,10 +191,28 @@ export class ExecutionControl {
     if (lock && r.rowCount) return this.approvalValid(c,a,actionType,headSha,false);
     return Boolean(r.rowCount);
   }
+  private bindingCurrent(m: ExecutionMission,a: Attempt,actionType: 'execute'|'review'): boolean {
+    return m.current_attempt_id === a.id && m.execution_payload_hash === a.execution_payload_hash &&
+      m.base_sha === a.base_sha && m.plan_version === a.plan_version &&
+      (actionType === 'review' || m.head_sha === a.head_sha);
+  }
+  private async approvalState(c: Pick<PoolClient,'query'>,m: ExecutionMission,a: Attempt,
+    actionType: 'execute'|'review',headSha: string|null): Promise<'valid'|'invalid'|'required'|'not_required'> {
+    const bindings = await c.query(`SELECT attempt_id FROM mission_approval_bindings
+      WHERE mission_id=$1 AND action_type=$2 ORDER BY created_at DESC,id DESC`,[m.id,actionType]);
+    const current = bindings.rows.some(row => row.attempt_id === a.id);
+    if (current) return this.bindingCurrent(m,a,actionType) && await this.approvalValid(c,a,actionType,headSha)
+      ? 'valid' : 'invalid';
+    if (bindings.rowCount) return 'invalid';
+    return a.approval_required || actionType === 'review' ? 'required' : 'not_required';
+  }
   private parseOptions(input: QueueOptions): QueueOptions {
     const p = optionsSchema.safeParse(input);
     if (!p.success) throw new MissionError('invalid_execution_options',400);
-    return p.data;
+    if (!p.data.workspace) return p.data;
+    const normalized = canonicalWorkspacePath(p.data.workspace.worktree_path,p.data.workspace.workspace_root);
+    return {...p.data,workspace:{...p.data.workspace,workspace_root:normalized.workspace_root,
+      worktree_path:normalized.canonical_path}};
   }
   private workerId(options: QueueOptions): string {
     const worker = options.worker_instance_id ?? [...this.config.workerIds].sort()[0];
@@ -225,8 +259,7 @@ export class ExecutionControl {
     });
   }
   private assertBinding(m: ExecutionMission,a: Attempt,launch = false): void {
-    if (m.execution_payload_hash !== a.execution_payload_hash || m.base_sha !== a.base_sha || m.plan_version !== a.plan_version ||
-        (launch && m.head_sha !== a.head_sha)) throw new MissionError('execution_binding_changed');
+    if (!this.bindingCurrent(m,a,launch ? 'execute':'review')) throw new MissionError('execution_binding_changed');
   }
   private async verify(c: PoolClient,proof: WorkerProof,authenticatedWorker: string,allowCompleted = false,launch = false): Promise<{a:Attempt;m:ExecutionMission}> {
     if (!proofSchema.safeParse(proof).success) throw new MissionError('invalid_worker_proof',400);
@@ -504,10 +537,11 @@ export class ExecutionControl {
       FROM mission_dependencies d JOIN agent_missions m ON m.id=d.depends_on_id WHERE d.mission_id=$1 ORDER BY d.plan_version,d.depends_on_id`,[id])).rows;
     const budget = a ? (await c.query('SELECT provider,currency,max_amount,reserved_amount,consumed_amount,status FROM budget_reservations WHERE attempt_id=$1',[a.id])).rows[0] ?? null : null;
     const reviewPhase = ['reviewing','awaiting_nadir_approval','completed'].includes(m.lifecycle_state);
-    const approval = a ? (await this.approvalValid(c,a,reviewPhase?'review':'execute',reviewPhase?m.head_sha:a.head_sha)
-      ? 'valid' : (a.approval_required || reviewPhase ? 'required':'not_required')) : 'not_required';
+    const approval = a ? await this.approvalState(c,m,a,reviewPhase?'review':'execute',reviewPhase?m.head_sha:a.head_sha) : 'not_required';
     return {...m,mission_state:m.lifecycle_state,active_attempt:a,attempt_number:a?.attempt_number ?? null,assigned_worker:a?.worker_instance_id ?? null,
-      ...timing,dependencies,budget,budget_state:budget?.status ?? 'missing',approval_state:approval};
+      ...timing,dependencies,budget,budget_state:budget?.status ?? 'missing',
+      budget_reservation_state:budget?.status ?? 'missing',...unknownProviderQuota,
+      approval_state:approval};
   }
   private async snapshot<T>(run:(c:PoolClient)=>Promise<T>): Promise<T> {
     this.gate(); const c = await this.pool.connect();

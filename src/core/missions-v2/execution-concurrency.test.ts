@@ -76,6 +76,22 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     expect((await pool.query('SELECT count(*)::int AS n FROM mission_attempts WHERE mission_id=ANY($1::uuid[])', [[first.id, second.id]])).rows).toEqual([{n: 1}]);
   });
 
+  it('rejects concurrent lexically equivalent canonical workspace paths', async () => {
+    const first = await readyMission(pool), second = await readyMission(pool);
+    const firstOptions = testExecutionOptions(), secondOptions = testExecutionOptions();
+    const suffix = randomUUID();
+    firstOptions.workspace.worktree_path = `/fake/${suffix}/.`;
+    secondOptions.workspace.worktree_path = `/fake//a/../${suffix}`;
+    const results = await Promise.allSettled([
+      execution.queue(first.id,testMutation(),firstOptions),
+      execution.queue(second.id,testMutation(),secondOptions),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect((await pool.query('SELECT worktree_path FROM worktree_leases WHERE mission_id=ANY($1::uuid[])',[[first.id,second.id]])).rows)
+      .toEqual([{worktree_path:`/fake/${suffix}`}]);
+  });
+
   it('checks dependencies after waiting for a concurrent failed prerequisite transaction', async () => {
     const dependency = await readyMission(pool);
     await pool.query("UPDATE agent_missions SET lifecycle_state='completed' WHERE id=$1", [dependency.id]);
