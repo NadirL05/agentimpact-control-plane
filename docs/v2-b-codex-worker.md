@@ -19,6 +19,13 @@ service. Le compte dédié `agentimpact-codex-worker` n'existait pas lors de la
 qualification et son mode d'authentification et de facturation restent inconnus.
 Le worker retourne donc `codex_auth_not_configured` et reste désactivé.
 
+L'état livré par V2-B est
+`CODEX_WORKER_READY_FOR_CONTROLLED_CANARY`. Il signifie que le code, le sandbox
+et la procédure sont prêts pour une qualification séparée après merge. Il ne
+signifie jamais `CODEX_WORKER_PRODUCTION_ENABLED` : l'authentification dédiée
+n'est pas configurée, les flags restent à zéro et le canari réel est interdit
+pendant cette mission.
+
 ## Contrat et autorités
 
 PostgreSQL reste l'autorité pour la mission, la tentative, la lease, le fence,
@@ -120,11 +127,38 @@ migration n'est pas appliquée en production par cette mission.
 1. Nadir valide l'identité et le mode de facturation dédiés au worker.
 2. L'opérateur installe l'IaC, vérifie le compte sans sudo et l'absence du groupe
    Docker, puis crée le credential HMAC hors Git.
-3. Depuis une session administrée, il lance `codex login --device-auth` sous
-   `agentimpact-codex-worker` avec son HOME et son CODEX_HOME dédiés. Il ne copie
-   aucun ancien `~/.codex` et ne met aucun token en argument ou dans les logs.
-4. Il exécute `codex login status` sous ce compte et renseigne seulement les
-   états non secrets d'authentification, facturation et quota après vérification.
+3. Après le merge seulement, depuis une session opérateur administrée, il lance
+   la connexion interactive sous l'identité système dédiée avec un environnement
+   vide :
+
+   ```sh
+   /usr/sbin/runuser --user agentimpact-codex-worker -- \
+     /usr/bin/env -i \
+     HOME=/var/lib/agentimpact-codex-worker/home \
+     CODEX_HOME=/var/lib/agentimpact-codex-worker/codex-home \
+     PATH=/opt/agentimpact/codex/bin:/usr/bin:/bin \
+     /opt/agentimpact/codex/bin/codex login --device-auth
+   ```
+
+   `env -i` empêche la transmission de l'environnement de l'opérateur, notamment
+   les variables API, GitHub et SSH. Aucun HOME, `~/.codex`, `auth.json`, profil
+   personnel ou session interactive de `agentimpact-runner` ne doit être copié,
+   lié ou monté. Aucun token ne doit être passé en argument ou journalisé.
+4. Sans lancer `codex exec` ni aucune requête modèle, il vérifie la connexion avec
+   exactement le même environnement dédié :
+
+   ```sh
+   /usr/sbin/runuser --user agentimpact-codex-worker -- \
+     /usr/bin/env -i \
+     HOME=/var/lib/agentimpact-codex-worker/home \
+     CODEX_HOME=/var/lib/agentimpact-codex-worker/codex-home \
+     PATH=/opt/agentimpact/codex/bin:/usr/bin:/bin \
+     /opt/agentimpact/codex/bin/codex login status
+   ```
+
+   Il renseigne seulement les états non secrets d'authentification, facturation
+   et quota après vérification. Il ne crée pas de clé API et ne configure aucun
+   fallback API.
 5. Il garde publisher à zéro et ne modifie les trois flags d'exécution qu'au
    moment du canari approuvé.
 
