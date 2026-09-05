@@ -38,3 +38,12 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Install isolated PostgreSQL test binaries
+        run: sudo apt-get update && sudo apt-get install -y postgresql-16
+
+      - name: Native PostgreSQL concurrency tests
+        run: bash ../infra/scripts/test-v2-a-postgres.sh
+
+      - name: Python consumer regression tests
+        run: python3 -m unittest discover -s ../infra/scripts -p 'test_*.py'

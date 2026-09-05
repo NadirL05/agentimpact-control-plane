@@ -4,7 +4,7 @@ import { isEventsApiEnvelope, type SlackSocketEnvelope } from './slack-envelope.
 export type SocketAck = (envelopeId: string) => void;
 
 export type SocketModeHandlers = {
-  onEnvelope: (envelope: SlackSocketEnvelope) => Promise<void>;
+  onEnvelope: (envelope: SlackSocketEnvelope, accepted?: () => void) => Promise<void>;
   onReconnect?: () => void;
   onFatalError?: (error: Error) => void;
 };
@@ -20,7 +20,7 @@ export type SocketModeTransport = {
   disconnect(): Promise<void>;
   isConnected(): boolean;
   setHandlers(handlers: {
-    onMessage: (data: unknown) => void;
+    onMessage: (data: unknown, acknowledge?: () => Promise<void>) => void;
     onDisconnect: () => void;
   }): void;
 };
@@ -68,11 +68,20 @@ export function createSocketModeRunner(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   transport.setHandlers({
-    onMessage: (raw) => {
-      if (!isEventsApiEnvelope(raw)) return;
-      ack(raw.envelope_id);
-      void handlers.onEnvelope(raw).catch((err) => {
-        handlers.onFatalError?.(err instanceof Error ? err : new Error(String(err)));
+    onMessage: (raw, acknowledge) => {
+      if (!isEventsApiEnvelope(raw)) {
+        void acknowledge?.().catch(() => handlers.onFatalError?.(new Error('socket_ack_failed')));
+        return;
+      }
+      let acknowledged = false;
+      const accepted = () => {
+        if (acknowledged) return;
+        acknowledged = true;
+        ack(raw.envelope_id);
+        void acknowledge?.().catch(() => handlers.onFatalError?.(new Error('socket_ack_failed')));
+      };
+      void handlers.onEnvelope(raw, accepted).then(accepted).catch((_err) => {
+        handlers.onFatalError?.(new Error('envelope_processing_failed'));
       });
     },
     onDisconnect: () => {
@@ -102,7 +111,7 @@ export function createSocketModeRunner(
       await transport.connect();
       connected = true;
       reconnectAttempt = 0;
-    } catch (_err) {
+    } catch {
       scheduleReconnect();
     }
   }
@@ -127,7 +136,7 @@ export function createSocketModeRunner(
 /** Fabrique un transport Slack Socket Mode (production). */
 export function createSlackSocketTransport(config: SlackRouterEnvConfig): SocketModeTransport {
   let client: import('@slack/socket-mode').SocketModeClient | null = null;
-  let onMessage: ((data: unknown) => void) | null = null;
+  let onMessage: ((data: unknown, acknowledge?: () => Promise<void>) => void) | null = null;
   let onDisconnect: (() => void) | null = null;
 
   return {
@@ -139,8 +148,7 @@ export function createSlackSocketTransport(config: SlackRouterEnvConfig): Socket
       const { SocketModeClient } = await import('@slack/socket-mode');
       client = new SocketModeClient({ appToken: config.appToken });
       client.on('slack_event', async (event: SocketModeSlackEvent) => {
-        await event.ack();
-        onMessage?.(normalizeSocketModeSlackEvent(event));
+        onMessage?.(normalizeSocketModeSlackEvent(event), () => event.ack());
       });
       client.on('disconnect', () => onDisconnect?.());
       await client.start();

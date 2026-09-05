@@ -13,7 +13,7 @@ pending="$(
 echo "$pending" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-approved = [m for m in data.get('items', []) if m.get('action_status') == 'approved']
+approved = [m for m in data.get('items', []) if m.get('orchestration_version', 1) == 1 and m.get('action_status') == 'approved']
 for m in approved:
     print(m['id'])
 " | while read -r mission_id; do

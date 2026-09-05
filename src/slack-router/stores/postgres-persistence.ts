@@ -1,3 +1,5 @@
+import { parseRoute } from '../../core/slack-router/parse-route.js';
+import { detectLongRunningMission } from '../../core/slack-router/long-running-mission.js';
 import { threadKey } from '../../core/slack-router/event-filter.js';
 import type { SlackMessageEvent, SlackRouteTarget } from '../../core/slack-router/types.js';
 import type { PersistencePrepareResult, RouterPersistence } from './persistence.js';
@@ -51,6 +53,18 @@ export async function prepareDispatchTx(
   const owner = ownerRow.rows[0]!.owner;
   if (!owner) {
     return { status: 'unowned_thread' };
+  }
+  if (owner === 'hermes' || owner === 'ana') {
+    const v2 = await client.query(`SELECT id FROM slack_gateway_inbox i
+      WHERE channel_id=$1 AND thread_ts=$2 AND coalesce(to_jsonb(i)->>'orchestration_version','1')='2' LIMIT 1`,
+      [event.channel,threadRootTs]);
+    if (v2.rowCount) return {status:'v2_thread'};
+    const prompt = parseRoute(event.text ?? '').prompt || (event.text ?? '').trim();
+    const decision = detectLongRunningMission(prompt);
+    await client.query(`INSERT INTO slack_gateway_inbox
+      (target,prompt,channel_id,thread_ts,user_id,event_id,status,delivery_mode,mission_title)
+      VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8)`,
+      [owner,prompt,event.channel,threadRootTs,event.user,event.event_id,decision.mode,decision.missionTitle]);
   }
   return { status: 'ready', owner, thread_key: tKey };
 }

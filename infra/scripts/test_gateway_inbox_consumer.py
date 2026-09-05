@@ -65,6 +65,17 @@ class GatewayInboxConsumerTest(unittest.TestCase):
             mod.run_hermes("prompt")
             self.assertEqual(mock_run.call_args[0][0][1], "agentimpact-growth")
 
+    def test_v2_item_never_invokes_worker_or_completion(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        mod = load_module()
+        with patch.object(mod, "api_post", return_value=(200, {"item": {
+            "id": "synthetic-mission", "target": "hermes", "orchestration_version": 2,
+            "prompt": "PRIVATE_INPUT_SENTINEL",
+        }})) as post, patch.object(mod, "run_hermes") as run:
+            self.assertEqual(mod.process_once("fixture"), "wrong_orchestration_version")
+            run.assert_not_called()
+            self.assertEqual(post.call_count, 1)
+
     def test_process_once_target_mismatch(self) -> None:
         os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
         mod = load_module()

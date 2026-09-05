@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { MissionStore } from '../core/missions-v2/store.js';
+import { enabled, projects } from '../core/missions-v2/model.js';
 import { loadSlackRouterConfig, assertRouterHasNoCursorKeyEnv } from './config.js';
 import {
   createDefaultRelays,
@@ -18,6 +20,7 @@ async function main(): Promise<void> {
   const metrics = createMetrics();
   const stores = createDispatchStores(config);
   const relays = createDefaultRelays(config);
+  const missionsV2 = enabled() ? new MissionStore(getSlackRouterPool(), {enabled:true,projects:projects()}) : undefined;
 
   if (!(await stores.persistence.healthcheck())) {
     throw new Error('postgres_unavailable');
@@ -53,14 +56,15 @@ async function main(): Promise<void> {
   const socket = createSocketModeRunner(
     transport,
     {
-      onEnvelope: async (envelope) => {
+      onEnvelope: async (envelope, accepted) => {
         await handleSlackEnvelope(envelope, stores, {
           config,
           poster,
           metrics,
           logLine,
           relays,
-        });
+          missionsV2,
+        }, accepted);
       },
       onReconnect: () => {
         metrics.socket_reconnects += 1;

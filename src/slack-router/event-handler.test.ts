@@ -442,3 +442,16 @@ describe('ROUTE CODEX smoke V1', () => {
     expect(metrics.hermes_runs_ok + metrics.hermes_runs_failed).toBe(0);
   });
 });
+
+
+it('reserved V2 command never falls back to a real relay while flag is off',async()=>{
+  const config=testConfig(), execute=vi.fn(), log=vi.fn();
+  const post=vi.fn(async()=>undefined);
+  await handleSlackEnvelope(envelope('E-v2','  MISSION V2 IMANE PRIVATE_INPUT_SENTINEL'),createTestDispatchStores(config),{
+    config,metrics:createMetrics(),poster:{postThreadReply:post},logLine:log,
+    relays:[{target:'hermes',execute}],
+  });
+  expect(execute).not.toHaveBeenCalled();
+  expect(post).toHaveBeenCalledWith('C1','100.001','V2 désactivée.');
+  expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_INPUT_SENTINEL');
+});
