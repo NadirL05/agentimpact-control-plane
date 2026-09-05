@@ -98,21 +98,48 @@
         group: agentimpact-codex-worker
         mode: "0440"
 
-    - name: Installer les entrypoints Codex V2 construits
-      ansible.builtin.copy:
-        src: "{{ repo_root }}/src/dist/codex-worker/"
-        dest: /opt/agentimpact/app/dist/codex-worker/
+    - name: Créer les répertoires runtime Codex V2
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
         owner: root
         group: root
-        directory_mode: "0755"
+        mode: "0755"
+      loop:
+        - /opt/agentimpact/app/dist/codex-worker
+        - /opt/agentimpact/app/dist/core/missions-v2
 
-    - name: Installer les modules de contrôle Codex V2 construits
+    - name: Installer uniquement les entrypoints Codex V2 runtime
       ansible.builtin.copy:
-        src: "{{ repo_root }}/src/dist/core/missions-v2/"
-        dest: /opt/agentimpact/app/dist/core/missions-v2/
+        src: "{{ repo_root }}/src/dist/codex-worker/{{ item }}"
+        dest: "/opt/agentimpact/app/dist/codex-worker/{{ item }}"
         owner: root
         group: root
-        directory_mode: "0755"
+        mode: "0644"
+      loop:
+        - control-daemon.js
+        - daemon.js
+
+    - name: Installer uniquement les modules Codex V2 runtime
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/src/dist/core/missions-v2/{{ item }}"
+        dest: "/opt/agentimpact/app/dist/core/missions-v2/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - codex-controller.js
+        - codex-publisher.js
+        - codex-store.js
+        - codex-supervisor.js
+        - codex-transport.js
+        - codex-worker.js
+        - codex-workspace.js
+        - execution-config.js
+        - execution.js
+        - model.js
+        - store.js
+        - supervisor.js
 
     - name: Installer le template systemd désactivé
       ansible.builtin.copy:

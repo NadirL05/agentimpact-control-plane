@@ -57,8 +57,10 @@ class CodexWorkerIaCTest(unittest.TestCase):
         self.assertNotIn('LoadCredential=github',self.control.lower())
 
     def test_control_daemon_is_deployed_and_rollback_stops_transport(self):
-        self.assertIn('src/dist/codex-worker/',self.play)
-        self.assertIn('src/dist/core/missions-v2/',self.play)
+        self.assertIn('control-daemon.js',self.play)
+        self.assertIn('codex-controller.js',self.play)
+        self.assertNotIn('control-daemon-fixture.js',self.play)
+        self.assertNotIn('codex-worker.test.js',self.play)
         self.assertIn('agentimpact-codex-control.service',self.play)
         self.assertIn('agentimpact-codex-control.socket',self.play)
         self.assertIn('agentimpact-codex-control.socket',self.rollback)
