@@ -1,0 +1,56 @@
+[Unit]
+Description=AgentImpact V2 Codex local control daemon
+Requires=agentimpact-codex-control.socket
+After=network.target agentimpact-codex-control.socket
+ConditionPathExists=/etc/agentimpact/codex-worker.env
+ConditionPathExists=/etc/agentimpact/codex-repositories.json
+
+[Service]
+Type=simple
+User=agentimpact-codex-worker
+Group=agentimpact-codex-worker
+WorkingDirectory=/var/lib/agentimpact-codex-worker/home
+Environment=AGENTIMPACT_V2_ENABLED=0
+Environment=AGENTIMPACT_V2_EXECUTION_ENABLED=0
+Environment=AGENTIMPACT_V2_CODEX_WORKER_ENABLED=0
+Environment=AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED=0
+EnvironmentFile=-/etc/agentimpact/codex-worker.env
+UnsetEnvironment=SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN CODEX_API_KEY OPENAI_API_KEY
+LoadCredential=database-url:/etc/agentimpact/credentials/codex-control-database-url
+LoadCredential=attempt-hmac:/etc/agentimpact/credentials/codex-worker-control-hmac
+ExecStart=/usr/bin/node /opt/agentimpact/app/dist/codex-worker/control-daemon.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=20s
+TimeoutStopSec=20s
+KillMode=control-group
+NoNewPrivileges=yes
+RuntimeDirectory=agentimpact-codex-control
+RuntimeDirectoryMode=0700
+UMask=0077
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadOnlyPaths=/opt/agentimpact/app/dist /etc/agentimpact/codex-repositories.json /run/agentimpact-codex-worker
+InaccessiblePaths=/run/docker.sock /var/run/docker.sock /root /home /etc/agentimpact/credentials /opt/agentimpact/grokbot /opt/agentimpact/tokens /opt/agentimpact/app/src /opt/agentimpact/app/.git
+LimitNOFILE=1024
+TasksMax=64
+MemoryMax=512M
+CPUQuota=100%
+
+[Install]
+# Started only through an explicitly started socket during an approved canary.
