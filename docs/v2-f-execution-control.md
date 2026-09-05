@@ -93,6 +93,13 @@ physique est explicitement séparé de la réconciliation logique.
 `worktree_leases` réserve repo, base SHA, branche et chemin, avec ownership
 par tentative et fence. Les contraintes d'unicité incluent la quarantaine.
 Les chemins sont synthétiques : le moteur ne lance aucune commande Git ou shell.
+Avant comparaison, réservation et persistance, le chemin candidat absolu est
+normalisé lexicalement contre `workspace_root=/fake`. Les segments `.` et `..`,
+les slash multiples et le slash final produisent un `canonical_path` unique.
+Un chemin relatif ou dont le résultat sort du workspace est refusé. Cette
+normalisation ne résout pas les liens symboliques : le vrai worker V2-B devra
+résoudre le chemin sur le filesystem depuis son sandbox, puis vérifier à nouveau
+son appartenance au workspace avant toute écriture.
 
 `budget_reservations` utilise des montants entiers, sans flottants ni
 facturation réelle. Le provider est fake. Absence de réservation, quota
@@ -101,6 +108,10 @@ transactionnelles et restent associées à la tentative historique.
 Le quota fake borne la somme des réservations actives. Il ne constitue pas
 un plafond de dépenses cumulées. Le modèle conserve les montants consommés,
 mais V2-F ne fournit aucun collecteur de consommation ni facturation réelle.
+STATUS sépare donc `budget_reservation_state` de `quota_state`. La source du
+quota fournisseur vaut `none`, son état vaut `UNKNOWN` et `quota_checked_at`
+reste nul. Une réservation fake ne constitue jamais une preuve de quota chez
+Codex, Cursor, Devin ou un autre fournisseur.
 
 Le contrôle vérifie toutes les dépendances persistées, y compris l'historique
 conservateur hérité de V2-A. Une dépendance incomplète, failed ou cancelled
@@ -176,6 +187,22 @@ suppressions et le TRUNCATE sont interdits par le modèle.
 Les migrations sont testées uniquement dans des bases jetables. Elles ne
 sont ajoutées à aucune commande d'application production.
 
+005 est une migration one-shot, volontairement non idempotente. Avant de
+l'appliquer, l'opérateur doit vérifier le registre de migrations de
+l'environnement cible. En l'absence de registre, il doit contrôler au minimum
+`to_regclass('mission_attempts')` et la présence attendue des colonnes,
+contraintes, index, triggers et métriques de 005. Si aucun objet n'existe, 005
+s'applique une fois sur un schéma 004 validé. Si tous les objets attendus sont
+présents, elle est considérée déjà appliquée et ne doit pas être rejouée. Un
+état partiel ou contradictoire impose un arrêt et une investigation ; il ne doit
+jamais être masqué par `IF NOT EXISTS`.
+
+Une réexécution directe échoue actuellement avec PostgreSQL `42701`
+(`duplicate_column`) dans la transaction. L'opérateur doit effectuer le
+`ROLLBACK`, confirmer que le schéma complet et les données précédentes sont
+intacts, puis enregistrer/réconcilier l'état de migration avant toute autre
+opération. Un test isolé couvre ce rejet et l'intégrité après rollback.
+
 Rollback fonctionnel : arrêter les admissions/claims, réconcilier les
 exécutions fake, désactiver F et conserver les données et les filtres V1.
 Une situation incertaine reste quarantainée. Ne jamais rendre une mission
@@ -188,11 +215,8 @@ PostgreSQL natif sur un socket Unix privé, avec plusieurs connexions et une
 DB jetable. La reprise simulée reconstruit le superviseur depuis PostgreSQL.
 Aucune connexion TCP ou credential de production n'est nécessaire.
 
-Validation locale finale : 315 tests TypeScript réussis ; 12 tests PostgreSQL
-natifs réussis séparément (9 F et 3 A) ; 34 tests Python réussis. Build et
-typecheck passent. ESLint passe avec les 12 avertissements préexistants ;
-le document passe markdownlint. Le scan des fichiers modifiés ne détecte
-aucun secret et aucun `.env` n'est suivi. Aucun test ne contacte un provider IA.
+Les nombres de validation propres à chaque PR sont consignés dans son rapport
+et dans la CI associée. Aucun test ne contacte un provider IA.
 
 ```bash
 cd src
