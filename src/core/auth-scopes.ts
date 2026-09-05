@@ -24,10 +24,10 @@ const BRIDGE_RULES: RouteRule[] = [
 
 const HERMES_RULES: RouteRule[] = [
   ...BRIDGE_RULES,
-  { method: 'GET', pattern: /^\/api\/v2\/status$/ },
+  { method: 'GET', pattern: /^\/api\/v2\/(status|metrics)$/ },
   { method: 'GET', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}(\/(plan|events))?$/i },
   { method: 'POST', pattern: /^\/api\/v2\/missions$/ },
-  { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(plan|state)$/i },
+  { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(plan|state|cancel|retry)$/i },
   { method: 'GET', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/api\/actions$/ },
@@ -64,6 +64,7 @@ const HERMES_RULES: RouteRule[] = [
 
 const ADMIN_RULES: RouteRule[] = [
   ...HERMES_RULES,
+  { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(review|approvals\/bind)$/i },
   { method: 'POST', pattern: /^\/api\/approvals$/ },
   { method: 'POST', pattern: /^\/api\/proposals\/[0-9a-f-]{36}\/promote$/i },
   { method: 'POST', pattern: /^\/api\/proposals\/[0-9a-f-]{36}\/reject$/i },

@@ -11,6 +11,7 @@ import { createFailingPersistence, createMemoryPersistence } from './stores/pers
 import { failClosed } from './relays/types.js';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import { dispatchSlackMessage } from './dispatch.js';
+import type { MissionStore } from '../core/missions-v2/store.js';
 
 function testConfig(overrides: Partial<SlackRouterEnvConfig> = {}): SlackRouterEnvConfig {
   return {
@@ -454,4 +455,29 @@ it('reserved V2 command never falls back to a real relay while flag is off',asyn
   expect(execute).not.toHaveBeenCalled();
   expect(post).toHaveBeenCalledWith('C1','100.001','V2 désactivée.');
   expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_INPUT_SENTINEL');
+});
+
+it.each(['CANCEL','RETRY'])('does not send %s to V1 when execution is disabled',async command=>{
+  const config=testConfig(),execute=vi.fn(),post=vi.fn(async()=>undefined);
+  await handleSlackEnvelope(envelope('F-control',`${command} d2bfaeb0-ed17-47e5-b77e-e7e020de38fb`),createTestDispatchStores(config),{
+    config,metrics:createMetrics(),poster:{postThreadReply:post},logLine:()=>undefined,
+    relays:[{target:'hermes',execute}],
+  });
+  expect(execute).not.toHaveBeenCalled();
+  expect(post).toHaveBeenCalledWith('C1','100.001','V2 désactivée.');
+});
+
+it.each(['CANCEL','RETRY'].flatMap(command=>['codex','ana'].flatMap(owner=>[false,true].map(mention=>({command,owner,mention})))))
+('reserves $command in $owner thread with native mention=$mention and F disabled',async({command,owner,mention})=>{
+  const config=testConfig({nativeAgentUserIds:NATIVE_IDS}),execute=vi.fn(),post=vi.fn(async()=>undefined);
+  const stores=createTestDispatchStores(config);
+  await dispatchSlackMessage({type:'message',event_id:'F-root',team_id:'T1',channel:'C1',user:'UNADIR001',
+    ts:'100.001',text:`ROUTE ${owner.toUpperCase()}: fixture`},stores,dispatchCfg(config));
+  const input=envelope('F-reserved',`${command} d2bfaeb0-ed17-47e5-b77e-e7e020de38fb${mention?' <@UCURSOR01>':''}`,'UNADIR001');
+  const missionsV2={allowsThread:async()=>false} as unknown as MissionStore;
+  await handleSlackEnvelope(input,stores,{config,missionsV2,metrics:createMetrics(),poster:{postThreadReply:post},
+    logLine:()=>undefined,relays:[{target:'codex',execute},{target:'ana',execute},{target:'hermes',execute},{target:'grok',execute}]});
+  expect(execute).not.toHaveBeenCalled();
+  expect(post).toHaveBeenCalledOnce();
+  expect(post.mock.calls[0]).toContain(mention?'Commande V2 refusée avec une mention d’agent natif.':'Commande V2 refusée dans ce fil.');
 });
