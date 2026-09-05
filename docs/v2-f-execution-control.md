@@ -4,8 +4,8 @@ Mission : `AGENTIMPACT-V2-F-EXECUTION-CONTROL`.
 
 ## Phase 0 et limites d'intervention
 
-BASE_SHA : `4c4d8eccb68b55169c30f71ca735419ddec8e0bf`, merge de la PR V2-A
-#36 dans `origin/main`, confirmé par fetch et `git ls-remote`.
+BASE_SHA : `4c4d8eccb68b55169c30f71ca735419ddec8e0bf`, merge de V2-A
+(PR #36) dans `origin/main`, confirmé par fetch et `git ls-remote`.
 Branche : `feat/v2-f-execution-control`, créée depuis ce SHA exact.
 
 Git contient les migrations 001 à 004 ; 004 est le socle utilisé par les
