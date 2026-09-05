@@ -40,6 +40,10 @@ export async function codexDatabase(path?: string) {
   if (!(exists.rows[0] as {name:string|null}).name) {
     await fixture.db.exec(await readFile(new URL('../../../migrations/006_v2_codex_worker.sql',import.meta.url),'utf8'));
   }
+  const hardened=await fixture.db.query("SELECT obj_description(to_regclass('public.worktree_leases_one_codex_writer_per_repo'),'pg_class') AS value");
+  if (!(hardened.rows[0] as {value:string|null}).value) {
+    await fixture.db.exec(await readFile(new URL('../../../migrations/007_v2_codex_predeploy_hardening.sql',import.meta.url),'utf8'));
+  }
   return fixture;
 }
 
