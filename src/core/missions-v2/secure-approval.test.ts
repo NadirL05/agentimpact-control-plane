@@ -12,6 +12,8 @@ const callback='agentimpact_codex_control';
 const owner='agentimpact_approval_validator';
 const relations=['mission_approval_bindings','agent_actions','agent_approvals','mission_attempts'] as const;
 const migration=await readFile(new URL('../../migrations/008_v2_controlled_canary_prerequisites.sql',import.meta.url),'utf8');
+const repair=await readFile(new URL('../../migrations/009_v2_secure_approval_repair.sql',import.meta.url),'utf8');
+const original=await readFile(new URL('./testing/vulnerable-008.sql',import.meta.url),'utf8');
 const scripts=await Promise.all(['001_cursor_proposals.sql','002_slack_router.sql','003_async_long_running_missions.sql',
   '004_v2_mission_foundation.sql','005_v2_execution_control.sql','006_v2_codex_worker.sql','007_v2_codex_predeploy_hardening.sql']
   .map(file=>readFile(new URL(`../../migrations/${file}`,import.meta.url),'utf8')));
@@ -19,7 +21,8 @@ const scripts=await Promise.all(['001_cursor_proposals.sql','002_slack_router.sq
 // Two genuine PostgreSQL WASM engines, disposable only. Native connection/lock
 // contention is tested separately by execution-concurrency.test.ts in CI.
 for(const [label,create] of [['PostgreSQL 16',()=>new PG16()],['PostgreSQL 18',()=>new PG18()]] as const){
-  describe(`${label} secure approval definer`,()=>{
+  for(const route of ['fresh008','original008repair009','secure008repair009'] as const){
+  describe(`${label} ${route} secure approval definer`,()=>{
     let db:ReturnType<typeof create>;
     let pool:Pool;
     let control:ExecutionControl;
@@ -43,10 +46,35 @@ for(const [label,create] of [['PostgreSQL 16',()=>new PG16()],['PostgreSQL 18',(
         GRANT SELECT,INSERT,UPDATE ON execution_metrics TO ${callback};
         GRANT USAGE ON SEQUENCE mission_events_id_seq TO ${callback};
         ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO approval_outsider;`);
-      await db.exec(migration);
+      await expect(db.exec(repair)).rejects.toMatchObject({code:'55000'});await db.exec('ROLLBACK');
+      await db.exec(route==='original008repair009'?original:migration);
       pool={query,connect:async()=>({query,release(){}})} as unknown as Pool;
       control=new ExecutionControl(pool,{enabled:true,projects:new Set(['IMANE']),workerIds:new Set(['codex-test']),
         workerTypes:new Set(['codex']),workspaceRoots:{codex:'/var/lib/agentimpact-codex-worker/workspaces'}});
+      if(route!=='fresh008'){
+        const valid=await seed();
+        const missing=await seed(false);
+        const oid=(await db.query('SELECT $1::regprocedure::oid AS oid',[signature])).rows;
+        const approvals=(await db.query('SELECT * FROM public.agent_approvals ORDER BY id')).rows;
+        await db.exec(`CREATE VIEW public.approval_dependency_probe AS SELECT public.mission_execution_approval_valid(NULL,NULL,NULL,NULL,NULL) AS valid`);
+        if(route==='original008repair009'){
+          await db.exec(`SET ROLE ${callback}`);await shadow(missing.params);
+          expect(await check(missing.params)).toBe(true);
+          await db.exec('RESET ROLE; DISCARD TEMP');
+        }
+        // Historic ACL drift, including delegated grants, must be removed.
+        await db.exec(`GRANT EXECUTE ON FUNCTION ${signature} TO ${callback} WITH GRANT OPTION;
+          SET ROLE ${callback}; GRANT EXECUTE ON FUNCTION ${signature} TO approval_outsider; RESET ROLE;`);
+        await db.exec(repair);
+        expect((await db.query('SELECT $1::regprocedure::oid AS oid',[signature])).rows).toEqual(oid);
+        expect((await db.query('SELECT * FROM public.agent_approvals ORDER BY id')).rows).toEqual(approvals);
+        expect((await db.query('SELECT * FROM public.approval_dependency_probe')).rows).toEqual([{valid:false}]);
+        await db.exec(`SET ROLE ${callback}`);
+        expect(await check(valid.params)).toBe(true);
+        await shadow(missing.params);expect(await check(missing.params)).toBe(false);
+        await db.exec('RESET ROLE; DISCARD TEMP');
+      }
+
     },30000);
     afterEach(async()=>{await db.exec('ROLLBACK; SET SESSION AUTHORIZATION postgres; RESET ROLE; SET search_path=public; DISCARD TEMP;');});
     afterAll(async()=>{await db?.close();});
@@ -169,10 +197,27 @@ for(const [label,create] of [['PostgreSQL 16',()=>new PG16()],['PostgreSQL 18',(
       expect(r).toEqual({rolcanlogin:false,rolsuper:false,rolcreaterole:false,rolcreatedb:false});
     });
 
+
+    if(route!=='fresh008'){
+      it('repeats 009 without changing the function identity, body or ACL',async()=>{
+        const sql='SELECT oid,proowner,proacl,proconfig,prosrc FROM pg_proc WHERE oid=$1::regprocedure';
+        const before=(await db.query(sql,[signature])).rows;
+        await db.exec(repair);
+        expect((await db.query(sql,[signature])).rows).toEqual(before);
+      });
+      it.each(['LOGIN','UPDATE'])('rejects owner privilege drift %s atomically',async drift=>{
+        await db.exec(drift==='LOGIN'?`BEGIN; ALTER ROLE ${owner} LOGIN`:`BEGIN; GRANT UPDATE ON public.agent_approvals TO ${owner}`);
+        await expect(db.exec(repair)).rejects.toMatchObject({code:'55000'});
+        await db.exec('ROLLBACK');
+        expect((await db.query<{rolcanlogin:boolean}>('SELECT rolcanlogin FROM pg_roles WHERE rolname=$1',[owner])).rows[0].rolcanlogin).toBe(false);
+      });
+    }
+
     it('refuses a second passage and preserves the installed function',async()=>{
       const before=(await db.query('SELECT pg_get_functiondef($1::regprocedure) AS definition',[signature])).rows;
       await expect(db.exec(migration)).rejects.toMatchObject({code:'55000'});await db.exec('ROLLBACK');
       expect((await db.query('SELECT pg_get_functiondef($1::regprocedure) AS definition',[signature])).rows).toEqual(before);
     });
   });
+}
 }

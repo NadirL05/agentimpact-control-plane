@@ -33,6 +33,7 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     }
     await pool.query('CREATE ROLE agentimpact_codex_control NOLOGIN');
     await pool.query(await readFile(new URL('../../migrations/008_v2_controlled_canary_prerequisites.sql', import.meta.url), 'utf8'));
+    await pool.query(await readFile(new URL('../../migrations/009_v2_secure_approval_repair.sql', import.meta.url), 'utf8'));
     execution = new ExecutionControl(pool, executionTestConfig);
     store = new MissionStore(pool, executionTestConfig);
   }, 30000);
