@@ -34,15 +34,18 @@ export type CodexOutput = z.infer<typeof codexOutputSchema>;
 export type CodexWorkerConfig = {enabled:boolean;publisherEnabled:boolean;binary:string;profile:string;
   authMode:'chatgpt'|'api_key'|'access_token'|'unknown';billingMode:'chatgpt_plan'|'api_billing'|'unknown';
   codexHome:string;workerHome:string;workspaceRoot:string;outputSchemaPath:string;runtimeRoot:string;quotaState:'UNKNOWN'|'ADMISSIBLE'|'EXHAUSTED';
-  blockedReason:'feature_disabled'|'codex_auth_not_configured'|'codex_billing_unknown'|'codex_quota_not_admissible'|null};
+  controlledCanaryAttemptId:string|null;executionMode:'standard'|'controlled_canary'|null;
+  blockedReason:'feature_disabled'|'codex_auth_not_configured'|'codex_billing_unknown'|'codex_quota_not_admissible'|'controlled_canary_invalid'|null};
 export function codexWorkerConfig(env = process.env): CodexWorkerConfig {
   const auth = z.enum(['chatgpt','api_key','access_token']).safeParse(env.AGENTIMPACT_CODEX_AUTH_MODE);
   const billing = z.enum(['chatgpt_plan','api_billing']).safeParse(env.AGENTIMPACT_CODEX_BILLING_MODE);
   const quota = z.enum(['UNKNOWN','ADMISSIBLE','EXHAUSTED']).safeParse(env.AGENTIMPACT_CODEX_QUOTA_STATE);
+  const canaryAttempt=z.string().uuid().safeParse(env.AGENTIMPACT_V2_CODEX_CANARY_ATTEMPT_ID);
   const baseEnabled = env.AGENTIMPACT_V2_ENABLED === '1' && env.AGENTIMPACT_V2_EXECUTION_ENABLED === '1';
   const requested=baseEnabled&&env.AGENTIMPACT_V2_CODEX_WORKER_ENABLED==='1';
+  const canary=quota.success&&quota.data==='UNKNOWN'&&canaryAttempt.success;
   const blockedReason=!requested?'feature_disabled':!auth.success?'codex_auth_not_configured':!billing.success?'codex_billing_unknown':
-    !quota.success||quota.data!=='ADMISSIBLE'?'codex_quota_not_admissible':null;
+    !quota.success||(!canary&&quota.data!=='ADMISSIBLE')?'codex_quota_not_admissible':null;
   return {enabled:blockedReason===null,
     publisherEnabled:false,
     binary:env.AGENTIMPACT_CODEX_BINARY ?? '/opt/agentimpact/codex/bin/codex',profile:'agentimpact-worker',
@@ -50,7 +53,24 @@ export function codexWorkerConfig(env = process.env): CodexWorkerConfig {
     codexHome:env.CODEX_HOME ?? '/var/lib/agentimpact-codex-worker/codex-home',workerHome:'/var/lib/agentimpact-codex-worker/home',
     workspaceRoot:'/var/lib/agentimpact-codex-worker/workspaces',
     outputSchemaPath:'/opt/agentimpact/app/codex-worker-output.schema.json',runtimeRoot:'/run/agentimpact-codex-worker',
-    quotaState:quota.success?quota.data:'UNKNOWN',blockedReason};
+    quotaState:quota.success?quota.data:'UNKNOWN',controlledCanaryAttemptId:canaryAttempt.success?canaryAttempt.data:null,
+    executionMode:blockedReason===null?(canary?'controlled_canary':'standard'):null,blockedReason};
+}
+
+/** UNKNOWN quota is permitted only for the one, explicitly configured and
+ * still-short-lived canary attempt. PostgreSQL separately binds approval,
+ * payload/head, budget, lease and fencing before launch. */
+export function assertCodexWorkAdmission(work: CodexWork,config: CodexWorkerConfig,now=Date.now()) {
+  if(!config.enabled)throw new MissionError(config.blockedReason??'codex_worker_disabled',503);
+  if(config.executionMode==='standard') {
+    if(config.quotaState!=='ADMISSIBLE'||work.quota_state!=='ADMISSIBLE')throw new MissionError('codex_quota_not_admissible',503);
+    return;
+  }
+  if(config.executionMode!=='controlled_canary'||config.controlledCanaryAttemptId!==work.attempt_id||work.quota_state!=='UNKNOWN'||work.max_attempts!==1||config.publisherEnabled)
+    throw new MissionError('controlled_canary_invalid',503);
+  const deadline=new Date(work.deadline_at).getTime(),lease=new Date(work.lease_expires_at).getTime();
+  if(!Number.isFinite(deadline)||!Number.isFinite(lease)||deadline<=now||lease<=now||deadline-now>300_000||lease>deadline)
+    throw new MissionError('controlled_canary_invalid',503);
 }
 
 export type CodexInvocation = {file:string;args:string[];cwd:string;stdin:string;env:Record<string,string>;resultFile:string};
@@ -97,8 +117,7 @@ export class NodeCodexRuntime implements CodexRuntime {
 export class CodexWorkerAdapter {
   constructor(private control:ExecutionControl,private runtime:CodexRuntime,private state:CodexStateRecorder,readonly config:CodexWorkerConfig){}
   validate(input:CodexWork):CodexWork{const parsed=codexWorkSchema.safeParse(input);if(!parsed.success)throw new MissionError('codex_contract_invalid',400);
-    if(!this.config.enabled)throw new MissionError(this.config.blockedReason??'codex_worker_disabled',503);
-    if(this.config.quotaState!=='ADMISSIBLE')throw new MissionError('codex_quota_not_admissible',503);
+    assertCodexWorkAdmission(parsed.data,this.config);
     if(new Date(input.deadline_at)<=new Date()||new Date(input.lease_expires_at)<=new Date())throw new MissionError('codex_contract_expired');return parsed.data;}
   proof(input:CodexWork):WorkerProof{return{attempt_id:input.attempt_id,worker_instance_id:input.worker_instance_id,fencing_token:input.fencing_token};}
   async claim(input:CodexWork,meta:Mutation):Promise<Attempt>{this.validate(input);await this.state.register(input,this.config);

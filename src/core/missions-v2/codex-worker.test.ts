@@ -6,7 +6,8 @@ import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {CodexStateStore} from './codex-store.js';
-import {CodexWorkerAdapter,NodeCodexRuntime,codexInvocation,codexOutputSchema,codexWorkerConfig,type CodexWork} from './codex-worker.js';
+import {CodexWorkerAdapter,NodeCodexRuntime,assertCodexWorkAdmission,codexInvocation,codexOutputSchema,codexWorkerConfig,type CodexWork} from './codex-worker.js';
+import {codexRepositoryRegistrySchema} from './codex-policy.js';
 import {CodexResultValidator,CodexWorkspaceManager} from './codex-workspace.js';
 import {CodexRecoverySupervisor} from './codex-supervisor.js';
 import {DisabledCodexPublisher,FakeCodexPublisher} from './codex-publisher.js';
@@ -124,12 +125,41 @@ describe('V2-B Codex worker boundary',()=>{
     expect((await control.status(mission.id)).mission_state).toBe('cancelled');
   });
 
-  it('keeps disabled, unknown quota and wrong worker callbacks outside execution',async()=>{
+  it('keeps disabled and ordinary UNKNOWN quota outside execution, with one bounded canary exception',async()=>{
     const state={register:vi.fn(),process:vi.fn(),result:vi.fn(),artifacts:vi.fn(),metric:vi.fn()};
     const adapter=new CodexWorkerAdapter({} as ExecutionControl,{} as NodeCodexRuntime,state,codexWorkerConfig({}));
     expect(()=>adapter.validate(contract())).toThrowError(expect.objectContaining({code:'feature_disabled'}));
     const unknown=new CodexWorkerAdapter({} as ExecutionControl,{} as NodeCodexRuntime,state,enabledConfig({AGENTIMPACT_CODEX_QUOTA_STATE:'UNKNOWN'}));
     expect(()=>unknown.validate(contract())).toThrowError(expect.objectContaining({code:'codex_quota_not_admissible'}));
+    const attemptId=randomUUID(),now=Date.now();
+    const canary=enabledConfig({AGENTIMPACT_CODEX_QUOTA_STATE:'UNKNOWN',AGENTIMPACT_V2_CODEX_CANARY_ATTEMPT_ID:attemptId});
+    const work=contract({attempt_id:attemptId,max_attempts:1,quota_state:'UNKNOWN',deadline_at:new Date(now+120000).toISOString(),lease_expires_at:new Date(now+60000).toISOString()});
+    expect(canary).toMatchObject({enabled:true,executionMode:'controlled_canary',controlledCanaryAttemptId:attemptId,quotaState:'UNKNOWN'});
+    expect(()=>assertCodexWorkAdmission(work,canary,now)).not.toThrow();
+    expect(()=>assertCodexWorkAdmission({...work,attempt_id:randomUUID()},canary,now)).toThrowError(expect.objectContaining({code:'controlled_canary_invalid'}));
+    expect(()=>assertCodexWorkAdmission({...work,max_attempts:2},canary,now)).toThrowError(expect.objectContaining({code:'controlled_canary_invalid'}));
+    expect(()=>assertCodexWorkAdmission({...work,deadline_at:new Date(now+301000).toISOString()},canary,now)).toThrowError(expect.objectContaining({code:'controlled_canary_invalid'}));
+  });
+
+  it('uses one strict registry policy for worker and controller, including trusted tests',()=>{
+    const full={repositories:[{repoId:'fixture',mirrorPath:'/srv/git/fixture.git',allowedPaths:['src/add.cjs'],maxDiffBytes:4096,
+      requiredTests:[{name:'addition',file:'/usr/bin/node',args:['test.cjs']}]}]};
+    expect(codexRepositoryRegistrySchema.parse(full)).toEqual(full);
+    expect(codexRepositoryRegistrySchema.safeParse({repositories:[{...full.repositories[0],requiredTests:[]}]}).success).toBe(false);
+    expect(codexRepositoryRegistrySchema.safeParse({repositories:[{repoId:'fixture',mirrorPath:'/srv/git/fixture.git',allowedPaths:['src']}]}).success).toBe(false);
+  });
+
+  it('installs a narrow approval-lock function without granting callback table UPDATE',async()=>{
+    const acl=await fixture.db.query<{execute:boolean;action_update:boolean;approval_update:boolean}>(`SELECT
+      has_function_privilege('agentimpact_codex_control','mission_execution_approval_valid(uuid,uuid,text,text,text)','EXECUTE') AS execute,
+      has_table_privilege('agentimpact_codex_control','agent_actions','UPDATE') AS action_update,
+      has_table_privilege('agentimpact_codex_control','agent_approvals','UPDATE') AS approval_update`);
+    expect(acl.rows).toEqual([{execute:true,action_update:false,approval_update:false}]);
+    const sql=await readFile(new URL('../../migrations/008_v2_controlled_canary_prerequisites.sql',import.meta.url),'utf8');
+    await expect(fixture.db.exec(sql)).rejects.toBeTruthy();
+    await fixture.db.exec('ROLLBACK');
+    expect((await fixture.db.query("SELECT to_regprocedure('mission_execution_approval_valid(uuid,uuid,text,text,text)') AS name")).rows)
+      .toEqual([{name:'mission_execution_approval_valid(uuid,uuid,text,text,text)'}]);
   });
 
   it('deduplicates repeated artifacts inside accepted completion persistence',async()=>{

@@ -31,6 +31,8 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     for (const migration of ['001_cursor_proposals.sql', '002_slack_router.sql', '003_async_long_running_missions.sql', '004_v2_mission_foundation.sql', '005_v2_execution_control.sql', '006_v2_codex_worker.sql', '007_v2_codex_predeploy_hardening.sql']) {
       await pool.query(await readFile(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'));
     }
+    await pool.query('CREATE ROLE agentimpact_codex_control NOLOGIN');
+    await pool.query(await readFile(new URL('../../migrations/008_v2_controlled_canary_prerequisites.sql', import.meta.url), 'utf8'));
     execution = new ExecutionControl(pool, executionTestConfig);
     store = new MissionStore(pool, executionTestConfig);
   }, 30000);

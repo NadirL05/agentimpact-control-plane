@@ -129,6 +129,7 @@
         mode: "0644"
       loop:
         - codex-controller.js
+        - codex-policy.js
         - codex-publisher.js
         - codex-store.js
         - codex-supervisor.js

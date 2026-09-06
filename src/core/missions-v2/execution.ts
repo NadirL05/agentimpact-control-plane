@@ -181,6 +181,11 @@ export class ExecutionControl {
     return null;
   }
   private async approvalValid(c: Pick<PoolClient,'query'>,a: Attempt,actionType: 'execute'|'review',headSha: string|null = a.head_sha,lock = false): Promise<boolean> {
+    if (lock) {
+      const protectedCheck=await c.query(`SELECT mission_execution_approval_valid($1,$2,$3,$4,$5::text) AS valid`,
+        [a.mission_id,a.id,actionType,approvalPayloadHash(a,actionType,headSha),headSha]);
+      return Boolean(protectedCheck.rows[0]?.valid);
+    }
     const r = await c.query(`SELECT 1 FROM mission_approval_bindings b
       JOIN agent_actions x ON x.id=b.action_id JOIN agent_approvals p ON p.action_id=x.id
       WHERE b.mission_id=$1 AND b.attempt_id=$2 AND b.action_type=$3 AND b.payload_hash=$4
@@ -189,8 +194,7 @@ export class ExecutionControl {
         AND x.approval_expires_at>clock_timestamp() AND p.payload_hash=b.payload_hash
         AND p.decision='approved' AND p.expires_at>clock_timestamp()
         AND p.approver='human-admin' AND p.decided_at >= (SELECT created_at FROM mission_attempts WHERE id=$2)
-      LIMIT 1 ${lock ? 'FOR SHARE OF x,p' : ''}`,[a.mission_id,a.id,actionType,approvalPayloadHash(a,actionType,headSha),headSha]);
-    if (lock && r.rowCount) return this.approvalValid(c,a,actionType,headSha,false);
+      LIMIT 1`,[a.mission_id,a.id,actionType,approvalPayloadHash(a,actionType,headSha),headSha]);
     return Boolean(r.rowCount);
   }
   private bindingCurrent(m: ExecutionMission,a: Attempt,actionType: 'execute'|'review'): boolean {
