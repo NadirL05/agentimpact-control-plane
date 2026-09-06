@@ -1,4 +1,4 @@
-# Migration 008: secure approval validation
+# Migrations 008–009: secure approval validation
 
 The original 008 could accept fabricated approvals from callback-owned temporary
 tables: function-level `search_path=public` implicitly searched temporary
@@ -16,16 +16,16 @@ migration rejects the same fixture with callback TEMP still granted. These are
 PostgreSQL WASM engines; native multi-connection locking is covered separately
 by the existing PostgreSQL 16 CI suite.
 
-The operator confirms production is at schema prefix 007: 008 was not applied
-and PR43 was not deployed. Local reproductions are disposable. No persistent
-staging or integration database was identified in the inspected repository
-configuration. Confirmation covering other persistent environments remains
-required before merge.
+Migration strategy: **PATCH_008_PLUS_009**. Nadir confirmed that the vulnerable
+008 was applied in at least one persistent environment outside production.
+Production remains confirmed at schema prefix 007, with 008 not applied and
+PR43 not deployed. No persistent database was accessed or modified by this fix.
 
-Current changes patch 008 only. Do not create 009 without evidence that old 008
-exists in a persistent database. If found, add and test a repair migration
-before merge. Do not infer absence from missing migration tracking, or execute
-the fresh-install migration over an existing function.
+Fresh installations apply corrected 008 followed by 009. Existing original008
+installations apply 009 directly: never replay 008, drop the function or install
+the vulnerable fixture. Existing secure008 installations also accept 009.
+`009_v2_secure_approval_repair.sql` uses CREATE OR REPLACE to retain the exact
+function signature, OID and dependent objects, and leaves approval data intact.
 
 ## Privilege boundary
 
@@ -50,6 +50,8 @@ Creation, owner transfer, PUBLIC/default EXECUTE revocation and callback grant
 share one transaction. Only the owner and `agentimpact_codex_control` have
 explicit EXECUTE. Database administrators retain their inherent authority.
 Installation requires a trusted DBA, who does not own the installed function.
+009 removes historic callback grant options and delegated EXECUTE grants too.
+Its CASCADE operations apply only to function grants, never tables or objects.
 
 The migration rejects callback schema CREATE and unexpected CREATE ACLs instead
 of globally revoking privileges that V1 might use. TEMP restriction is secondary
@@ -74,9 +76,12 @@ SELECT has_schema_privilege('agentimpact_codex_control','public','CREATE'),
        has_database_privilege('agentimpact_codex_control',current_database(),'TEMP');
 ```
 
-An existing unsafe definition requires STOP and the repair migration strategy.
-Never automatically drop or overwrite it. Any pre-existing owner role is rejected and
-requires DBA inventory of all its privileges and owned objects.
+An existing unsafe definition selects 009, after operator review and separate
+deployment authorization. Never drop the function or replay 008. Fresh 008
+rejects a pre-existing owner. 009 reuses it only if it owns this exact function,
+has no forbidden attributes/memberships, and has no direct rights or owned
+objects outside the validator scope. Unexpected column/table/schema grants,
+grant options or cross-database dependencies cause refusal and DBA inventory.
 
 ## Future installation and second passage
 
@@ -98,6 +103,13 @@ definition and privileges, then skip a correct installation. A matching name
 or schema prefix is insufficient. Do not mask partial application with
 `IF NOT EXISTS`. On mismatch keep flags OFF and stop for review.
 
+009 requires the exact existing five-argument function and rejects missing or
+ambiguous overloads. It is repeatable: replacement reinstalls the same secure
+body, owner and ACL while retaining the OID and data. The operator still checks
+catalog state before execution; an unknown owner/privilege state is not silently
+repaired. All DDL and grant changes are in one transaction. A failure requires
+ROLLBACK and review, with no attempt to revive the insecure definition.
+
 Functional rollback keeps all V2/Codex flags OFF and restores previously verified
 application artifacts if needed. Keep the secure function; never restore the
 vulnerable definition, delete approvals or blindly reverse grants. Database
@@ -112,3 +124,11 @@ actual callback claim/start, forbidden owner role switch, installer default ACL
 cleanup, installed catalog/body verification and one-shot rollback.
 Fixtures use synthetic approvals and fake budgets. No real worker, provider,
 publisher or production database is invoked.
+
+The same security matrix runs on three paths per engine: fresh secure008,
+original008 followed by 009, and secure008 followed by 009. The historical test
+fixture is pinned to the original commit and is never an installation migration.
+Repair tests prove the exploit before repair and refusal afterward, preservation
+of genuine approval rows, function OID and a dependent view, cleanup of delegated
+EXECUTE, repeated 009 stability, missing008 rejection, and transactional refusal
+of owner privilege drift. Installed bodies must equal the corrected008 body.
