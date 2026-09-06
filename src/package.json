@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-pg16": "npm:@electric-sql/pglite@0.2.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.21.0",
     "eslint": "^9.0.0",
