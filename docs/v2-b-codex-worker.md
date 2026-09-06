@@ -64,9 +64,18 @@ AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED=0
 
 Même demandée par flag, l'exécution reste bloquée si auth, facturation ou quota
 ne sont pas sourcés. Le quota `UNKNOWN` est un état de premier ordre et interdit
-le lancement. Une réservation AgentImpact en devise `FAKE` ne prouve aucun
-quota fournisseur. Il n'existe aucun fallback API ni changement automatique
+le lancement ordinaire. Une réservation AgentImpact en devise `FAKE` ne prouve
+aucun quota fournisseur. Il n'existe aucun fallback API ni changement automatique
 d'identité.
+
+Un unique canari contrôlé peut être explicitement préparé avec
+`AGENTIMPACT_V2_CODEX_CANARY_ATTEMPT_ID=<uuid>` : il ne contourne pas l'état
+`UNKNOWN` du fournisseur. Il est accepté seulement pour cet attempt, avec
+`max_attempts=1`, une deadline de cinq minutes maximum et un publisher désactivé.
+PostgreSQL impose toujours la réservation, lease, fence et l'approval liée à la
+mission, l'attempt, le payload et le SHA. Toute autre tentative, replay ou
+deadline invalide est refusé. Cette variable est absente par défaut et ne doit
+être installée qu'après le gate humain du canari.
 
 ## Isolation et arrêt
 
@@ -115,7 +124,7 @@ propre, appliquer le patch validé, relancer les tests, vérifier l'ownership de
 branche et retrouver la PR avant toute création. Elle ne pourra ni merger ni
 déployer.
 
-## Migrations 006, 007 et rollback
+## Migrations 006, 007, 008 et rollback
 
 006 s'applique en transaction sur une base isolée ayant reçu 004 puis 005. Elle
 étend les contraintes de type worker et de workspace, ajoute uniquement les
@@ -128,6 +137,14 @@ arrêt opérateur et ne doit pas être masqué par `IF NOT EXISTS`.
 Le rollback fonctionnel met les quatre flags à zéro, arrête les cgroups et
 conserve missions, attempts, événements et workspaces pour réconciliation. La
 migration n'est pas appliquée en production par cette mission.
+
+008 est additive et one-shot après la chaîne complète 004–007. Elle installe
+une fonction PostgreSQL `SECURITY DEFINER` à recherche fixe, exécutable seulement
+par le rôle callback dédié. Elle conserve les row locks nécessaires au contrôle
+d'approval sans accorder `UPDATE` sur `agent_actions` ni `agent_approvals`. Une
+absence de rôle ou de tables attendues fait échouer la migration ; elle ne masque
+pas un schéma partiel. L'opérateur applique 008 dans une transaction distincte,
+vérifie son objet et son ACL, puis conserve les flags à zéro jusqu'au gate canari.
 
 007 est une correction additive one-shot à appliquer uniquement après une 006
 complète. Elle vérifie la définition de l'index incorrect livré par 006 et le

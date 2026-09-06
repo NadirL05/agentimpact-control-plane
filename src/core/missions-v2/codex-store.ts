@@ -1,10 +1,11 @@
 import type {Pool,PoolClient} from 'pg';
 import {digest,MissionError} from './model.js';
-import type {CodexOutput, CodexStateRecorder, CodexWork, CodexWorkerConfig} from './codex-worker.js';
+import {assertCodexWorkAdmission,type CodexOutput, type CodexStateRecorder, type CodexWork, type CodexWorkerConfig} from './codex-worker.js';
 
 export class CodexStateStore implements CodexStateRecorder {
   constructor(private pool:Pool){}
   async register(work:CodexWork,config:CodexWorkerConfig){
+    assertCodexWorkAdmission(work,config);
     if(work.quota_state!==config.quotaState||work.workspace_path!==`${config.workspaceRoot}/attempts/${work.attempt_id}/workspace`)
       throw new MissionError('codex_attempt_binding_invalid',409);
     const contractHash=digest(work);

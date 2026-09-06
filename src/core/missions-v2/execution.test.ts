@@ -554,7 +554,7 @@ it('treats migration 005 as one-shot and rolls back a detected re-run', async ()
     expect((await isolated.db.query("SELECT to_regclass('public.mission_attempts') AS name")).rows)
       .toEqual([{name:'mission_attempts'}]);
     expect((await isolated.db.query('SELECT count(*)::int AS count FROM execution_metrics')).rows)
-      .toEqual([{count:10}]);
+      .toEqual([{count:19}]);
   } finally { await isolated.db.close(); }
 });
 

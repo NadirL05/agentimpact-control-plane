@@ -31,20 +31,24 @@ export async function executionDatabase(path?: string) {
   if (!(exists.rows[0] as {name: string | null}).name) {
     await fixture.db.exec(await readFile(new URL('../../../migrations/005_v2_execution_control.sql', import.meta.url), 'utf8'));
   }
-  return fixture;
-}
-
-export async function codexDatabase(path?: string) {
-  const fixture=await executionDatabase(path);
-  const exists=await fixture.db.query("SELECT to_regclass('public.codex_attempt_metadata') AS name");
-  if (!(exists.rows[0] as {name:string|null}).name) {
+  const codex = await fixture.db.query("SELECT to_regclass('public.codex_attempt_metadata') AS name");
+  if (!(codex.rows[0] as {name:string|null}).name) {
     await fixture.db.exec(await readFile(new URL('../../../migrations/006_v2_codex_worker.sql',import.meta.url),'utf8'));
   }
   const hardened=await fixture.db.query("SELECT obj_description(to_regclass('public.worktree_leases_one_codex_writer_per_repo'),'pg_class') AS value");
   if (!(hardened.rows[0] as {value:string|null}).value) {
     await fixture.db.exec(await readFile(new URL('../../../migrations/007_v2_codex_predeploy_hardening.sql',import.meta.url),'utf8'));
   }
+  await fixture.db.exec("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='agentimpact_codex_control') THEN CREATE ROLE agentimpact_codex_control NOLOGIN; END IF; END $$;");
+  const approvalFunction=await fixture.db.query("SELECT to_regprocedure('mission_execution_approval_valid(uuid,uuid,text,text,text)') AS name");
+  if (!(approvalFunction.rows[0] as {name:string|null}).name) {
+    await fixture.db.exec(await readFile(new URL('../../../migrations/008_v2_controlled_canary_prerequisites.sql',import.meta.url),'utf8'));
+  }
   return fixture;
+}
+
+export async function codexDatabase(path?: string) {
+  return executionDatabase(path);
 }
 
 export async function readyMission(pool: Pool, dependencies: Plan['dependencies'] = []) {

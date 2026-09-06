@@ -6,17 +6,12 @@ import {CodexControlDispatcher} from '../core/missions-v2/codex-controller.js';
 import {CodexStateStore} from '../core/missions-v2/codex-store.js';
 import {LocalWorkerServer,WorkerTransportAuthenticator,type SignedWorkerRequest} from '../core/missions-v2/codex-transport.js';
 import {codexWorkSchema,codexWorkerConfig,type CodexWork} from '../core/missions-v2/codex-worker.js';
+import {codexRepositoryRegistrySchema} from '../core/missions-v2/codex-policy.js';
 import {CodexResultValidator} from '../core/missions-v2/codex-workspace.js';
 import {ExecutionControl} from '../core/missions-v2/execution.js';
 import {digest,MissionError,projects} from '../core/missions-v2/model.js';
 
 const attemptId=z.string().uuid();
-const safeId=z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);
-const registrySchema=z.object({repositories:z.array(z.object({repoId:safeId,mirrorPath:z.string().startsWith('/'),
-  allowedPaths:z.array(z.string().regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,300}$/)).min(1).max(100),
-  maxDiffBytes:z.number().int().positive().max(10*1024*1024).default(1024*1024),
-  requiredTests:z.array(z.object({name:safeId,file:z.string().startsWith('/'),args:z.array(z.string().max(500)).max(50)}).strict()).max(30).default([]),
-}).strict()).min(1).max(20)}).strict();
 
 export class CodexControlDaemon {
   private stopping=false;
@@ -46,7 +41,7 @@ async function production(){
     authenticators.set(match[1],new WorkerTransportAuthenticator(await readFile(`${credentials}/${entry.name}`)));
   }
   const auth=(id:string)=>{const value=authenticators.get(id);if(!value)throw new MissionError('worker_transport_credential_missing',503);return value;};
-  const registry=registrySchema.parse(JSON.parse(await readFile('/etc/agentimpact/codex-repositories.json','utf8')));
+  const registry=codexRepositoryRegistrySchema.parse(JSON.parse(await readFile('/etc/agentimpact/codex-repositories.json','utf8')));
   const policy=new Map(registry.repositories.map(repo=>[repo.repoId,repo]));
   const assignments=new Map<string,CodexWork>();
   const assignment=async(id:string)=>{

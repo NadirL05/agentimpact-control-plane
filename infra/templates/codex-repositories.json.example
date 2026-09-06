@@ -3,7 +3,15 @@
     {
       "repoId": "canary-fixture",
       "mirrorPath": "/srv/agentimpact-git/canary-fixture.git",
-      "allowedPaths": ["src", "tests"]
+      "allowedPaths": ["src", "tests"],
+      "maxDiffBytes": 1048576,
+      "requiredTests": [
+        {
+          "name": "example-test",
+          "file": "/usr/bin/true",
+          "args": []
+        }
+      ]
     }
   ]
 }

@@ -1,14 +1,11 @@
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
-import {codexOutputSchema,codexWorkSchema,codexWorkerConfig,NodeCodexRuntime,type CodexWork} from '../core/missions-v2/codex-worker.js';
+import {assertCodexWorkAdmission,codexOutputSchema,codexWorkSchema,codexWorkerConfig,NodeCodexRuntime,type CodexWork} from '../core/missions-v2/codex-worker.js';
+import {codexRepositoryRegistrySchema} from '../core/missions-v2/codex-policy.js';
 import {allowedWorkspacePath,CodexWorkspaceManager} from '../core/missions-v2/codex-workspace.js';
 import {localWorkerRequest,WorkerTransportAuthenticator,type LocalWorkerMessage,type SignedWorkerRequest} from '../core/missions-v2/codex-transport.js';
 import {digest,MissionError} from '../core/missions-v2/model.js';
 import {z} from 'zod';
-
-const registryPath=z.string().regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,300}$/);
-const registrySchema=z.object({repositories:z.array(z.object({repoId:z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/),mirrorPath:z.string().startsWith('/'),
-  allowedPaths:z.array(registryPath).min(1).max(100)}).strict()).max(20)}).strict();
 const safeError=(error:unknown)=>error instanceof MissionError?error.code:'codex_worker_failed';
 
 async function main(){
@@ -22,9 +19,10 @@ async function main(){
   if(assignment.message.operation!=='assignment')throw new MissionError('worker_transport_rejected',403);
   if(assignment.message.payload_hash!==digest(assignment.payload))throw new MissionError('worker_transport_rejected',403);
   const work=codexWorkSchema.parse(assignment.payload) as CodexWork;if(work.attempt_id!==attemptId)throw new MissionError('codex_attempt_binding_invalid',409);
+  assertCodexWorkAdmission(work,config);
   if(work.quota_state!==config.quotaState||new Date(work.deadline_at).getTime()<=Date.now()||new Date(work.lease_expires_at).getTime()<=Date.now())
     throw new MissionError('codex_contract_expired',409);
-  const registry=registrySchema.parse(JSON.parse(await readFile('/etc/agentimpact/codex-repositories.json','utf8')));
+  const registry=codexRepositoryRegistrySchema.parse(JSON.parse(await readFile('/etc/agentimpact/codex-repositories.json','utf8')));
   const manager=new CodexWorkspaceManager(config.workspaceRoot,registry.repositories);
   if(work.allowed_paths.some(path=>!allowedWorkspacePath(path,manager.allowedPaths(work.repo_id))))throw new MissionError('validation_path_forbidden',403);
   const prepared=await manager.prepare(work.repo_id,work.attempt_id,work.base_sha,work.branch);
