@@ -21,6 +21,7 @@ export class WorkerTransportAuthenticator{
 export type SignedWorkerRequest={message:LocalWorkerMessage;signature:string;payload:unknown};
 export type AttemptAuthenticator=(attemptId:string)=>WorkerTransportAuthenticator;
 const MAX_FRAME_BYTES=1024*1024;
+const DEFAULT_REQUEST_TIMEOUT_MS=10000;
 export async function writeSignedAssignment(runtimeRoot:string,payload:{attempt_id:string;worker_instance_id:string;fencing_token:string},auth:WorkerTransportAuthenticator){
   if(runtimeRoot!=='/run/agentimpact-codex-worker')throw new MissionError('worker_runtime_root_invalid',400);
   const message:LocalWorkerMessage={attempt_id:payload.attempt_id,worker_instance_id:payload.worker_instance_id,fencing_token:payload.fencing_token,
@@ -51,10 +52,12 @@ export class LocalWorkerServer {
     if(this.ownsSocketPath)await unlink(this.socketPath).catch(error=>{if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;});this.ownsSocketPath=false;}
 }
 
-export async function localWorkerRequest(socketPath:string,request:SignedWorkerRequest,socketRoot='/run/agentimpact-codex-worker'):Promise<unknown>{
+export async function localWorkerRequest(socketPath:string,request:SignedWorkerRequest,socketRoot='/run/agentimpact-codex-worker',timeoutMs=DEFAULT_REQUEST_TIMEOUT_MS):Promise<unknown>{
   if(!socketPath.startsWith(`${socketRoot}/`))throw new MissionError('worker_socket_path_invalid',400);
+  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw new MissionError('worker_transport_timeout_invalid',400);
   return new Promise((resolveRequest,reject)=>{const socket=createConnection(socketPath);let body='';socket.setEncoding('utf8');
+    socket.setTimeout(timeoutMs,()=>{socket.destroy();reject(new MissionError('worker_transport_timeout',503));});
     socket.once('error',reject);socket.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>MAX_FRAME_BYTES){socket.destroy();reject(new MissionError('worker_transport_response_too_large'));}});
-    socket.once('connect',()=>socket.end(`${JSON.stringify(request)}\n`));socket.once('end',()=>{try{const response=JSON.parse(body) as {ok:boolean;result?:unknown;error?:string};
+    socket.once('connect',()=>socket.write(`${JSON.stringify(request)}\n`));socket.once('end',()=>{try{const response=JSON.parse(body) as {ok:boolean;result?:unknown;error?:string};
       if(!response.ok)reject(new MissionError(response.error??'worker_transport_error'));else resolveRequest(response.result);}catch{reject(new MissionError('worker_transport_invalid_response'));}});});
 }

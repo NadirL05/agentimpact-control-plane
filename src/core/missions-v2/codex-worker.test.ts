@@ -16,6 +16,7 @@ import {digest,MissionError} from './model.js';
 import {approvalPayloadHash,ExecutionControl} from './execution.js';
 import {codexDatabase,readyMission,testMutation} from './testing/execution-database.js';
 import type {PoolClient} from 'pg';
+import {CodexWorkerStatusReporter} from '../../codex-worker/daemon.js';
 
 const run=promisify(execFile);
 let fixture:Awaited<ReturnType<typeof codexDatabase>>;
@@ -83,6 +84,45 @@ describe('V2-B Codex worker boundary',()=>{
     const server=new LocalWorkerServer(path,serverAuth,async request=>({accepted:request.message.operation}),root);await server.listen();
     try{await expect(localWorkerRequest(path,{message,payload,signature:clientAuth.sign(message)},root)).resolves.toEqual({accepted:'progress'});}
     finally{await server.close();}
+  });
+
+  it('keeps the client half open while an authenticated control response is delayed',async()=>{
+    const root=join(temp,`delayed-socket-${randomUUID()}`);await mkdir(root);const path=join(root,'control.sock'),key=Buffer.alloc(32,8);
+    const serverAuth=new WorkerTransportAuthenticator(key),clientAuth=new WorkerTransportAuthenticator(key);
+    const payload={phase:'preparing'},message={attempt_id:randomUUID(),worker_instance_id:'codex-one',fencing_token:'2',operation:'progress',
+      timestamp:Math.floor(Date.now()/1000),nonce:randomUUID(),payload_hash:digest(payload)};
+    const server=new LocalWorkerServer(path,serverAuth,async()=>{await new Promise(resolve=>setTimeout(resolve,50));return{accepted:true};},root);
+    await server.listen();
+    try{await expect(localWorkerRequest(path,{message,payload,signature:clientAuth.sign(message)},root,500)).resolves.toEqual({accepted:true});}
+    finally{await server.close();}
+  });
+
+  it('times out a silent local control socket instead of hanging the worker',async()=>{
+    const root=join(temp,`silent-socket-${randomUUID()}`);await mkdir(root);const path=join(root,'control.sock'),key=Buffer.alloc(32,9);
+    const server=new LocalWorkerServer(path,new WorkerTransportAuthenticator(key),async()=>new Promise(()=>undefined),root);await server.listen();
+    const payload={},message={attempt_id:randomUUID(),worker_instance_id:'codex-one',fencing_token:'2',operation:'heartbeat',
+      timestamp:Math.floor(Date.now()/1000),nonce:randomUUID(),payload_hash:digest(payload)};
+    try{await expect(localWorkerRequest(path,{message,payload,signature:new WorkerTransportAuthenticator(key).sign(message)},root,20))
+      .rejects.toMatchObject({code:'worker_transport_timeout'});}
+    finally{await server.close();}
+  });
+
+  it('rejects an unbounded local transport timeout before opening a socket',async()=>{
+    const payload={},message={attempt_id:randomUUID(),worker_instance_id:'codex-one',fencing_token:'2',operation:'heartbeat',
+      timestamp:Math.floor(Date.now()/1000),nonce:randomUUID(),payload_hash:digest(payload)},auth=new WorkerTransportAuthenticator(Buffer.alloc(32,4));
+    await expect(localWorkerRequest('/tmp/control.sock',{message,payload,signature:auth.sign(message)},'/tmp',0))
+      .rejects.toMatchObject({code:'worker_transport_timeout_invalid'});
+  });
+
+  it('atomically records only a bounded worker stage and safe error code',async()=>{
+    const root=join(temp,`status-${randomUUID()}`),attemptId=randomUUID();await mkdir(join(root,attemptId),{recursive:true});
+    const reporter=new CodexWorkerStatusReporter(root,attemptId);await reporter.stage('workspace_prepared');await reporter.failure('worker_transport_timeout');
+    const status=JSON.parse(await readFile(join(root,attemptId,'worker-status.json'),'utf8'));
+    expect(status).toMatchObject({version:1,attempt_id:attemptId,stage:'workspace_prepared',outcome:'failed',error_code:'worker_transport_timeout'});
+    expect(Object.keys(status).sort()).toEqual(['attempt_id','error_code','outcome','stage','updated_at','version']);
+    await reporter.failure('unsafe error containing details');
+    const sanitized=await readFile(join(root,attemptId,'worker-status.json'),'utf8');
+    expect(JSON.parse(sanitized).error_code).toBe('codex_worker_failed');expect(sanitized).not.toContain('unsafe error containing details');
   });
 
   it('rejects a signature made with another attempt credential',async()=>{
