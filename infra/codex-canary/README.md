@@ -47,4 +47,3 @@ control-plane runtime (`publisherEnabled:false`); it is never a policy key.
 Root production installation and the real Codex canary remain separate gated
 operations. Offline tests still perform no worker start, provider call,
 migration, credential change or flag flip.
-
