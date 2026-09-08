@@ -187,6 +187,18 @@ describe('V2-B Codex worker boundary',()=>{
     expect(codexRepositoryRegistrySchema.parse(full)).toEqual(full);
     expect(codexRepositoryRegistrySchema.safeParse({repositories:[{...full.repositories[0],requiredTests:[]}]}).success).toBe(false);
     expect(codexRepositoryRegistrySchema.safeParse({repositories:[{repoId:'fixture',mirrorPath:'/srv/git/fixture.git',allowedPaths:['src']}]}).success).toBe(false);
+    expect(codexRepositoryRegistrySchema.safeParse({repositories:[{...full.repositories[0],base_sha:'a'.repeat(40)}]}).success).toBe(false);
+    expect(codexRepositoryRegistrySchema.safeParse({repositories:[{...full.repositories[0],publisher:false}]}).success).toBe(false);
+    expect(codexRepositoryRegistrySchema.safeParse({repositories:[{...full.repositories[0],publisherEnabled:false}]}).success).toBe(false);
+    const keys=Object.keys(full.repositories[0]).sort();
+    expect(keys).toEqual(['allowedPaths','maxDiffBytes','mirrorPath','repoId','requiredTests']);
+  });
+
+  it('keeps publisher disabled outside CodexPolicy and rejects policy-based activation',()=>{
+    expect(codexWorkerConfig({AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED:'1'})).toMatchObject({publisherEnabled:false});
+    const withPublisher={repositories:[{repoId:'fixture',mirrorPath:'/srv/git/fixture.git',allowedPaths:['src'],maxDiffBytes:100,
+      requiredTests:[{name:'t',file:'/usr/bin/node',args:[]}],publisher:true}]};
+    expect(codexRepositoryRegistrySchema.safeParse(withPublisher).success).toBe(false);
   });
 
   it('installs a narrow approval-lock function without granting callback table UPDATE',async()=>{
