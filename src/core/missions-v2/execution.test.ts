@@ -109,12 +109,15 @@ describe('V2-F isolated PostgreSQL execution control', () => {
     expect(canonicalWorkspacePath('/fake/job/.').canonical_path).toBe('/fake/job');
     expect(canonicalWorkspacePath('/fake//job').canonical_path).toBe('/fake/job');
     expect(canonicalWorkspacePath('/fake/a/../job').canonical_path).toBe('/fake/job');
+    expect(canonicalWorkspacePath('/fake/job/').canonical_path).toBe('/fake/job');
+    expect(canonicalWorkspacePath('/fake//job///').canonical_path).toBe('/fake/job');
+    expect(() => canonicalWorkspacePath('/fake/')).toThrow();
     expect(() => canonicalWorkspacePath('/fake/job/../../etc')).toThrow();
     expect(() => canonicalWorkspacePath('fake/job')).toThrow();
 
     const suffix = randomUUID(), first = await readyMission(fixture.pool), second = await readyMission(fixture.pool);
     const firstOptions = testExecutionOptions(), secondOptions = testExecutionOptions();
-    firstOptions.workspace.worktree_path = `/fake/${suffix}/.`;
+    firstOptions.workspace.worktree_path = `/fake/${suffix}/`;
     secondOptions.workspace.worktree_path = `/fake//${suffix}`;
     await execution.queue(first.id, testMutation(), firstOptions);
     await expect(execution.queue(second.id, testMutation(), secondOptions)).rejects.toMatchObject({code: 'execution_ownership_conflict'});
