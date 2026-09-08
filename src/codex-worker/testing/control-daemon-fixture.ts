@@ -10,7 +10,7 @@ if(!socketPath||!key)throw new Error('fixture_config_missing');
 const root=socketPath.slice(0,socketPath.lastIndexOf('/'));
 const auth=new WorkerTransportAuthenticator(Buffer.from(key,'hex'));
 const disabled=new CodexControlDispatcher({} as never,{} as never,async()=>{throw new MissionError('unexpected_assignment');},{} as never,
-  ()=>({maxDiffBytes:1,requiredTests:[]}),codexWorkerConfig({}));
+  ()=>({maxDiffBytes:1,requiredTests:[],mirrorPath:`${root}/unused-mirror`}),codexWorkerConfig({}));
 const dispatch:(request:SignedWorkerRequest)=>Promise<unknown>=process.env.CONTROL_TEST_ENABLED==='1'?async request=>{
   if(request.message.fencing_token!=='7')throw new MissionError('fencing_rejected',409);
   return{accepted:true,operation:request.message.operation};

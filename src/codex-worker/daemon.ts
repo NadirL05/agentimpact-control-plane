@@ -69,6 +69,7 @@ export async function runCodexWorker(){
     await reporter.stage('claiming');await send('claim',{contract:work});await reporter.stage('claimed');
     await reporter.stage('starting');await send('start',{});await reporter.stage('started');
     await reporter.stage('model_launching');
+    await manager.assertIdentity(work.repo_id,work.attempt_id,work.base_sha,work.branch,work.workspace_path);
     const runtime=new NodeCodexRuntime(),session=await runtime.launch((await import('../core/missions-v2/codex-worker.js')).codexInvocation(work,config));
     await reporter.stage('model_running');
     let heartbeatError:unknown=null,cancelling=false;const heartbeat=setInterval(()=>void send('heartbeat',{}).then(async response=>{
