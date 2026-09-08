@@ -79,11 +79,11 @@ describe.skipIf(!privateSocket)('V2-F native PostgreSQL concurrent execution con
     expect((await pool.query('SELECT count(*)::int AS n FROM mission_attempts WHERE mission_id=ANY($1::uuid[])', [[first.id, second.id]])).rows).toEqual([{n: 1}]);
   });
 
-  it('rejects concurrent lexically equivalent canonical workspace paths', async () => {
+  it.each(['/.', '/', '///'])('rejects concurrent equivalent workspace paths with suffix %s', async trailing => {
     const first = await readyMission(pool), second = await readyMission(pool);
     const firstOptions = testExecutionOptions(), secondOptions = testExecutionOptions();
     const suffix = randomUUID();
-    firstOptions.workspace.worktree_path = `/fake/${suffix}/.`;
+    firstOptions.workspace.worktree_path = `/fake/${suffix}${trailing}`;
     secondOptions.workspace.worktree_path = `/fake//a/../${suffix}`;
     const results = await Promise.allSettled([
       execution.queue(first.id,testMutation(),firstOptions),
