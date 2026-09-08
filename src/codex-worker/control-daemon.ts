@@ -61,7 +61,7 @@ async function production(){
     workspaceRoots:{codex:config.workspaceRoot},repoIds,leaseSeconds:90,deadlineSeconds:600,quotaAmount:10000});
   const dispatcher=new CodexControlDispatcher(control,new CodexStateStore(pool),assignment,new CodexResultValidator(),work=>{
     const entry=policy.get(work.repo_id);if(!entry)throw new MissionError('repo_not_allowed',403);
-    return{maxDiffBytes:entry.maxDiffBytes,requiredTests:entry.requiredTests};
+    return{maxDiffBytes:entry.maxDiffBytes,requiredTests:entry.requiredTests,mirrorPath:entry.mirrorPath};
   },config);
   const server=new LocalWorkerServer(socketPath,auth,request=>dispatcher.dispatch(request));
   const daemon=new CodexControlDaemon(server,socketActivationFd(),code=>process.stdout.write(`${code}\n`),()=>pool.end());daemon.installSignalHandlers();

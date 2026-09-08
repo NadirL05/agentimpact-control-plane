@@ -6,6 +6,29 @@ import { MissionError } from './model.js';
 
 export type RepoRegistration={repoId:string;mirrorPath:string;allowedPaths:string[]};
 export type GitCommand=(args:string[],cwd?:string)=>Promise<{exitCode:number;stdout:string;overflowed?:boolean}>;
+export type WorkspaceIdentity={attemptId:string;repoId:string;mirrorPath:string;branch:string};
+
+/** Compare the filesystem to the trusted assignment, never to worker output. */
+export async function assertWorkspaceIdentity(root:string,path:string,baseSha:string,identity:WorkspaceIdentity,git:GitCommand=nodeGitCommand){
+  if(!z.string().uuid().safeParse(identity.attemptId).success||!identity.repoId||!isAbsolute(identity.mirrorPath)||!/^[0-9a-f]{40}$/.test(baseSha))
+    throw new MissionError('workspace_identity_invalid',409);
+  const expected=resolve(root,'attempts',identity.attemptId,'workspace');
+  if(path!==expected||await realpath(root)!==resolve(root)||await realpath(path)!==expected)
+    throw new MissionError('workspace_identity_mismatch',409);
+  for(const relativePath of ['attempts',`attempts/${identity.attemptId}`,`attempts/${identity.attemptId}/workspace`,
+    `attempts/${identity.attemptId}/workspace/.git`]){
+    const info=await lstat(join(root,relativePath));
+    if(!info.isDirectory()||info.isSymbolicLink())throw new MissionError('workspace_identity_mismatch',409);
+  }
+  const check=async(args:string[],value:string)=>{const result=await git(['-C',path,...args]);
+    if(result.exitCode!==0||result.overflowed||result.stdout.trim()!==value)throw new MissionError('workspace_identity_mismatch',409);};
+  await check(['rev-parse','--show-toplevel'],expected);
+  await check(['rev-parse','--absolute-git-dir'],join(expected,'.git'));
+  await check(['remote'],'origin');
+  await check(['config','--local','--get-all','remote.origin.url'],identity.mirrorPath);
+  await check(['symbolic-ref','--quiet','HEAD'],`refs/heads/${identity.branch}`);
+  await check(['rev-parse','--verify','HEAD^{commit}'],baseSha);
+}
 export const nodeGitCommand:GitCommand=(args,cwd)=>new Promise((resolveCommand,reject)=>{
   const child=spawn('/usr/bin/git',args,{cwd,env:{PATH:'/usr/bin:/bin',HOME:'/nonexistent'},shell:false,stdio:['ignore','pipe','pipe']});
   let stdout='',bytes=0,overflowed=false;child.stdout.on('data',(b:Buffer)=>{bytes+=b.length;
@@ -23,6 +46,10 @@ export class CodexWorkspaceManager {
     if(relative(this.root,canonical).startsWith(`..${sep}`)||canonical===this.root)throw new MissionError('workspace_path_escape');
     return{workspace_root:this.root,candidate_path:join(this.root,'attempts',attemptId,'workspace'),canonical_path:canonical};}
   allowedPaths(repoId:string){const repo=this.repos.get(repoId);if(!repo)throw new MissionError('repo_not_allowed',403);return[...repo.allowedPaths];}
+  async assertIdentity(repoId:string,attemptId:string,baseSha:string,branch:string,path=this.candidate(attemptId).canonical_path){
+    const repo=this.repos.get(repoId);if(!repo)throw new MissionError('repo_not_allowed',403);
+    await assertWorkspaceIdentity(this.root,path,baseSha,{repoId,attemptId,branch,mirrorPath:repo.mirrorPath},this.git);
+  }
   async prepare(repoId:string,attemptId:string,baseSha:string,branch:string){const repo=this.repos.get(repoId);if(!repo)throw new MissionError('repo_not_allowed',403);
     if(!/^[0-9a-f]{40}$/.test(baseSha)||!/^(?!main$|master$)[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/.test(branch))throw new MissionError('workspace_contract_invalid',400);
     const workspace=this.candidate(attemptId);await mkdir(resolve(workspace.canonical_path,'..'),{recursive:true,mode:0o700});
@@ -31,10 +58,12 @@ export class CodexWorkspaceManager {
     for(const args of [['clone','--no-checkout','--no-local',repo.mirrorPath,workspace.canonical_path],
       ['-C',workspace.canonical_path,'checkout','--detach',baseSha],['-C',workspace.canonical_path,'switch','-c',branch]]){
       const result=await this.git(args);if(result.exitCode!==0)throw new MissionError('workspace_prepare_failed',503);
-    }return{...workspace,allowed_paths:repo.allowedPaths};}
+    }await this.assertIdentity(repoId,attemptId,baseSha,branch);
+    return{...workspace,allowed_paths:repo.allowedPaths};}
 }
 
 export type ValidationInput={workspaceRoot:string;workspacePath:string;baseSha:string;allowedPaths:string[];
+  identity?:WorkspaceIdentity;
   reportedPaths:string[];testResults:Array<{name:string;exit_code:number}>;maxDiffBytes:number;
   requiredTests?:Array<{name:string;file:string;args:string[]}>};
 export type TestCommand=(file:string,args:string[],cwd:string)=>Promise<number>;
@@ -46,6 +75,8 @@ export const allowedWorkspacePath=(file:string,allowed:string[])=>allowed.some(p
 export class CodexResultValidator {
   constructor(private git:GitCommand=nodeGitCommand,private testCommand:TestCommand=nodeTestCommand){}
   async validate(input:ValidationInput){const root=await realpath(input.workspaceRoot),workspace=await realpath(input.workspacePath);
+    const verifyIdentity=async()=>{if(input.identity)await assertWorkspaceIdentity(input.workspaceRoot,input.workspacePath,input.baseSha,input.identity,this.git);};
+    await verifyIdentity();
     if(relative(root,workspace).startsWith('..'))throw new MissionError('workspace_escape');
     const untrackedResult=await this.git(['-C',workspace,'ls-files','--others','--exclude-standard','-z']);
     if(untrackedResult.exitCode!==0||untrackedResult.overflowed)throw new MissionError('validation_git_failed');
@@ -53,6 +84,7 @@ export class CodexResultValidator {
     if(untracked.length>500||untracked.some(file=>file.startsWith('../')||file.startsWith('/')||!allowedWorkspacePath(file,input.allowedPaths)))
       throw new MissionError('validation_path_forbidden');
     if(untracked.length){const intent=await this.git(['-C',workspace,'add','--intent-to-add','--',...untracked]);if(intent.exitCode!==0)throw new MissionError('validation_git_failed');}
+    await verifyIdentity();
     const diff=await this.git(['-C',workspace,'diff','--binary',input.baseSha,'--']);if(diff.exitCode!==0||diff.overflowed)throw new MissionError('validation_git_failed');
     const names=await this.git(['-C',workspace,'diff','--name-only','-z',input.baseSha,'--']);if(names.exitCode!==0||names.overflowed)throw new MissionError('validation_git_failed');
     const changed=names.stdout.split('\0').filter(Boolean).map(file=>posix.normalize(file));
@@ -69,5 +101,6 @@ export class CodexResultValidator {
     if(input.testResults.some(test=>test.exit_code!==0))throw new MissionError('validation_tests_failed');
     const trustedTests=[];for(const test of input.requiredTests??[]){if(!isAbsolute(test.file)||test.args.some(arg=>arg.includes('\0')))throw new MissionError('validation_test_invalid',400);
       const exit_code=await this.testCommand(test.file,test.args,workspace);trustedTests.push({name:test.name,exit_code});if(exit_code!==0)throw new MissionError('validation_tests_failed');}
+    await verifyIdentity();
     return{state:'passed' as const,changed_paths:changed,diff_bytes:Buffer.byteLength(diff.stdout),trusted_tests:trustedTests};}
 }

@@ -7,7 +7,7 @@ import {digest,MissionError} from './model.js';
 import type {PoolClient} from 'pg';
 
 export type AssignmentProvider=(attemptId:string)=>Promise<CodexWork>;
-export type ValidationPolicy=(work:CodexWork)=>Pick<ValidationInput,'maxDiffBytes'|'requiredTests'>;
+export type ValidationPolicy=(work:CodexWork)=>Pick<ValidationInput,'maxDiffBytes'|'requiredTests'>&{mirrorPath:string};
 
 /** Authenticated Unix-socket dispatcher. It is deliberately not mounted on Hono. */
 export class CodexControlDispatcher {
@@ -52,9 +52,11 @@ export class CodexControlDispatcher {
         {outcome:'failed',retryable:parsed.data.retryable,error_code:'worker_failed'},meta,persist('failed'));}
     if(parsed.data.base_sha!==work.base_sha)throw new MissionError('codex_base_sha_mismatch',409);
     let validationError:unknown=null;
-    try{await this.validator.validate({workspaceRoot:this.config.workspaceRoot,workspacePath:work.workspace_path,baseSha:work.base_sha,
-      allowedPaths:work.allowed_paths,reportedPaths:parsed.data.changed_paths,testResults:parsed.data.test_results,maxDiffBytes:this.policy(work).maxDiffBytes,
-      requiredTests:this.policy(work).requiredTests});}
+    try{const policy=this.policy(work);if(!policy.mirrorPath)throw new MissionError('workspace_identity_policy_missing',409);
+      await this.validator.validate({workspaceRoot:this.config.workspaceRoot,workspacePath:work.workspace_path,baseSha:work.base_sha,
+      identity:{repoId:work.repo_id,attemptId:work.attempt_id,branch:work.branch,mirrorPath:policy.mirrorPath},
+      allowedPaths:work.allowed_paths,reportedPaths:parsed.data.changed_paths,testResults:parsed.data.test_results,maxDiffBytes:policy.maxDiffBytes,
+      requiredTests:policy.requiredTests});}
     catch(error){validationError=error;await this.state.metric('codex_validation_failures_total');}
     if(validationError){await this.control.complete(proof,work.worker_instance_id,
       {outcome:'failed',retryable:false,error_code:'validation_failed'},meta,persist('quarantined'));throw validationError;}
