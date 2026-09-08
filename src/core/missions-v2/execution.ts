@@ -47,7 +47,7 @@ export function canonicalWorkspacePath(candidatePath: string,workspaceRoot = '/f
   if (!path.isAbsolute(workspaceRoot) || path.normalize(workspaceRoot)!==workspaceRoot || workspaceRoot==='/' ||
     !path.isAbsolute(candidatePath) || candidatePath.includes('\0'))
     throw new MissionError('invalid_workspace_path',400);
-  const canonicalPath = path.normalize(candidatePath);
+  const canonicalPath = path.normalize(candidatePath).replace(/\/+$/, '');
   if (canonicalPath === workspaceRoot || !canonicalPath.startsWith(`${workspaceRoot}/`))
     throw new MissionError('workspace_path_escape',400);
   return {workspace_root:workspaceRoot,candidate_path:candidatePath,canonical_path:canonicalPath};

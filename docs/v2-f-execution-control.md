@@ -210,6 +210,15 @@ V2 à un consumer V1 ni réutiliser son workspace sans preuve d'arrêt.
 
 ## Validation et limites avant V2-B
 
+La revalidation F1 après la PR #38 complète la normalisation des slashes
+finaux : `/fake/job/`, `/fake/job///` et `/fake/job` ont désormais la même
+clé canonique de réservation. Les tests couvrent aussi leur concurrence.
+Cette correction ne réécrit aucune lease historique. Avant une activation,
+les anciennes leases comportant un slash final doivent être inventoriées et
+réconciliées ; aucune suppression ni migration automatique n'est introduite.
+La normalisation reste lexicale et ne remplace pas la résolution contrôlée des
+symlinks par le worker.
+
 Les tests SQL exécutent 004 puis 005 sur PGlite. Les courses réelles utilisent
 PostgreSQL natif sur un socket Unix privé, avec plusieurs connexions et une
 DB jetable. La reprise simulée reconstruit le superviseur depuis PostgreSQL.
