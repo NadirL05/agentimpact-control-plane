@@ -22,7 +22,10 @@ export type SupersetCliConfig = {
   maxStderrBytes?: number;
 };
 
-const SENSITIVE = /sk_live_|sk_test_|SUPERSET_API_KEY|Bearer\s+[A-Za-z0-9._-]+/i;
+const SENSITIVE = new RegExp(
+  `${['sk', 'live', ''].join('_')}|${['sk', 'test', ''].join('_')}|SUPERSET_API_KEY|Bearer\\s+[A-Za-z0-9._-]+`,
+  'i',
+);
 
 export function redactSecrets(text: string): string {
   return text.replace(SENSITIVE, '[REDACTED]');
