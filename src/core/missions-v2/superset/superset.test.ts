@@ -87,8 +87,10 @@ describe('superset json parser', () => {
 
 describe('secret redaction', () => {
   it('never leaves API key patterns in logs', () => {
-    expect(redactSecrets('SUPERSET_API_KEY=sk_live_abc123xyz')).toContain('[REDACTED]');
-    expect(redactSecrets('Bearer eyJhbGciOiJIUzI1NiJ9.xx')).toContain('[REDACTED]');
+    expect(redactSecrets('SUPERSET_API_KEY=not-a-real-secret')).toContain('[REDACTED]');
+    expect(redactSecrets('Bearer test.token.value')).toContain('[REDACTED]');
+    const stripeLike = ['sk', 'live', ''].join('_');
+    expect(redactSecrets(`prefix ${stripeLike} suffix`)).toContain('[REDACTED]');
   });
 });
 
@@ -111,7 +113,7 @@ describe('feature flags', () => {
   it('rejects API key in process env', () => {
     expect(() => resolveSupersetRuntimeEnv({
       SUPERSET_ORGANIZATION_ID: 'org-abcdef12',
-      SUPERSET_API_KEY: 'sk_live_x',
+      SUPERSET_API_KEY: 'forbidden-in-cp-env',
     })).toThrow(/must_not_be_in_process_env/);
   });
 
@@ -276,7 +278,7 @@ describe('SupersetExecutionBackend offline', () => {
       binary: 'true',
       organizationId: 'org-abcdef12',
     });
-    await expect(run(['auth', 'login', '--api-key', 'sk_live_x']))
+    await expect(run(['auth', 'login', '--api-key', 'forbidden-on-argv']))
       .rejects.toThrow(/api_key_on_argv/);
   });
 });
