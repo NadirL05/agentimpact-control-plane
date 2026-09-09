@@ -2,9 +2,24 @@ import type { Pool } from 'pg';
 import { enabled, projects } from './model.js';
 import { ExecutionControl } from './execution.js';
 import {codexWorkerConfig} from './codex-worker.js';
+import {
+  isSupersetExecutionEnabled,
+  resolveExecutionBackendMode,
+  type ExecutionBackendMode,
+} from './superset/config.js';
 
 export function executionEnabled(env = process.env): boolean {
   return enabled(env) && env.AGENTIMPACT_V2_EXECUTION_ENABLED === '1';
+}
+
+/** custom (default) | superset — Superset stays OFF unless explicitly flagged. */
+export function executionBackendMode(env = process.env): ExecutionBackendMode {
+  return resolveExecutionBackendMode(env);
+}
+
+/** Live Superset mission execution — false by default; no scheduler rewrite. */
+export function supersetExecutionLive(env = process.env): boolean {
+  return isSupersetExecutionEnabled(env);
 }
 
 /** Configuration never starts a process. The Codex identity is admitted only
