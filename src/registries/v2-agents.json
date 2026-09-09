@@ -1,12 +1,19 @@
 {
   "contract": "v2-foundation-future-registry",
   "agents": [
-    {"id":"hermes","role":"decision_orchestrator","enabled":false,"adapter":null},
-    {"id":"codex","role":"development","enabled":false,"adapter":"codex-cli-1.0.0"},
-    {"id":"cursor","role":"development","enabled":false,"adapter":null},
-    {"id":"devin","role":"development","enabled":false,"adapter":null},
-    {"id":"grok","role":"review","enabled":false,"adapter":null},
-    {"id":"grok-bot","role":"review","enabled":false,"adapter":null},
-    {"id":"ana","role":"growth","enabled":false,"adapter":null}
-  ]
+    {"id":"hermes","role":"decision_orchestrator","enabled":false,"adapter":null,"execution_backend":null},
+    {"id":"codex","role":"development","enabled":false,"adapter":"codex-cli-1.0.0","execution_backend":"superset","superset_ready":true,"capabilities":["workspace.create","agent.start","terminal.read","terminal.send","agent.stop","tests.run","diff.read"]},
+    {"id":"cursor","role":"development","enabled":false,"adapter":null,"execution_backend":"superset","superset_ready":false,"capabilities":["workspace.create","agent.start","terminal.read","terminal.send","agent.stop","tests.run","diff.read"]},
+    {"id":"devin","role":"development","enabled":false,"adapter":null,"execution_backend":null},
+    {"id":"grok","role":"review","enabled":false,"adapter":null,"execution_backend":"superset","superset_ready":false},
+    {"id":"grok-bot","role":"review","enabled":false,"adapter":null,"execution_backend":"superset","superset_ready":false},
+    {"id":"ana","role":"growth","enabled":false,"adapter":null,"execution_backend":"superset","superset_ready":false}
+  ],
+  "jarvis_operator_policy": {
+    "AUTO": ["status","workspace.create","agent.start","terminal.read","terminal.send","agent.stop","tests.run","diff.read"],
+    "APPROVAL": ["push","PR","merge","deploy","migrations","secrets","destructive","large_spend"],
+    "DENY": ["unrestricted_root_shell","docker.sock","arbitrary_secret_reads","bypass_approvals"],
+    "path": "Jarvis → Hermès typed operator API → Control Plane → SupersetExecutionBackend"
+  },
+  "notes": "All agents remain disabled. Superset execution backend flag OFF by default. No business canary in this adapter PR."
 }
