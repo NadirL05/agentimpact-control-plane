@@ -127,10 +127,13 @@ export class SupersetExecutionBackend implements ExecutionBackend {
   }
 
   async listWorkspaces(projectId?: string): Promise<WorkspaceRef[]> {
-    const args = ['workspaces', 'list', '--json'];
+    // Keep --json last so the RPC argv mapper can recognize the shape.
+    let args: string[];
     if (projectId) {
       requireUuid(projectId, 'project_id');
-      args.push('--project', projectId);
+      args = ['workspaces', 'list', '--project', projectId, '--json'];
+    } else {
+      args = ['workspaces', 'list', '--json'];
     }
     const { result } = await runJsonCommand(this.run, args);
     if (result.exitCode !== 0) throw new SupersetParseError('workspace_list_failed');

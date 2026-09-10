@@ -1,0 +1,43 @@
+[Unit]
+Description=AgentImpact bounded Superset RPC bridge
+After=network-online.target agentimpact-superset-private.socket
+Wants=network-online.target
+Requires=agentimpact-superset-rpc.socket
+Requires=agentimpact-superset-private.socket
+
+[Service]
+Type=simple
+User=agentimpact-superset-rpc
+Group=agentimpact-superset-rpc
+WorkingDirectory=/var/lib/agentimpact-superset-rpc
+Environment=HOME=/var/lib/agentimpact-superset-rpc/home
+Environment=PYTHONUNBUFFERED=1
+Environment=AGENTIMPACT_V2_EXECUTION_ENABLED=0
+Environment=AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED=0
+ExecStart=/usr/bin/python3 -I -B /opt/agentimpact/superset-rpc/bridge.py --role public --upstream-socket /run/agentimpact-superset-rpc/executor.sock
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=20
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+InaccessiblePaths=/root /home/agentimpact-runner /var/lib/agentimpact-codex-worker /var/run/docker.sock /run/docker.sock /opt/agentimpact/app /etc/agentimpact/tokens /etc/agentimpact/credentials /etc/credstore /var/lib/agentimpact-superset
+ReadWritePaths=/var/lib/agentimpact-superset-rpc
+
+[Install]
+WantedBy=multi-user.target

@@ -54,11 +54,21 @@ services:
       DEMO_PUBLIC_BASE: ${DEMO_PUBLIC_BASE:-https://demo.agentimpact.fr}
       TRAINING_FORM_TOKEN: ${TRAINING_FORM_TOKEN:?TRAINING_FORM_TOKEN manquant dans .env}
       DASHBOARD_ACCESS_TOKEN: ${DASHBOARD_ACCESS_TOKEN:?DASHBOARD_ACCESS_TOKEN manquant dans .env}
+      # Superset public RPC bridge only — never mount private executor / credstore / docker socket.
+      AGENTIMPACT_SUPERSET_RPC_SOCKET: /run/agentimpact-superset-rpc/bridge.sock
+      AGENTIMPACT_V2_EXECUTION_ENABLED: "0"
+      AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED: "0"
+      AGENTIMPACT_EXECUTION_BACKEND: custom
+      AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: "0"
+      AGENTIMPACT_JARVIS_ENABLED: "0"
+      AGENTIMPACT_JARVIS_MUTATIONS_ENABLED: "0"
     env_file:
       - /etc/agentimpact/tokens/bridge.env
       - /etc/agentimpact/tokens/hermes.env
       - /etc/agentimpact/tokens/admin.env
     volumes:
+      # Stable socket endpoint only; no Superset credential, binary, state or Docker socket is mounted.
+      - /run/agentimpact-superset-rpc/bridge.sock:/run/agentimpact-superset-rpc/bridge.sock
       # Credentials Google montes en lecture seule : le fichier appartient a
       # Hermes et ne doit jamais etre reecrit par l'API.
       - /home/hermes/.hermes/google_token.json:/secrets/google_token.json:ro

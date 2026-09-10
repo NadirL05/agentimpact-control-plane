@@ -72,13 +72,23 @@ export const AGENT_REGISTRY_V2: AgentRegistryEntry[] = [
 /** Jarvis → Hermès typed operator actions (not direct shell). */
 export const JARVIS_OPERATOR_POLICY = {
   AUTO: [
-    'status', 'workspace.create', 'agent.start', 'terminal.read', 'terminal.send',
-    'agent.stop', 'tests.run', 'diff.read',
+    'status.get', 'mission.list', 'mission.inspect', 'mission.events',
+    'workspace.list', 'workspace.inspect', 'project.list',
+    'terminal.read', 'diff.read', 'tests.status', 'agent.status',
+    'mission.create', 'mission.cancel', 'workspace.create', 'workspace.delete',
+    'terminal.send', 'tests.run', 'agent.stop',
   ],
   APPROVAL: [
-    'push', 'PR', 'merge', 'deploy', 'migrations', 'secrets', 'destructive', 'large_spend',
+    'publisher.push', 'publisher.pr_create', 'publisher.merge',
+    'deploy', 'database.migrate', 'secret.write', 'large_spend',
+    'agent.start',
+  ],
+  BLOCKED_BY_FEATURE_FLAG: [
+    // agent.start is evaluated by AgentStartController (never unconditional AUTO).
   ],
   DENY: [
+    'generic.shell', 'root.exec', 'docker.exec', 'secret.read',
     'unrestricted_root_shell', 'docker.sock', 'arbitrary_secret_reads', 'bypass_approvals',
+    'direct_superset_private_executor', 'agent.create',
   ],
 } as const;

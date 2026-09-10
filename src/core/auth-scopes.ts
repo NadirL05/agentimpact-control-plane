@@ -28,6 +28,7 @@ const HERMES_RULES: RouteRule[] = [
   { method: 'GET', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}(\/(plan|events))?$/i },
   { method: 'POST', pattern: /^\/api\/v2\/missions$/ },
   { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(plan|state|cancel|retry)$/i },
+  { method: 'POST', pattern: /^\/api\/v2\/jarvis\/actions$/ },
   { method: 'GET', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/actions$/ },
   { method: 'POST', pattern: /^\/api\/actions$/ },

@@ -30,10 +30,13 @@ import demos from './demos.js';
 import training from './training.js';
 import proposals from './proposals.js';
 import gatewayInbox from './gateway-inbox.js';
-import { configuredExecution } from '../core/missions-v2/execution-config.js';
+import { configuredExecution, configuredSupersetDriver } from '../core/missions-v2/execution-config.js';
 import { createMissionsV2Api } from './missions-v2.js';
+import { createJarvisV2Api } from './jarvis.js';
 import { MissionStore } from '../core/missions-v2/store.js';
 import { enabled, projects } from '../core/missions-v2/model.js';
+import { configuredJarvisService } from '../core/missions-v2/jarvis/service.js';
+import { PostgresJarvisAuditLog } from '../core/missions-v2/jarvis/audit.js';
 import dashboardRoutes from './dashboard-routes.js';
 import type { AppEnv } from '../core/hono-env.js';
 import {
@@ -68,6 +71,14 @@ app.route('/dashboard', dashboardRoutes);
 
 app.route('/leads', leads);
 app.route('/missions', missions);
+app.route('/api/v2/jarvis', createJarvisV2Api(
+  configuredJarvisService(
+    new MissionStore(pool, { enabled: enabled(), projects: projects() }),
+    new PostgresJarvisAuditLog(pool),
+    process.env,
+    pool,
+  ),
+));
 app.route('/api/v2', createMissionsV2Api(new MissionStore(pool, {enabled:enabled(),projects:projects()}),configuredExecution(pool)));
 app.route('/api/fullenrich', fullenrich);
 // Remplace l'ancien POST /api/approvals inline : celui-ci verifie le
@@ -655,7 +666,13 @@ export { app };
 const port = Number(process.env.PORT) || 3000;
 
 if (import.meta.vitest == null && process.env.NODE_ENV !== 'test') {
+  const rpcDriver = configuredSupersetDriver();
   console.log(`Server starting on port ${port}`);
+  console.log(
+    `superset_rpc_driver=${rpcDriver ? 'configured' : 'absent'} `
+    + `v2_execution=${process.env.AGENTIMPACT_V2_EXECUTION_ENABLED === '1' ? 'on' : 'off'} `
+    + `agent_execution=${process.env.AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED === '1' ? 'on' : 'off'}`,
+  );
   const { serve } = await import('@hono/node-server');
   serve({
     fetch: app.fetch,

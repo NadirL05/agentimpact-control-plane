@@ -1,0 +1,10 @@
+ROOT_JARVIS_V1_2_CODEX_CANARY_ARMED_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-run-jarvis-v1-2-codex-canary-armed.sh
+ROOT_JARVIS_V1_2_CODEX_CANARY_ARMED_RUNNER_COPY=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-run-jarvis-v1-2-codex-canary-armed.sh
+ROOT_JARVIS_V1_2_CODEX_CANARY_ARMED_SHA256=875401dd541cb3a214874098cece720970812d8c8a128013f68d81c35bf44812
+UNARMED_SCRIPT_UNCHANGED=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-run-jarvis-v1-2-codex-canary.sh
+UNARMED_SHA256=68921b9ec1b8bef89a0c4f2f1993ff9324167f533e8f69e41325acc9fd241439
+OUTER_VERIFY=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+REQUIRED_ENV=AGENTIMPACT_JARVIS_V1_2_CANARY_AUTHORIZED=1
+REQUIRED_ENV2=NADIR_AUTHORIZATION=ONE_REAL_CODEX_CANARY_ONLY
+GATE_ON_SUCCESS=GATE_NADIR_JARVIS_V1_2_CODEX_CANARY
+NOTE=Prepare_only_do_not_execute_without_Nadir_dual_auth_and_stage_A_B_reports_on_disk
