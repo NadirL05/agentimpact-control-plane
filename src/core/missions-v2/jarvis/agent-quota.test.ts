@@ -147,7 +147,7 @@ describe('Jarvis agent quota authority', () => {
     expect(isQuotaFresh({ observedAt: freshObs, expiresAt: null, nowMs: now })).toBe(true);
     expect(isQuotaFresh({ observedAt: staleObs, expiresAt: null, nowMs: now })).toBe(false);
     expect(CODEX_QUOTA_DISCOVERY.trust_level).toBe('experimental_provider_cli');
-    expect(CODEX_QUOTA_DISCOVERY.method).toContain('rateLimits');
+    expect(CODEX_QUOTA_DISCOVERY.method).toMatch(/rate[_]?limits/i);
   });
 
   it('legacy canary residue classification', () => {

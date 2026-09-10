@@ -415,12 +415,12 @@ export async function persistNegativeQuotaObservation(
 }
 
 export const CODEX_QUOTA_DISCOVERY = {
-  method: 'codex_app_server_account_rateLimits_read',
+  method: 'superset_rpc_codex_rate_limits_read',
   trust_level: 'experimental_provider_cli',
   notes: [
-    'No official codex status --json.',
-    'codex app-server JSON-RPC account/rateLimits/read is experimental and no-model.',
-    'Do not read auth.json tokens in Control Plane.',
+    'Control Plane → public bridge → private executor → fixed Codex app-server metadata.',
+    'Runtime: user agentimpact-superset, CODEX_HOME=/var/lib/agentimpact-superset/codex-home.',
+    'Binary: /var/lib/agentimpact-superset/install/bin/codex — no generic CLI, no argv secrets.',
     'Persist source=provider_cli only when observation is trustworthy.',
     'Ambiguous/unavailable → keep legacy row; authorization DENY_UNKNOWN.',
   ],

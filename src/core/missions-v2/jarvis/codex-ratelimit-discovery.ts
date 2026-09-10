@@ -483,3 +483,89 @@ export async function queryCodexAppServerRateLimits(opts?: {
     );
   });
 }
+
+/**
+ * Map private-executor normalized result (or raw rateLimits) into CP observation.
+ * Never treats missing metadata as available.
+ */
+export function observationFromSupersetRpcResult(raw: unknown): CodexRateLimitObservation {
+  if (!raw || typeof raw !== 'object') {
+    const now = Date.now();
+    return {
+      worker_type: 'codex',
+      quota_state: 'unknown',
+      source: 'provider_cli',
+      reason: 'rpc_result_missing',
+      observed_at: new Date(now).toISOString(),
+      expires_at: new Date(now + QUOTA_FRESHNESS_MS).toISOString(),
+      trustworthy: false,
+      discovery: 'UNAVAILABLE',
+      auth_state: 'unknown',
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  if (typeof o.quota_state === 'string' && typeof o.discovery === 'string') {
+    const qs = String(o.quota_state).toLowerCase();
+    const quota_state: QuotaState =
+      qs === 'available' || qs === 'limited' || qs === 'exhausted' || qs === 'unknown'
+        ? qs
+        : 'unknown';
+    const discoveryRaw = String(o.discovery);
+    const discovery: CodexRateLimitDiscoveryStatus =
+      discoveryRaw === 'PASS' || discoveryRaw === 'UNAVAILABLE' || discoveryRaw === 'AMBIGUOUS'
+      || discoveryRaw === 'AUTH_REQUIRED' || discoveryRaw === 'ERROR'
+        ? discoveryRaw
+        : 'UNAVAILABLE';
+    const trustworthy = o.trustworthy === true && quota_state !== 'unknown' && discovery === 'PASS';
+    return {
+      worker_type: 'codex',
+      quota_state,
+      source: 'provider_cli',
+      reason: String(o.reason || 'provider_rpc').slice(0, 120),
+      observed_at: typeof o.observed_at === 'string' ? o.observed_at : new Date().toISOString(),
+      expires_at: typeof o.expires_at === 'string'
+        ? o.expires_at
+        : new Date(Date.now() + QUOTA_FRESHNESS_MS).toISOString(),
+      trustworthy,
+      discovery,
+      auth_state: o.auth_state === 'authenticated' || o.auth_state === 'unauthenticated'
+        ? o.auth_state
+        : 'unknown',
+    };
+  }
+  return normalizeCodexRateLimitPayload(raw);
+}
+
+/**
+ * Preferred path: typed Superset RPC codex.rate_limits.read (no host generic CLI).
+ */
+export async function queryCodexRateLimitsViaSupersetRpc(
+  client: { call: (request: {
+    request_id: string;
+    operation: string;
+    mission_id: string;
+    attempt_id: string;
+    fencing_token: string;
+    parameters: Record<string, unknown>;
+  }) => Promise<unknown> },
+  context: { missionId: string; attemptId: string; fencingToken: string },
+): Promise<CodexRateLimitObservation> {
+  try {
+    const { buildCodexRateLimitsReadRpc } = await import('../superset/rpc-client.js');
+    const result = await client.call(buildCodexRateLimitsReadRpc(context));
+    return observationFromSupersetRpcResult(result);
+  } catch {
+    const now = Date.now();
+    return {
+      worker_type: 'codex',
+      quota_state: 'unknown',
+      source: 'provider_cli',
+      reason: 'codex_rate_limits_rpc_unavailable',
+      observed_at: new Date(now).toISOString(),
+      expires_at: new Date(now + QUOTA_FRESHNESS_MS).toISOString(),
+      trustworthy: false,
+      discovery: 'UNAVAILABLE',
+      auth_state: 'unknown',
+    };
+  }
+}

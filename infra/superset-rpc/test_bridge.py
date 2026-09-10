@@ -12,6 +12,8 @@ from uuid import uuid4
 from bridge import (
     Bridge, BridgeError, FakeExecutor, ForwardExecutor, RequestContext,
     MAX_IDEMPOTENCY_RECORDS, organization_from_status, validate_private_argv,
+    CODEX_RATE_LIMITS_INTERNAL_ARGV, normalize_codex_rate_limits_payload,
+    run_codex_rate_limits_read,
 )
 
 
@@ -225,3 +227,54 @@ class SupersetRpcBridgeTest(unittest.TestCase):
             with self.assertRaisesRegex(BridgeError, "operation_denied"):
                 self.call(request(operation, {"path": "/etc/credstore/agentimpact-superset-api-key"}))
         self.assertEqual(self.executor.calls, [])
+
+    def test_codex_rate_limits_read_is_typed_internal_only(self) -> None:
+        response = self.call(request("codex.rate_limits.read"))
+        self.assertEqual(response["ok"], True)
+        self.assertEqual(self.executor.calls[-1], CODEX_RATE_LIMITS_INTERNAL_ARGV)
+        with self.assertRaisesRegex(BridgeError, "invalid_parameters"):
+            self.call(request("codex.rate_limits.read", {"argv": ["codex", "exec"]}))
+        with self.assertRaisesRegex(BridgeError, "invalid_parameters"):
+            self.call(request("codex.rate_limits.read", {"prompt": "x"}))
+        self.assertEqual(
+            validate_private_argv(CODEX_RATE_LIMITS_INTERNAL_ARGV, ("/var/lib/agentimpact-superset/fixtures",)),
+            CODEX_RATE_LIMITS_INTERNAL_ARGV,
+        )
+        for argv in (
+            ("codex", "exec", "hi"),
+            ("__internal__", "codex.exec"),
+            ("__internal__", "codex.rate_limits.read", "--api-key", "x"),
+        ):
+            with self.assertRaisesRegex(BridgeError, "private_argv_denied"):
+                validate_private_argv(argv, ("/var/lib/agentimpact-superset/fixtures",))
+
+    def test_normalize_codex_rate_limits_payload(self) -> None:
+        now = 1_778_000_000_000.0
+        available = normalize_codex_rate_limits_payload(
+            {"rateLimits": {"primary": {"usedPercent": 10}}}, now_ms=now,
+        )
+        self.assertEqual(available["quota_state"], "available")
+        self.assertTrue(available["trustworthy"])
+        self.assertEqual(available["source"], "provider_cli")
+        limited = normalize_codex_rate_limits_payload(
+            {"rateLimits": {"primary": {"usedPercent": 90}}}, now_ms=now,
+        )
+        self.assertEqual(limited["quota_state"], "limited")
+        exhausted = normalize_codex_rate_limits_payload(
+            {"rateLimits": {"primary": {"usedPercent": 100}}}, now_ms=now,
+        )
+        self.assertEqual(exhausted["quota_state"], "exhausted")
+        ambiguous = normalize_codex_rate_limits_payload({"rateLimits": {}}, now_ms=now)
+        self.assertEqual(ambiguous["quota_state"], "unknown")
+        self.assertFalse(ambiguous["trustworthy"])
+
+    def test_run_codex_rate_limits_read_missing_bin_fail_closed(self) -> None:
+        result = run_codex_rate_limits_read(codex_bin="/nonexistent/codex-bin", codex_home="/tmp")
+        self.assertEqual(result["discovery"], "UNAVAILABLE")
+        self.assertEqual(result["quota_state"], "unknown")
+        self.assertFalse(result["trustworthy"])
+        self.assertNotIn("token", json.dumps(result).lower())
+
+
+if __name__ == "__main__":
+    unittest.main()

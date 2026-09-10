@@ -38,6 +38,10 @@ export function mapSupersetCliToRpc(args:string[],context:SupersetRpcContext):Su
   throw new SupersetParseError('rpc_operation_denied');
 }
 
+export function buildCodexRateLimitsReadRpc(context: SupersetRpcContext): SupersetRpcRequest {
+  return base('codex.rate_limits.read', {}, context);
+}
+
 export class SupersetRpcClient {
   constructor(private readonly socketPath:string,private readonly timeoutMs=30_000) {}
   call(request:SupersetRpcRequest):Promise<unknown> { return new Promise((resolve,reject)=>{

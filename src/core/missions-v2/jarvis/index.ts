@@ -86,6 +86,8 @@ export type {
 } from './agent-quota.js';
 export {
   normalizeCodexRateLimitPayload,
+  observationFromSupersetRpcResult,
+  queryCodexRateLimitsViaSupersetRpc,
   queryCodexAppServerRateLimits,
   observationToPersistWrite,
   persistTrustedProviderCliQuota,

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Jarvis V1.2 ONE-SHOT Codex canary V3-FINAL — post compose-repair repin.
+# Jarvis V1.2 ONE-SHOT Codex canary V3-FINAL — post multi-gate runtime.
 # outer-verify may pass unused tarball as $1 — ignore (0|1 positional only).
 #
+# Depends on evaluateSupersetAgentExecutionGate (no historical boot hard-stop).
 # NEVER edits /opt/agentimpact/compose.yml (BASE_COMPOSE_IMMUTABLE=YES).
 # Uses temporary Compose override under /run/agentimpact-jarvis-canary/.
 # Hard BASE compose `docker compose config` preflight BEFORE auth consumption.
@@ -193,7 +194,8 @@ EOF
 trap cleanup_canary EXIT INT TERM
 
 log "=== JARVIS V1.2 CODEX CANARY V3-FINAL ==="
-log "CANARY_V3_IMPLEMENTATION=CLEAN_REBUILD_POST_COMPOSE_REPAIR"
+log "CANARY_V3_IMPLEMENTATION=MULTI_GATE_PLUS_QUOTA_AUTHORITY"
+log "HISTORICAL_SUPERSET_HARD_STOP=REPLACED_BY_MULTI_GATE"
 log "OUTER_ENV_ISOLATION=UNCHANGED"
 log "BASE_COMPOSE_IMMUTABLE=YES"
 log "SUPERSET_AGENT_COMPLETION_DETECTOR_DEBT=OPEN"
@@ -294,6 +296,7 @@ print("CANARY_AUTHORIZATION_ONE_SHOT=PASS")
 print("AUTH_REPLAY_PROTECTION=PASS")
 print("ONE_SHOT_AUTH=PASS")
 print("NOTE=previous_consumed_auth_cannot_be_reused")
+print("PROVIDER_INVOKE_MULTI_GATE=ENV_CAPABILITY_ONLY")
 PY
 phase authorized
 
@@ -325,15 +328,28 @@ phase preflight
 # Static unit tests (no model)
 cd "${REPO}/src"
 npx vitest run core/missions-v2/jarvis/canary-v3.test.ts core/missions-v2/jarvis/codex-canary-auth.test.ts \
-  2>&1 | tail -30 || fail_safe "static_tests"
+  core/missions-v2/jarvis/agent-quota.test.ts \
+  core/missions-v2/superset/runtime.test.ts \
+  2>&1 | tail -40 || fail_safe "static_tests"
 log "STATIC_NO_MODEL_TESTS=PASS"
 
-# Sync jarvis modules into live app
-mkdir -p "${APP_SRC}/core/missions-v2/jarvis" "${APP_SRC}/api"
+# Sync jarvis + superset runtime gate into live app
+mkdir -p "${APP_SRC}/core/missions-v2/jarvis" "${APP_SRC}/core/missions-v2/superset" "${APP_SRC}/api" "${APP_SRC}/scripts"
 rsync -a --delete "${REPO}/src/core/missions-v2/jarvis/" "${APP_SRC}/core/missions-v2/jarvis/"
+rsync -a "${REPO}/src/core/missions-v2/superset/" "${APP_SRC}/core/missions-v2/superset/"
 install -o hermes -g hermes -m 0644 "${REPO}/src/api/server.ts" "${APP_SRC}/api/server.ts"
+install -o hermes -g hermes -m 0644 "${REPO}/src/scripts/jarvis-quota-decision.ts" "${APP_SRC}/scripts/jarvis-quota-decision.ts"
+install -o hermes -g hermes -m 0644 "${REPO}/src/migrations/015_jarvis_v1_2_quota_authority.sql" \
+  "${APP_SRC}/migrations/015_jarvis_v1_2_quota_authority.sql" 2>/dev/null \
+  || install -D -o hermes -g hermes -m 0644 "${REPO}/src/migrations/015_jarvis_v1_2_quota_authority.sql" \
+  "${LIVE_ROOT}/app/src/migrations/015_jarvis_v1_2_quota_authority.sql"
+# Apply migration idempotently on BASE compose (before override) — history-preserving
+docker compose -f "${BASE_COMPOSE}" exec -T db psql -U agentimpact_app -d agentimpact -v ON_ERROR_STOP=1 \
+  -f - < "${REPO}/src/migrations/015_jarvis_v1_2_quota_authority.sql" >/dev/null \
+  || fail_safe "migration_015"
+log "MIGRATION_015=APPLIED"
 install -m 0644 "${REPO}/infra/superset-rpc/bridge.py" /opt/agentimpact/superset-rpc/bridge.py 2>/dev/null || true
-chown -R hermes:hermes "${APP_SRC}/core/missions-v2/jarvis"
+chown -R hermes:hermes "${APP_SRC}/core/missions-v2/jarvis" "${APP_SRC}/core/missions-v2/superset" "${APP_SRC}/scripts"
 
 # Disposable fixture
 [[ -d "${FIXTURE_SRC}" ]] || fail_safe "fixture_src_missing"
@@ -426,20 +442,45 @@ log "PRIVATE_SUPERSET_SOCKET_VISIBLE_IN_DOCKER=NO"
 log "SUPERSET_CREDENTIAL_VISIBLE_IN_DOCKER=NO"
 log "DOCKER_SOCKET_VISIBLE_IN_DOCKER=NO"
 
-# Quota — read only, never invent available
-QUOTA_ROW="$(dc exec -T db psql -U agentimpact_app -d agentimpact -Atc \
-  "SELECT coalesce(quota_state,'unknown')||'|'||coalesce(source,'control_plane') FROM jarvis_agent_quota_state WHERE worker_type='codex';" \
-  || true)"
-QUOTA_STATE="$(echo "${QUOTA_ROW}" | cut -d'|' -f1)"
-QUOTA_SOURCE="$(echo "${QUOTA_ROW}" | cut -d'|' -f2)"
-[[ -n "${QUOTA_STATE}" ]] || QUOTA_STATE=unknown
-[[ -n "${QUOTA_SOURCE}" ]] || QUOTA_SOURCE=control_plane
-log "QUOTA_AUTHORITY_SOURCE=${QUOTA_SOURCE}"
+# Quota — typed Control Plane authority only (no direct SQL authorization)
+log "CANARY_DIRECT_QUOTA_SQL=NO"
+log "FINAL_CONVERGENCE_CANARY=YES"
+QUOTA_TMP="$(mktemp)"
+# Invoke typed decision inside the API container (/app), not host paths.
+if ! dc exec -T api npx --yes tsx scripts/jarvis-quota-decision.ts codex >"${QUOTA_TMP}" 2>/dev/null; then
+  rm -f "${QUOTA_TMP}"
+  log "QUOTA_CHECK=BLOCKED_UNKNOWN"
+  fail_safe "quota_authority_unavailable"
+fi
+python3 - "${QUOTA_TMP}" <<'PY'
+import json,sys
+path=sys.argv[1]
+raw=open(path).read().strip().splitlines()[-1]
+d=json.loads(raw)
+open(path+".env","w").write("\n".join([
+  f"QUOTA_STATE={d.get('quotaState','unknown')}",
+  f"QUOTA_AUTHORITY_SOURCE={d.get('source','unknown')}",
+  f"CODEX_QUOTA_FRESH={str(d.get('fresh',False)).lower()}",
+  f"CODEX_QUOTA_AUTHORIZATION_CLASS={d.get('authorizationClass','DENY_UNKNOWN')}",
+  f"CURRENT_CODEX_QUOTA_CLASSIFICATION={d.get('CURRENT_CODEX_QUOTA_CLASSIFICATION','UNKNOWN')}",
+  f"OPERATOR_CAN_AUTHORIZE_CODEX={d.get('OPERATOR_CAN_AUTHORIZE_CODEX','NO')}",
+  f"QUOTA_CHECK={'PASS' if d.get('authorizationClass') in ('ALLOW','ALLOW_BOUNDED_ONE_SHOT') else ('BLOCKED_EXHAUSTED' if d.get('authorizationClass')=='DENY_EXHAUSTED' else 'BLOCKED_UNKNOWN')}",
+])+"\n")
+PY
+# shellcheck disable=SC1090
+source "${QUOTA_TMP}.env"
+rm -f "${QUOTA_TMP}" "${QUOTA_TMP}.env"
+log "QUOTA_AUTHORITY_SOURCE=${QUOTA_AUTHORITY_SOURCE}"
 log "QUOTA_STATE=${QUOTA_STATE}"
-case "${QUOTA_STATE}" in
-  available) log "QUOTA_CHECK=PASS"; log "QUOTA_FAIL_CLOSED=PASS" ;;
-  limited) log "QUOTA_CHECK=PASS"; log "QUOTA_FAIL_CLOSED=PASS"; log "note=limited_explicit_one_shot" ;;
-  exhausted) log "QUOTA_CHECK=BLOCKED_EXHAUSTED"; fail_safe "quota_exhausted" ;;
+log "CODEX_QUOTA_FRESH=${CODEX_QUOTA_FRESH}"
+log "CODEX_QUOTA_AUTHORIZATION_CLASS=${CODEX_QUOTA_AUTHORIZATION_CLASS}"
+log "CURRENT_CODEX_QUOTA_CLASSIFICATION=${CURRENT_CODEX_QUOTA_CLASSIFICATION}"
+log "OPERATOR_CAN_AUTHORIZE_CODEX=${OPERATOR_CAN_AUTHORIZE_CODEX:-NO}"
+log "CANARY_DIRECT_QUOTA_SQL=NO
+log "FINAL_CONVERGENCE_CANARY=YES""
+case "${QUOTA_CHECK}" in
+  PASS) log "QUOTA_CHECK=PASS"; log "QUOTA_FAIL_CLOSED=PASS" ;;
+  BLOCKED_EXHAUSTED) log "QUOTA_CHECK=BLOCKED_EXHAUSTED"; fail_safe "quota_exhausted" ;;
   *) log "QUOTA_CHECK=BLOCKED_UNKNOWN"; fail_safe "quota_unknown" ;;
 esac
 phase quota_checked
@@ -768,6 +809,6 @@ log "TIMEOUTS_BOUNDED=PASS"
 
 cleanup_canary
 phase completed
-log "CANARY_V3_IMPLEMENTATION=CLEAN_REBUILD_POST_COMPOSE_REPAIR"
-log "GATE_NADIR_JARVIS_V1_2_CODEX_CANARY_FINAL"
+log "CANARY_V3_IMPLEMENTATION=MULTI_GATE_PLUS_QUOTA_AUTHORITY"
+log "GATE_NADIR_JARVIS_V1_2_CODEX_CANARY_GATE"
 log "REPORT=${REPORT}"

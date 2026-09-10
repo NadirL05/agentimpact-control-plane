@@ -19,6 +19,7 @@ export {
 export { redactSecrets, createSupersetCliRunner } from './cli.js';
 export {
   mapSupersetCliToRpc,
+  buildCodexRateLimitsReadRpc,
   SupersetRpcClient,
   createSupersetRpcRunner,
 } from './rpc-client.js';

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { QUOTA_FRESHNESS_MS, getAgentQuotaDecision } from './agent-quota.js';
 import {
   normalizeCodexRateLimitPayload,
+  observationFromSupersetRpcResult,
   observationToPersistWrite,
   stripSensitiveFields,
   RATE_LIMIT_LIMITED_PERCENT,
 } from './codex-ratelimit-discovery.js';
 
 const now = Date.parse('2026-09-11T00:00:00.000Z');
+const freshObs = new Date(now - 60_000).toISOString();
 
 describe('Codex rate-limit discovery normalizer', () => {
   it('strips sensitive fields', () => {
@@ -88,5 +90,21 @@ describe('Codex rate-limit discovery normalizer', () => {
       rateLimits: { primary: { usedPercent: 1 } },
     }, { nowMs: now });
     expect(obs.worker_type).toBe('codex');
+  });
+
+  it('observationFromSupersetRpcResult maps private executor payload', () => {
+    const obs = observationFromSupersetRpcResult({
+      quota_state: 'available',
+      source: 'provider_cli',
+      reason: 'provider_used_percent_ok',
+      observed_at: freshObs,
+      expires_at: new Date(now + 60_000).toISOString(),
+      trustworthy: true,
+      discovery: 'PASS',
+      auth_state: 'authenticated',
+    });
+    expect(obs.trustworthy).toBe(true);
+    expect(obs.quota_state).toBe('available');
+    expect(observationToPersistWrite(obs)?.source).toBe('provider_cli');
   });
 });

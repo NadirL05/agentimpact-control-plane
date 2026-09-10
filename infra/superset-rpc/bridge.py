@@ -24,14 +24,26 @@ OPERATIONS = frozenset({
     "health", "project.create", "project.list", "workspace.create", "workspace.list",
     "workspace.inspect", "workspace.delete", "terminal.create", "terminal.read",
     "terminal.send", "terminal.close", "agent.create", "agent.stop",
+    "codex.rate_limits.read",
 })
 MUTATIONS = frozenset({
     "project.create", "workspace.create", "workspace.delete", "terminal.create",
     "terminal.send", "terminal.close", "agent.create", "agent.stop",
 })
+# Fixed internal argv only — never a generic Codex CLI or caller-controlled path.
+CODEX_RATE_LIMITS_INTERNAL_ARGV = ("__internal__", "codex.rate_limits.read")
+CODEX_BIN = "/var/lib/agentimpact-superset/install/bin/codex"
+CODEX_HOME = "/var/lib/agentimpact-superset/codex-home"
+CODEX_RATE_LIMITS_TIMEOUT_SEC = 15
+CODEX_QUOTA_FRESHNESS_SEC = 15 * 60
+RATE_LIMIT_EXHAUSTED_PERCENT = 100
+RATE_LIMIT_LIMITED_PERCENT = 85
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
 BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,199}$")
-SENSITIVE = re.compile(r"(?i)(super(set)?_api_key|bearer\s+[A-Za-z0-9._-]+|sk_(?:live|test)_[A-Za-z0-9_-]+)")
+SENSITIVE = re.compile(
+    r"(?i)(super(set)?_api_key|bearer\s+[A-Za-z0-9._-]+|sk_(?:live|test)_[A-Za-z0-9_-]+|"
+    r"access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?secret|authorization)"
+)
 
 
 class BridgeError(Exception):
@@ -88,6 +100,256 @@ class ForwardExecutor:
         return response["result"]
 
 
+def _iso_now(ts: float | None = None) -> str:
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(ts if ts is not None else __import__("time").time(), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _used_percent(window: Any) -> float | None:
+    if not isinstance(window, dict):
+        return None
+    raw = window.get("usedPercent", window.get("used_percent"))
+    if isinstance(raw, (int, float)) and raw == raw:
+        return float(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def _reset_at_ms(window: Any, now_ms: float) -> float | None:
+    if not isinstance(window, dict):
+        return None
+    raw = window.get("resetsAt", window.get("reset_at", window.get("resets_at")))
+    if not isinstance(raw, (int, float)):
+        return None
+    ms = float(raw) if raw > 1e12 else float(raw) * 1000.0
+    return ms if ms > now_ms else None
+
+
+def normalize_codex_rate_limits_payload(payload: Any, *, now_ms: float | None = None) -> dict[str, Any]:
+    """Return normalized quota metadata only — never raw tokens/session material."""
+    import time as _time
+    now = now_ms if now_ms is not None else _time.time() * 1000.0
+    observed_at = _iso_now(now / 1000.0)
+    default_expiry = _iso_now((now / 1000.0) + CODEX_QUOTA_FRESHNESS_SEC)
+    base = {
+        "worker_type": "codex",
+        "source": "provider_cli",
+        "observed_at": observed_at,
+        "expires_at": default_expiry,
+        "used_percent_max": None,
+    }
+    if not isinstance(payload, dict):
+        return {
+            **base,
+            "quota_state": "unknown",
+            "reason": "rate_limits_payload_missing",
+            "trustworthy": False,
+            "discovery": "AMBIGUOUS",
+            "auth_state": "unknown",
+        }
+    snapshot = payload.get("rateLimits", payload.get("rate_limits", payload))
+    if not isinstance(snapshot, dict):
+        return {
+            **base,
+            "quota_state": "unknown",
+            "reason": "rate_limits_payload_missing",
+            "trustworthy": False,
+            "discovery": "AMBIGUOUS",
+            "auth_state": "unknown",
+        }
+    reached = snapshot.get("rateLimitReachedType", snapshot.get("rate_limit_reached_type"))
+    reached_s = ""
+    if isinstance(reached, str):
+        reached_s = reached.lower()
+    elif isinstance(reached, dict) and isinstance(reached.get("type"), str):
+        reached_s = reached["type"].lower()
+    if reached_s and any(x in reached_s for x in ("exhausted", "usage_limit", "limit_reached", "quota", "allowance", "billing")):
+        return {
+            **base, "quota_state": "exhausted", "reason": "provider_rate_limit_reached",
+            "trustworthy": True, "discovery": "PASS", "auth_state": "authenticated",
+        }
+    if reached_s:
+        return {
+            **base, "quota_state": "limited", "reason": "provider_rate_limit_flag",
+            "trustworthy": True, "discovery": "PASS", "auth_state": "authenticated",
+        }
+    percents = [p for p in (_used_percent(snapshot.get("primary")), _used_percent(snapshot.get("secondary"))) if p is not None]
+    if not percents:
+        return {
+            **base, "quota_state": "unknown", "reason": "rate_limits_windows_absent",
+            "trustworthy": False, "discovery": "AMBIGUOUS", "auth_state": "authenticated",
+        }
+    max_used = max(percents)
+    if max_used >= RATE_LIMIT_EXHAUSTED_PERCENT:
+        state, reason = "exhausted", "provider_used_percent_exhausted"
+    elif max_used >= RATE_LIMIT_LIMITED_PERCENT:
+        state, reason = "limited", "provider_used_percent_limited"
+    else:
+        state, reason = "available", "provider_used_percent_ok"
+    resets = [r for r in (_reset_at_ms(snapshot.get("primary"), now), _reset_at_ms(snapshot.get("secondary"), now)) if r is not None]
+    expiry_ms = min([now + CODEX_QUOTA_FRESHNESS_SEC * 1000.0, *resets])
+    return {
+        **base,
+        "quota_state": state,
+        "reason": reason,
+        "expires_at": _iso_now(expiry_ms / 1000.0),
+        "trustworthy": True,
+        "discovery": "PASS",
+        "auth_state": "authenticated",
+        "used_percent_max": max_used,
+    }
+
+
+def run_codex_rate_limits_read(
+    *,
+    codex_bin: str = CODEX_BIN,
+    codex_home: str = CODEX_HOME,
+    timeout_sec: float = CODEX_RATE_LIMITS_TIMEOUT_SEC,
+) -> dict[str, Any]:
+    """
+    Private-executor-only: fixed Codex app-server metadata lifecycle.
+    initialize → account/rateLimits/read → terminate. No prompt / no completion.
+    Never prints auth.json or tokens. Never puts credentials on argv.
+    """
+    if "--api-key" in (codex_bin, codex_home) or not Path(codex_bin).is_file():
+        return {
+            "worker_type": "codex", "quota_state": "unknown", "source": "provider_cli",
+            "reason": "codex_runtime_unavailable", "observed_at": _iso_now(),
+            "expires_at": _iso_now(__import__("time").time() + CODEX_QUOTA_FRESHNESS_SEC),
+            "trustworthy": False, "discovery": "UNAVAILABLE", "auth_state": "unknown",
+            "used_percent_max": None,
+        }
+    env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(Path(codex_home).parent),
+        "CODEX_HOME": codex_home,
+        "CI": "1",
+        "LANG": "C.UTF-8",
+    }
+    # Intentionally minimal env: auth is file-backed under CODEX_HOME only.
+    # Never put API keys / tokens on argv or in this env map.
+    child = None
+    try:
+        child = subprocess.Popen(
+            [codex_bin, "app-server", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=env,
+            cwd="/",
+        )
+        assert child.stdin is not None and child.stdout is not None
+        child.stdin.write(json.dumps({
+            "id": 1,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "agentimpact-superset-rpc", "title": "AgentImpact", "version": "1.2.0"}},
+        }) + "\n")
+        child.stdin.flush()
+
+        def _readline() -> str:
+            assert child is not None and child.stdout is not None
+            line = child.stdout.readline()
+            if not line:
+                raise BridgeError("codex_app_server_closed")
+            return line
+
+        deadline = __import__("time").monotonic() + timeout_sec
+        init_done = False
+        result_payload: Any = None
+        while __import__("time").monotonic() < deadline:
+            remaining = max(0.1, deadline - __import__("time").monotonic())
+            # Best-effort line read with process poll
+            if child.poll() is not None and not init_done:
+                raise BridgeError("codex_app_server_closed")
+            child.stdout.flush()
+            # Use select for bounded read when available
+            import select
+            ready, _, _ = select.select([child.stdout], [], [], min(1.0, remaining))
+            if not ready:
+                if child.poll() is not None:
+                    break
+                continue
+            line = _readline().strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("id") == 1:
+                if msg.get("error"):
+                    err = msg["error"] if isinstance(msg["error"], dict) else {}
+                    message = str(err.get("message", "initialize_failed")).lower()
+                    auth = "unauthenticated" if any(x in message for x in ("auth", "login", "unauthorized")) else "unknown"
+                    return {
+                        "worker_type": "codex", "quota_state": "unknown", "source": "provider_cli",
+                        "reason": "codex_auth_required_for_rate_limits" if auth == "unauthenticated" else "rate_limits_rpc_error",
+                        "observed_at": _iso_now(), "expires_at": _iso_now(__import__("time").time() + CODEX_QUOTA_FRESHNESS_SEC),
+                        "trustworthy": False,
+                        "discovery": "AUTH_REQUIRED" if auth == "unauthenticated" else "ERROR",
+                        "auth_state": auth, "used_percent_max": None,
+                    }
+                child.stdin.write(json.dumps({"method": "initialized", "params": {}}) + "\n")
+                child.stdin.write(json.dumps({"id": 2, "method": "account/rateLimits/read", "params": {}}) + "\n")
+                child.stdin.flush()
+                init_done = True
+                continue
+            if msg.get("id") == 2:
+                if msg.get("error"):
+                    err = msg["error"] if isinstance(msg["error"], dict) else {}
+                    message = str(err.get("message", "rate_limits_failed")).lower()
+                    auth = "unauthenticated" if any(x in message for x in ("auth", "login", "unauthorized")) else "unknown"
+                    return {
+                        "worker_type": "codex", "quota_state": "unknown", "source": "provider_cli",
+                        "reason": "codex_auth_required_for_rate_limits" if auth == "unauthenticated" else "rate_limits_rpc_error",
+                        "observed_at": _iso_now(), "expires_at": _iso_now(__import__("time").time() + CODEX_QUOTA_FRESHNESS_SEC),
+                        "trustworthy": False,
+                        "discovery": "AUTH_REQUIRED" if auth == "unauthenticated" else "ERROR",
+                        "auth_state": auth, "used_percent_max": None,
+                    }
+                result_payload = msg.get("result")
+                break
+        if result_payload is None:
+            return {
+                "worker_type": "codex", "quota_state": "unknown", "source": "provider_cli",
+                "reason": "rate_limits_rpc_timeout", "observed_at": _iso_now(),
+                "expires_at": _iso_now(__import__("time").time() + CODEX_QUOTA_FRESHNESS_SEC),
+                "trustworthy": False, "discovery": "UNAVAILABLE", "auth_state": "unknown",
+                "used_percent_max": None,
+            }
+        return normalize_codex_rate_limits_payload(result_payload)
+    except (OSError, BridgeError):
+        return {
+            "worker_type": "codex", "quota_state": "unknown", "source": "provider_cli",
+            "reason": "codex_app_server_unavailable", "observed_at": _iso_now(),
+            "expires_at": _iso_now(__import__("time").time() + CODEX_QUOTA_FRESHNESS_SEC),
+            "trustworthy": False, "discovery": "UNAVAILABLE", "auth_state": "unknown",
+            "used_percent_max": None,
+        }
+    finally:
+        if child is not None:
+            try:
+                if child.stdin:
+                    child.stdin.close()
+            except OSError:
+                pass
+            try:
+                child.terminate()
+                child.wait(timeout=2)
+            except Exception:
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+
+
 class SupersetExecutor:
     def __init__(self, runner: str, env: dict[str, str] | None = None) -> None:
         self.runner = runner
@@ -118,6 +380,8 @@ class SupersetExecutor:
             raise BridgeError("superset_malformed_result") from None
 
     def run(self, argv: tuple[str, ...]) -> Any:
+        if argv == CODEX_RATE_LIMITS_INTERNAL_ARGV:
+            return run_codex_rate_limits_read()
         if argv[0] != "status" and self.organization_id is None:
             self.organization_id = organization_from_status(self._run(("status", "--json"), {}))
         return self._run(argv, {} if self.organization_id is None else {"SUPERSET_ORGANIZATION_ID": self.organization_id})
@@ -168,6 +432,8 @@ def validate_private_argv(argv: tuple[str, ...], source_roots: tuple[str, ...]) 
         raise BridgeError("private_argv_denied")
     if any(value in {"--api-key", "--token", "--credential", "--shell", "-c"} for value in argv):
         raise BridgeError("private_argv_denied")
+    if argv == CODEX_RATE_LIMITS_INTERNAL_ARGV:
+        return argv
     if argv in {("status", "--json"), ("projects", "list", "--local", "--json"), ("workspaces", "list", "--json")}:
         return argv
     if len(argv) == 6 and argv[:3] == ("projects", "create", "--name") and argv[-2:] == ("--local", "--json"):
@@ -294,14 +560,20 @@ class Bridge:
         if op == "terminal.send":
             if set(p) != {"workspace_id", "terminal_id", "intent"} or p.get("intent") != "request_stop": raise BridgeError("invalid_parameters")
             return ("terminals", "send", "--workspace", _uuid(p.get("workspace_id"), "workspace_id"), "--terminal", _uuid(p.get("terminal_id"), "terminal_id"), "--text", "\\u0003", "--json")
-        agent = p.get("agent")
-        if agent not in ("codex", "cursor-agent"): raise BridgeError("unsupported_agent")
-        if not self.agent_execution_enabled: raise BridgeError("agent_execution_disabled")
+        if op == "codex.rate_limits.read":
+            if p:
+                raise BridgeError("invalid_parameters")
+            return CODEX_RATE_LIMITS_INTERNAL_ARGV
         if op == "agent.create":
+            agent = p.get("agent")
+            if agent not in ("codex", "cursor-agent"): raise BridgeError("unsupported_agent")
+            if not self.agent_execution_enabled: raise BridgeError("agent_execution_disabled")
             prompt = p.get("prompt")
             if not isinstance(prompt, str) or not 1 <= len(prompt) <= 4096: raise BridgeError("invalid_parameters")
             return ("agents", "create", "--workspace", _uuid(p.get("workspace_id"), "workspace_id"), "--agent", agent, "--prompt", prompt, "--json")
-        if op == "agent.stop": return ("agents", "stop", "--agent", _uuid(p.get("agent_id"), "agent_id"), "--json")
+        if op == "agent.stop":
+            if not self.agent_execution_enabled: raise BridgeError("agent_execution_disabled")
+            return ("agents", "stop", "--agent", _uuid(p.get("agent_id"), "agent_id"), "--json")
         raise BridgeError("operation_denied")
 
     def handle(self, raw: object, caller: RequestContext) -> dict[str, Any]:
