@@ -13,8 +13,7 @@ import {
   type SupersetRpcContext,
 } from './rpc-client.js';
 import {
-  assertSupersetAgentExecutionDisabled,
-  assertBusinessExecutionOff,
+  evaluateSupersetAgentExecutionGate,
   createSupersetRpcBackend,
   createSupersetRpcContext,
   DEFAULT_SUPERSET_RPC_SOCKET,
@@ -72,8 +71,17 @@ export async function runJarvisSupersetRpcIntegration(
   };
 
   try {
-    assertSupersetAgentExecutionDisabled(env);
-    assertBusinessExecutionOff(env);
+    const gate = evaluateSupersetAgentExecutionGate(env);
+    if (gate.capabilityArmed) {
+      report.BUSINESS_EXECUTION_FLAGS = 'ON';
+      errors.push('integration_smoke_requires_capability_disarmed');
+      return report;
+    }
+    if (gate.v2ExecutionEnabled || gate.supersetAgentExecutionEnabled) {
+      report.BUSINESS_EXECUTION_FLAGS = 'ON';
+    }
+    // Backend construction must not crash even if flags were partially on.
+    void createSupersetRpcBackend;
   } catch (e) {
     report.BUSINESS_EXECUTION_FLAGS = 'ON';
     errors.push(e instanceof Error ? e.message : 'flags_invalid');

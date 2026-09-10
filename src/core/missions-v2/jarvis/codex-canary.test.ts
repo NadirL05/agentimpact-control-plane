@@ -155,23 +155,25 @@ describe('Jarvis V1.2 armed Codex canary (static / no-model)', () => {
     }
   });
 
-  it('provider invoke arming requires ARMED + (dual env OR root one-shot marker)', () => {
+  it('provider invoke arming requires full multi-gate (V2+agent+armed+one-shot+publisher off)', () => {
     expect(providerInvokeArmed({})).toBe(false);
-    expect(providerInvokeArmed({
-      AGENTIMPACT_JARVIS_V1_2_CANARY_AUTHORIZED: '1',
-      NADIR_AUTHORIZATION: NADIR_AUTHORIZATION_VALUE,
-    })).toBe(false);
-    expect(providerInvokeArmed({
-      AGENTIMPACT_JARVIS_V1_2_CANARY_AUTHORIZED: '1',
-      NADIR_AUTHORIZATION: NADIR_AUTHORIZATION_VALUE,
-      AGENTIMPACT_JARVIS_PROVIDER_INVOKE_ARMED: '1',
-    })).toBe(true);
     expect(providerInvokeArmed({
       AGENTIMPACT_JARVIS_PROVIDER_INVOKE_ARMED: '1',
       AGENTIMPACT_JARVIS_ROOT_ONE_SHOT_CANARY: '1',
+    })).toBe(false);
+    expect(providerInvokeArmed({
+      AGENTIMPACT_V2_EXECUTION_ENABLED: '1',
+      AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED: '1',
+      AGENTIMPACT_JARVIS_PROVIDER_INVOKE_ARMED: '1',
+      AGENTIMPACT_JARVIS_ROOT_ONE_SHOT_CANARY: '1',
+      AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: '0',
     })).toBe(true);
     expect(providerInvokeArmed({
+      AGENTIMPACT_V2_EXECUTION_ENABLED: '1',
+      AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED: '1',
       AGENTIMPACT_JARVIS_PROVIDER_INVOKE_ARMED: '1',
+      AGENTIMPACT_JARVIS_ROOT_ONE_SHOT_CANARY: '1',
+      AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: '1',
     })).toBe(false);
   });
 

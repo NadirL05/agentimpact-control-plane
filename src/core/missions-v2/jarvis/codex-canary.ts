@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { digest } from '../model.js';
 import { mapWorkerToSupersetAgent, agentStartPayloadHash, type JarvisWorkerType } from './agent-start.js';
+import { evaluateSupersetAgentExecutionGate } from '../superset/runtime.js';
 
 export const NADIR_AUTHORIZATION_VALUE = 'ONE_REAL_CODEX_CANARY_ONLY' as const;
 export const CANARY_WORKER: JarvisWorkerType = 'codex';
@@ -265,14 +266,9 @@ export function buildTypedAgentCreateRpc(params: {
 }
 
 export function providerInvokeArmed(env: NodeJS.ProcessEnv): boolean {
-  if ((env.AGENTIMPACT_JARVIS_PROVIDER_INVOKE_ARMED || '').trim() !== '1') return false;
-  // Legacy dual-env (v1 armed) — optional.
-  if (assertCanaryAuthorization({
-    AGENTIMPACT_JARVIS_V1_2_CANARY_AUTHORIZED: env.AGENTIMPACT_JARVIS_V1_2_CANARY_AUTHORIZED,
-    NADIR_AUTHORIZATION: env.NADIR_AUTHORIZATION,
-  }).ok) return true;
-  // v2: root script injects this ONLY after root one-shot auth file validation + nonce consume.
-  return (env.AGENTIMPACT_JARVIS_ROOT_ONE_SHOT_CANARY || '').trim() === '1';
+  // Controlled multi-gate: capability armed ≠ provider execution authorized.
+  // Full agent.start chain still required before any Codex/Cursor call.
+  return evaluateSupersetAgentExecutionGate(env).capabilityArmed;
 }
 
 export function codexAuthContextInvariants(): {

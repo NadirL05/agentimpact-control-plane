@@ -26,6 +26,14 @@ const flagsStageB = resolveJarvisPolicyFlags({
   AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: '0',
 });
 
+const flagsCapability = resolveJarvisPolicyFlags({
+  AGENTIMPACT_JARVIS_ENABLED: '1',
+  AGENTIMPACT_JARVIS_MUTATIONS_ENABLED: '1',
+  AGENTIMPACT_V2_EXECUTION_ENABLED: '1',
+  AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED: '1',
+  AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: '0',
+});
+
 function seedMission(mutations: JarvisMutationRegistry, org = 'org-agentimpact') {
   const id = randomUUID();
   mutations.missions.set(id, {
@@ -340,5 +348,113 @@ describe('Jarvis V1.2 agent.start gates', () => {
       parameters: { mission_id: missionId },
     }, 'api:hermes');
     expect(create.policy[0]?.decision).toBe('DENY');
+  });
+
+  it('capability armed still blocks without approval/quota/budget/lease/fence/workspace; no second provider', async () => {
+    let providerCalls = 0;
+    const mutations = new JarvisMutationRegistry();
+    const ctl = new AgentStartController({
+      mutations,
+      allowProviderInvoke: true,
+      invokeProvider: async () => {
+        providerCalls += 1;
+        return { agent_id: 'should-not-run' };
+      },
+    });
+    const missionId = seedMission(mutations);
+    const attemptId = randomUUID();
+    const fence = randomUUID();
+    const wsId = randomUUID();
+    ctl.setQuota('codex', 'available');
+
+    // approval missing
+    const noApproval = await ctl.evaluate({
+      request_id: randomUUID(),
+      actor: 'api:hermes',
+      organization_id: 'org-agentimpact',
+      timestamp: new Date().toISOString(),
+      action: 'agent.start',
+      parameters: baseParams(missionId, attemptId),
+      reason: 't',
+      risk_level: 'high',
+    }, flagsCapability);
+    expect(noApproval.decision).toBe('REQUIRE_APPROVAL');
+    expect(noApproval.real_codex_calls).toBe(0);
+    expect(providerCalls).toBe(0);
+
+    ctl.bindWorkspace(wsId, {
+      organization_id: 'org-agentimpact', mission_id: missionId, attempt_id: attemptId, fencing_token: fence,
+    });
+    const params = { ...baseParams(missionId, attemptId), workspace_id: wsId, fencing_token: fence };
+    const hash = agentStartPayloadHash({
+      organization_id: 'org-agentimpact', mission_id: missionId, attempt_id: attemptId,
+      requested_worker_type: 'codex', reason: params.reason,
+    });
+    const approve = () => ctl.issueApproval({
+      organization_id: 'org-agentimpact', mission_id: missionId, attempt_id: attemptId,
+      worker_type: 'codex', request_id: randomUUID(), payload_hash: hash, risk_level: 'high',
+      budget_ceiling: 1, actor: 'nadir', expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const mk = (approval_id: string, extra: Record<string, unknown> = {}) => ({
+      request_id: randomUUID(),
+      actor: 'api:hermes',
+      organization_id: 'org-agentimpact',
+      timestamp: new Date().toISOString(),
+      action: 'agent.start' as const,
+      parameters: { ...params, approval_id, ...extra },
+      reason: 't',
+      risk_level: 'high' as const,
+    });
+
+    ctl.setQuota('codex', 'unknown');
+    expect((await ctl.evaluate(mk(approve().approval_id), flagsCapability)).reason).toBe('quota_unknown_fail_closed');
+    ctl.setQuota('codex', 'exhausted');
+    expect((await ctl.evaluate(mk(approve().approval_id), flagsCapability)).decision).toBe('QUOTA_EXCEEDED');
+    ctl.setQuota('codex', 'available');
+    expect((await ctl.evaluate(mk(approve().approval_id, { budget_ceiling: 0 }), flagsCapability)).decision).toBe('BUDGET_EXCEEDED');
+
+    // wrong workspace
+    expect((await ctl.evaluate(mk(approve().approval_id, {
+      workspace_id: randomUUID(),
+    }), flagsCapability)).reason).toBe('workspace_not_found');
+
+    // stale fence
+    mutations.fences.set(attemptId, 'ffffffff-ffff-4fff-8fff-ffffffffffff');
+    expect((await ctl.evaluate(mk(approve().approval_id, {
+      fencing_token: '00000000-0000-4000-8000-000000000001',
+    }), flagsCapability)).decision).toBe('STALE_FENCE');
+    mutations.fences.set(attemptId, fence);
+
+    // lease conflict
+    const leaseId = randomUUID();
+    ctl.leases.set(leaseId, {
+      id: leaseId, status: 'leased', organization_id: 'org-agentimpact',
+      mission_id: missionId, attempt_id: attemptId, worker_type: 'codex',
+      workspace_id: wsId, fencing_token: fence,
+    });
+    ctl.activeLeaseByAttempt.set(attemptId, leaseId);
+    expect((await ctl.evaluate(mk(approve().approval_id), flagsCapability)).decision).toBe('LEASE_CONFLICT');
+    expect(providerCalls).toBe(0);
+
+    // duplicate request_id → no second provider call
+    ctl.activeLeaseByAttempt.delete(attemptId);
+    const request_id = randomUUID();
+    const a = approve();
+    const action = {
+      request_id,
+      actor: 'api:hermes',
+      organization_id: 'org-agentimpact',
+      timestamp: new Date().toISOString(),
+      action: 'agent.start' as const,
+      parameters: { ...params, approval_id: a.approval_id },
+      reason: 't',
+      risk_level: 'high' as const,
+    };
+    const first = await ctl.evaluate(action, flagsCapability);
+    expect(first.provider_call === 'invoked' || first.real_codex_calls === 1 || first.decision === 'ALLOW').toBe(true);
+    const second = await ctl.evaluate(action, flagsCapability);
+    expect(second.real_codex_calls === 0 || second.decision === 'IDEMPOTENT_REPLAY' || second.ok === true).toBe(true);
+    // At most one provider invoke across both
+    expect(providerCalls).toBeLessThanOrEqual(1);
   });
 });

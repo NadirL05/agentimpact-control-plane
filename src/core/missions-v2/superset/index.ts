@@ -29,9 +29,12 @@ export {
   createSupersetRpcBackend,
   configuredSupersetRpcBackend,
   createSupersetRpcContext,
+  evaluateSupersetAgentExecutionGate,
+  isSupersetAgentCapabilityArmed,
   assertSupersetAgentExecutionDisabled,
   assertBusinessExecutionOff,
 } from './runtime.js';
+export type { SupersetAgentExecutionGateState, SupersetAgentGateReason } from './runtime.js';
 export {
   runJarvisSupersetRpcIntegration,
   printJarvisIntegrationReport,

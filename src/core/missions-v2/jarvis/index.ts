@@ -80,3 +80,19 @@ export {
   CANONICAL_ARMED_CANARY_PATH,
   AUTH_HELPER_TTL_SECONDS,
 } from './auth-helper-final.js';
+export {
+  CANARY_V3_PHASES,
+  CANARY_V3_TIMEOUTS,
+  CANARY_V3_ALLOWED_PATH,
+  CanaryV3StateMachine,
+  buildComposeOverrideYaml,
+  parseOuterLegacyArgv,
+  validateComposeOverrideYaml,
+  assertBaseComposeImmutable,
+  gateQuota,
+  reserveProviderInvocationEvidence,
+  validateFixtureDiff,
+  reconcileLifecycle,
+  verifySafeFlags,
+  requireBaseComposePrecheck,
+} from './canary-v3.js';
