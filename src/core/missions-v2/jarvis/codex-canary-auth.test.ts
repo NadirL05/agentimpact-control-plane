@@ -100,15 +100,24 @@ describe('Jarvis V1.2 canary quota fail-closed', () => {
     })).toMatchObject({ QUOTA_CHECK: 'BLOCKED_EXHAUSTED', continue: false });
     expect(evaluateCanaryQuota({
       worker_type: 'codex', quota_state: 'available', canary_authorization_pass: true, source: 'db',
+    })).toMatchObject({ QUOTA_CHECK: 'BLOCKED_UNKNOWN', continue: false });
+    expect(evaluateCanaryQuota({
+      worker_type: 'codex', quota_state: 'available', canary_authorization_pass: true, source: 'operator',
+    })).toMatchObject({ QUOTA_CHECK: 'BLOCKED_UNKNOWN', continue: false });
+    expect(evaluateCanaryQuota({
+      worker_type: 'codex', quota_state: 'available', canary_authorization_pass: true, source: 'provider_cli',
     })).toMatchObject({ QUOTA_CHECK: 'PASS', continue: true });
   });
 
-  it('allows limited only with explicit canary authorization', () => {
+  it('allows limited only with trusted source + explicit canary authorization', () => {
     expect(evaluateCanaryQuota({
-      worker_type: 'codex', quota_state: 'limited', canary_authorization_pass: false, source: 'db',
+      worker_type: 'codex', quota_state: 'limited', canary_authorization_pass: false, source: 'provider_cli',
     }).continue).toBe(false);
     expect(evaluateCanaryQuota({
       worker_type: 'codex', quota_state: 'limited', canary_authorization_pass: true, source: 'db',
+    })).toMatchObject({ QUOTA_CHECK: 'BLOCKED_UNKNOWN', continue: false });
+    expect(evaluateCanaryQuota({
+      worker_type: 'codex', quota_state: 'limited', canary_authorization_pass: true, source: 'provider_cli',
     })).toMatchObject({ QUOTA_CHECK: 'PASS', continue: true });
   });
 

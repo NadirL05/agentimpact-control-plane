@@ -161,16 +161,18 @@ export class AgentStartController {
   async hydrateFromPool(): Promise<void> {
     if (!this.options.pool) return;
     try {
+      const { getAgentQuotaDecision, decisionToRuntimeQuotaState } = await import('./agent-quota.js');
       const q = await this.options.pool.query(
-        `SELECT worker_type, quota_state FROM jarvis_agent_quota_state`,
+        `SELECT worker_type, quota_state, source, reason, observed_at, expires_at, updated_at, note
+         FROM jarvis_agent_quota_state`,
       );
       for (const row of q.rows) {
-        if (row.worker_type === 'codex' || row.worker_type === 'cursor') {
-          this.quotas.set(row.worker_type, row.quota_state);
-        }
+        if (row.worker_type !== 'codex' && row.worker_type !== 'cursor') continue;
+        const decision = getAgentQuotaDecision(row, { workerType: row.worker_type });
+        this.quotas.set(row.worker_type, decisionToRuntimeQuotaState(decision));
       }
     } catch {
-      // table may be absent
+      // table may be absent — leave fail-closed defaults (unknown)
     }
   }
 
@@ -807,6 +809,21 @@ export class AgentStartController {
       this.releaseLease(leaseId);
       this.releaseBudget(budgetId);
       const code = error instanceof Error ? error.message.slice(0, 100) : 'provider_invoke_failed';
+      // Authoritative negative quota signals only — never store raw secret payloads.
+      try {
+        const { parseNegativeProviderSignal, buildNegativeQuotaObservationWrite, persistNegativeQuotaObservation } =
+          await import('./agent-quota.js');
+        const signal = parseNegativeProviderSignal(code);
+        if (signal) {
+          this.quotas.set(worker, signal.quota_state);
+          if (this.options.pool) {
+            const write = buildNegativeQuotaObservationWrite(worker, signal);
+            await persistNegativeQuotaObservation(this.options.pool, write);
+          }
+        }
+      } catch {
+        // observation persist is best-effort; fail-closed decision below still applies
+      }
       await this.audit('jarvis.agent_start.failed', action, { error_code: code });
       return this.persist(action, hash, {
         decision: 'DENY',

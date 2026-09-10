@@ -232,13 +232,17 @@ echo "PRIVATE_SUPERSET_SOCKET_VISIBLE_IN_DOCKER=NO"
 echo "SUPERSET_CREDENTIAL_VISIBLE_IN_DOCKER=NO"
 echo "DOCKER_SOCKET_VISIBLE_IN_DOCKER=NO"
 
-# Explicit Codex quota available for this one-shot only (not invented remaining balance)
+# DISABLED: operator must never authorize real Codex execution.
+# Kept as dead code for historical audit; getAgentQuotaDecision denies operator.
+if false; then
 docker compose -f "${COMPOSE}" exec -T db psql -U agentimpact_app -d agentimpact -v ON_ERROR_STOP=1 -c \
   "INSERT INTO jarvis_agent_quota_state(worker_type,quota_state,source,note)
    VALUES ('codex','available','operator','nadir_one_shot_canary')
    ON CONFLICT (worker_type) DO UPDATE SET quota_state='available', source='operator',
      note='nadir_one_shot_canary', updated_at=now();" >/dev/null
-echo "QUOTA_CHECK=PASS"
+fi
+echo "OPERATOR_CAN_AUTHORIZE_CODEX=NO"
+echo "NOTE=legacy_operator_available_write_disabled"
 
 set -a
 # shellcheck disable=SC1091

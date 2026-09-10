@@ -69,6 +69,33 @@ export {
 } from './codex-canary-auth.js';
 export { evaluateCanaryQuota } from './codex-canary-quota.js';
 export {
+  getAgentQuotaDecision,
+  decisionToRuntimeQuotaState,
+  classifyCurrentQuotaRow,
+  parseNegativeProviderSignal,
+  buildNegativeQuotaObservationWrite,
+  persistNegativeQuotaObservation,
+  CODEX_QUOTA_DISCOVERY,
+  QUOTA_FRESHNESS_MS,
+} from './agent-quota.js';
+export type {
+  AgentQuotaDecision,
+  QuotaAuthorizationClass,
+  QuotaAuthoritySource,
+  NegativeQuotaObservationWrite,
+} from './agent-quota.js';
+export {
+  normalizeCodexRateLimitPayload,
+  queryCodexAppServerRateLimits,
+  observationToPersistWrite,
+  persistTrustedProviderCliQuota,
+  CODEX_RATELIMIT_RPC_METHOD,
+} from './codex-ratelimit-discovery.js';
+export type {
+  CodexRateLimitObservation,
+  PersistProviderCliQuotaWrite,
+} from './codex-ratelimit-discovery.js';
+export {
   parseAuthHelperArgv,
   authObjectKeysAllowed,
   ARMED_CANARY_V2_SHA256,
