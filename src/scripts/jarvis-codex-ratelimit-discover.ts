@@ -63,12 +63,8 @@ async function main() {
     const write = observationToPersistWrite(observation);
     if (write) {
       const { pool } = await import('../api/db.js');
-      try {
-        await persistTrustedProviderCliQuota(pool, write);
-        persisted = true;
-      } finally {
-        await pool.end().catch(() => undefined);
-      }
+      await persistTrustedProviderCliQuota(pool, write);
+      persisted = true;
     }
   }
 
