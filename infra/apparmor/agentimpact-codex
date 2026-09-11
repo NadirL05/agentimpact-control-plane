@@ -1,0 +1,11 @@
+# Allow only the root-managed Superset Codex runtime to create the user
+# namespaces required by bubblewrap. The host-wide Ubuntu restriction remains
+# enabled; this profile does not grant userns to Python, Node, or Superset.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentimpact-codex /var/lib/agentimpact-superset/{install/bin/codex,toolchains/codex/*/bin/codex} flags=(unconfined) {
+  userns,
+
+  include if exists <local/agentimpact-codex>
+}

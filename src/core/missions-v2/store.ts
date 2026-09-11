@@ -99,6 +99,10 @@ export class MissionStore {
         delivery_mode,mission_title,orchestration_version,mission_id)
         VALUES('hermes',$1,$2,$3,$4,$5,'async',$6,2,$7)`,
         [data.objective,slack.channel,slack.thread_ts,slack.user,slack.event_id,data.title,m.id]);
+      else await c.query(`INSERT INTO slack_gateway_inbox(target,prompt,channel_id,thread_ts,user_id,event_id,
+        delivery_mode,mission_title,orchestration_version,mission_id)
+        VALUES('hermes',$1,'operator',$2,$3,$4,'sync',$5,2,$6)`,
+        [data.objective,data.source_id,meta.principal,`v2:${m.id}`,data.title,m.id]);
       await this.event(c,m,'admitted');
       return m;
     });
@@ -130,6 +134,42 @@ export class MissionStore {
   async events(id: string, after = '0') {
     await this.get(id);
     return (await this.pool.query('SELECT * FROM mission_events WHERE mission_id=$1 AND id>$2::bigint ORDER BY id LIMIT 100', [id,after])).rows;
+  }
+
+  /**
+   * Operator cancellation is always available, even while provider execution
+   * is disabled. With no attempt it completes immediately; with an owned
+   * attempt it only records cancel_requested so the scheduler/supervisor must
+   * prove stop before releasing the lease.
+   */
+  async cancel(id: string, reason: string, meta: Mutation, expectedAttemptId?: string): Promise<Mission> {
+    if (!reason.trim() || reason.length > 2000) throw new MissionError('invalid_cancel_reason', 400);
+    return this.mutate(meta, {op:'cancel',id,reason}, async c => {
+      const row = await this.getTx(c,id);
+      const current = await c.query(
+        'SELECT current_attempt_id,phase,blocked_reason FROM agent_missions WHERE id=$1 FOR UPDATE', [id]);
+      const attemptId = current.rows[0]?.current_attempt_id as string | null;
+      if (expectedAttemptId !== undefined && attemptId !== expectedAttemptId) {
+        throw new MissionError('attempt_not_current', 409);
+      }
+      if (['completed','failed_permanent','cancelled','rejected'].includes(row.lifecycle_state)) {
+        if (row.lifecycle_state === 'cancelled') return row;
+        throw new MissionError('mission_terminal');
+      }
+      if (['cancel_requested','cancelling'].includes(row.lifecycle_state)) return row;
+      const nextState: State = attemptId ? 'cancel_requested' : 'cancelled';
+      const phase = attemptId ? 'stopping' : 'finished';
+      const updated = await c.query(`UPDATE agent_missions
+        SET lifecycle_state=$2,state_version=state_version+1,phase=$3,blocked_reason=NULL,updated_at=now()
+        WHERE id=$1 AND orchestration_version=2 AND state_version=$4 RETURNING ${columns}`,
+      [id,nextState,phase,row.state_version]);
+      if (!updated.rowCount) throw new MissionError('state_version_conflict');
+      const mission = updated.rows[0] as Mission;
+      await c.query(`INSERT INTO mission_events(mission_id,event_type,state_version,plan_version,lifecycle_state,attempt_id)
+        VALUES($1,$2,$3,$4,$5,$6)`,
+      [id,attemptId?'cancel_requested':'cancelled',mission.state_version,mission.plan_version,nextState,attemptId]);
+      return mission;
+    });
   }
   private async assertFoundationOnly(c: PoolClient, id: string): Promise<void> {
     // Works before 005; after allocation, only execution control may mutate lifecycle.

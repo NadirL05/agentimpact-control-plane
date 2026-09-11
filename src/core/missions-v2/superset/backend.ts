@@ -36,6 +36,8 @@ export type SupersetBackendOptions = {
   runner?: CliRunner;
   /** When true, deleteWorkspace always fails closed → quarantine. */
   cleanupValidated?: boolean;
+  /** Route git inspection through the private RPC executor, never container paths. */
+  rpcMode?: boolean;
 };
 
 function requireUuid(id: string, label: string): string {
@@ -49,11 +51,13 @@ export class SupersetExecutionBackend implements ExecutionBackend {
   private readonly run: CliRunner;
   private readonly orgId: string;
   private readonly cleanupValidated: boolean;
+  private readonly rpcMode: boolean;
 
   constructor(opts: SupersetBackendOptions) {
     this.orgId = opts.cli.organizationId;
     this.run = opts.runner ?? createSupersetCliRunner(opts.cli);
     this.cleanupValidated = opts.cleanupValidated === true;
+    this.rpcMode = opts.rpcMode === true;
   }
 
   async health(): Promise<HealthStatus> {
@@ -127,10 +131,13 @@ export class SupersetExecutionBackend implements ExecutionBackend {
   }
 
   async listWorkspaces(projectId?: string): Promise<WorkspaceRef[]> {
-    const args = ['workspaces', 'list', '--json'];
+    // Keep --json last so the RPC argv mapper can recognize the shape.
+    let args: string[];
     if (projectId) {
       requireUuid(projectId, 'project_id');
-      args.push('--project', projectId);
+      args = ['workspaces', 'list', '--project', projectId, '--json'];
+    } else {
+      args = ['workspaces', 'list', '--json'];
     }
     const { result } = await runJsonCommand(this.run, args);
     if (result.exitCode !== 0) throw new SupersetParseError('workspace_list_failed');
@@ -224,7 +231,20 @@ export class SupersetExecutionBackend implements ExecutionBackend {
     }
   }
 
-  async getGitState(_workspaceId: string, worktreePath: string): Promise<GitState> {
+  async getGitState(workspaceId: string, worktreePath: string): Promise<GitState> {
+    if (this.rpcMode) {
+      requireUuid(workspaceId, 'workspace_id');
+      const { result } = await runJsonCommand(this.run, [
+        '__agentimpact_rpc__', 'workspace.git_state', '--workspace', workspaceId,
+      ]);
+      if (result.exitCode !== 0) throw new SupersetParseError('git_state_failed');
+      const state = z.object({
+        branch: z.string().min(1).max(200),
+        head_sha: z.string().regex(/^[0-9a-f]{40}$/),
+        dirty: z.boolean(),
+      }).strict().parse(JSON.parse(result.stdout));
+      return { branch: state.branch, headSha: state.head_sha, dirty: state.dirty };
+    }
     if (!worktreePath.startsWith('/')) throw new SupersetParseError('invalid_worktree_path');
     // Git state is read via host git in the worktree — no publisher credential.
     const { spawnSync } = await import('node:child_process');
@@ -239,8 +259,21 @@ export class SupersetExecutionBackend implements ExecutionBackend {
     };
   }
 
-  async getDiff(_workspaceId: string, worktreePath: string, baseSha: string): Promise<DiffResult> {
+  async getDiff(workspaceId: string, worktreePath: string, baseSha: string): Promise<DiffResult> {
     if (!/^[0-9a-f]{40}$/.test(baseSha)) throw new SupersetParseError('invalid_base_sha');
+    if (this.rpcMode) {
+      requireUuid(workspaceId, 'workspace_id');
+      const { result } = await runJsonCommand(this.run, [
+        '__agentimpact_rpc__', 'workspace.diff', '--workspace', workspaceId, '--base-sha', baseSha,
+      ]);
+      if (result.exitCode !== 0) throw new SupersetParseError('diff_failed');
+      const diff = z.object({
+        patch: z.string().max(900_000),
+        files: z.array(z.string().min(1).max(500)).max(10_000),
+        untracked_files: z.array(z.string().min(1).max(500)).max(10_000),
+      }).strict().parse(JSON.parse(result.stdout));
+      return { patch: diff.patch, files: diff.files };
+    }
     const { spawnSync } = await import('node:child_process');
     const diff = spawnSync('git', ['-C', worktreePath, 'diff', `${baseSha}...HEAD`], {
       encoding: 'utf8',

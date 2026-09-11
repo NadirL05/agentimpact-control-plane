@@ -1,0 +1,14 @@
+NO_MODEL_ROOT_SMOKE_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-smoke-jarvis-v1-2-agent-capability-no-model.sh
+NO_MODEL_ROOT_SMOKE_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-smoke-jarvis-v1-2-agent-capability-no-model.sh
+NO_MODEL_ROOT_SMOKE_SHA256=baaf01eced383bf672b0151c47be91d8928a0d7d0dc6e5926138662005b59949
+AUTH_HELPER_V3_GATE_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-v3-gate.sh
+AUTH_HELPER_V3_GATE_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-authorize-jarvis-v1-2-one-codex-canary-v3-gate.sh
+NEW_AUTH_HELPER_SHA256=1b4ab2bd72e96e79c8b4d104c3960c44b045313378ab5cf90e74e06f57728a45
+CODEX_CANARY_V3_GATE_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-run-jarvis-v1-2-codex-canary-v3-gate.sh
+CODEX_CANARY_V3_GATE_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-run-jarvis-v1-2-codex-canary-v3-gate.sh
+NEW_CODEX_CANARY_SHA256=c39895ff1f5a845c6f21ac13eec9841eefe7d40e0944b4bdc0f0c67b1749e275
+OUTER_VERIFIER_SHA256=d336569d0d30304ddd8504d5ac1247af135f82c8e2a9ea60920b6b920c50de41
+OUTER_VERIFIER_UNCHANGED=YES
+HISTORICAL_SUPERSET_HARD_STOP=REPLACED_BY_MULTI_GATE
+NOTE=Do_not_execute_Codex_or_Cursor_during_prepare
+GATE_SMOKE=GATE_NADIR_JARVIS_V1_2_AGENT_CAPABILITY_ROOT_SMOKE_READY

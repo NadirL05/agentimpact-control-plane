@@ -155,6 +155,23 @@ describe('SupersetExecutionBackend offline', () => {
     expect(w.worktreePath).toBe('/var/lib/agentimpact-superset/ws');
   });
 
+  it('routes git state and diff through typed RPC without a container path', async () => {
+    const calls: string[][] = [];
+    const backend = new SupersetExecutionBackend({
+      cli,
+      rpcMode: true,
+      runner: mockRunner((args) => {
+        calls.push(args);
+        return args.includes('workspace.git_state')
+          ? ok(JSON.stringify({ branch: 'feat/x', head_sha: 'a'.repeat(40), dirty: true }))
+          : ok(JSON.stringify({ patch: 'diff', files: ['src/a.ts'], untracked_files: [] }));
+      }),
+    });
+    expect(await backend.getGitState(WS, '/host/path-not-visible-in-api')).toMatchObject({ headSha: 'a'.repeat(40) });
+    expect(await backend.getDiff(WS, '/host/path-not-visible-in-api', 'b'.repeat(40))).toEqual({ patch: 'diff', files: ['src/a.ts'] });
+    expect(calls.flat()).not.toContain('/host/path-not-visible-in-api');
+  });
+
   it('terminal create/read/send/close', async () => {
     const calls: string[][] = [];
     const backend = new SupersetExecutionBackend({
@@ -376,7 +393,7 @@ describe('agent registry + jarvis policy', () => {
   it('denies unrestricted shell and docker.sock', () => {
     expect(JARVIS_OPERATOR_POLICY.DENY).toContain('docker.sock');
     expect(JARVIS_OPERATOR_POLICY.DENY).toContain('unrestricted_root_shell');
-    expect(JARVIS_OPERATOR_POLICY.APPROVAL).toContain('push');
+    expect(JARVIS_OPERATOR_POLICY.APPROVAL).toContain('publisher.push');
   });
 });
 

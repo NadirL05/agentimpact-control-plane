@@ -1,0 +1,12 @@
+{
+  "agents": [
+    {
+      "agent_id": "orchestrator",
+      "grants": [
+        { "capability": "tool:invoke" },
+        { "capability": "memory:read" },
+        { "capability": "memory:write" }
+      ]
+    }
+  ]
+}

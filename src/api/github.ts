@@ -19,6 +19,7 @@ import { AGENT_LABEL, hasTestFiles, renderIssueBody } from '../core/github-spec.
 const app = new Hono();
 
 const TOKEN = process.env.GITHUB_TOKEN;
+const PUBLISHER_ENABLED = process.env.AGENTIMPACT_PUBLISHER_ENABLED === '1';
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 const PROFILE = 'agentimpact-dev';
 const TIMEOUT_MS = 15_000;
@@ -70,8 +71,6 @@ async function logEvent(
 
 /** Prepare une specification. N'ouvre rien : produit une action a valider. */
 app.post('/spec', async (c) => {
-  if (!TOKEN) return c.json({ error: 'missing_github_token' }, 503);
-
   const parsed = specSchema.safeParse(await c.req.json().catch(() => null));
 
   if (!parsed.success) {
@@ -118,6 +117,7 @@ app.post('/spec', async (c) => {
 
 /** Ouvre l'issue une fois la specification approuvee. */
 app.post('/execute', async (c) => {
+  if (!PUBLISHER_ENABLED) return c.json({ error: 'publisher_disabled' }, 503);
   if (!TOKEN) return c.json({ error: 'missing_github_token' }, 503);
 
   const parsed = executeSchema.safeParse(await c.req.json().catch(() => null));
@@ -147,6 +147,14 @@ app.post('/execute', async (c) => {
       403,
     );
   }
+
+  const claimed = await pool.query(
+    `update agent_actions set status = 'executing'
+      where id = $1 and status = 'approved'
+      returning id`,
+    [actionId],
+  );
+  if (!claimed.rowCount) return c.json({ error: 'execution_already_claimed' }, 409);
 
   const response = await githubFetch(`/repos/${action.payload.repo}/issues`, {
     method: 'POST',
@@ -194,6 +202,7 @@ app.post('/execute', async (c) => {
  * approbation GitHub formelle n'est emise par l'agent.
  */
 app.post('/review', async (c) => {
+  if (!PUBLISHER_ENABLED) return c.json({ error: 'publisher_disabled' }, 503);
   if (!TOKEN) return c.json({ error: 'missing_github_token' }, 503);
 
   const parsed = reviewSchema.safeParse(await c.req.json().catch(() => null));
@@ -223,6 +232,7 @@ app.post('/review', async (c) => {
 
 /** Controles de recevabilite d'une PR. Signale, ne bloque pas techniquement. */
 async function inspectPullRequest(repo: string, prNumber: number) {
+  if (!TOKEN) return null;
   const filesResponse = await githubFetch(`/repos/${repo}/pulls/${prNumber}/files?per_page=100`);
 
   if (!filesResponse.ok) return null;

@@ -1,0 +1,29 @@
+[
+  {
+    "name": "agentimpact",
+    "command": "agentimpact-openjarvis-mcp",
+    "args": [],
+    "include_tools": [
+      "agentimpact.status",
+      "agentimpact.health",
+      "agentimpact.missions.list",
+      "agentimpact.missions.inspect",
+      "agentimpact.missions.create",
+      "agentimpact.missions.cancel",
+      "agentimpact.missions.events",
+      "agentimpact.agent.status",
+      "agentimpact.agent.start",
+      "agentimpact.agent.stop",
+      "agentimpact.workspace.inspect",
+      "agentimpact.tests.run",
+      "agentimpact.tests.status",
+      "agentimpact.diff.read",
+      "agentimpact.approvals.list",
+      "agentimpact.approvals.inspect",
+      "agentimpact.publisher.prepare",
+      "agentimpact.publisher.publish",
+      "agentimpact.deploy.prepare",
+      "agentimpact.deploy.execute"
+    ]
+  }
+]

@@ -29,11 +29,16 @@ import gmail from './gmail.js';
 import demos from './demos.js';
 import training from './training.js';
 import proposals from './proposals.js';
-import gatewayInbox from './gateway-inbox.js';
-import { configuredExecution } from '../core/missions-v2/execution-config.js';
+import { createGatewayInboxApi } from './gateway-inbox.js';
+import { configuredExecution, configuredSupersetDriver } from '../core/missions-v2/execution-config.js';
 import { createMissionsV2Api } from './missions-v2.js';
+import { createJarvisV2Api } from './jarvis.js';
+import { createOperatorV2Api } from './operator.js';
+import { OperatorService } from '../core/operator/service.js';
 import { MissionStore } from '../core/missions-v2/store.js';
 import { enabled, projects } from '../core/missions-v2/model.js';
+import { configuredJarvisService } from '../core/missions-v2/jarvis/service.js';
+import { PostgresJarvisAuditLog } from '../core/missions-v2/jarvis/audit.js';
 import dashboardRoutes from './dashboard-routes.js';
 import type { AppEnv } from '../core/hono-env.js';
 import {
@@ -48,6 +53,7 @@ import {
   sessionCookieHeader,
 } from '../core/signed-session.js';
 import { trainingSessionSecret } from '../core/training-form-auth.js';
+import { hasValidDashboardSession } from '../core/dashboard-session.js';
 
 const __dirname_local = dirname(fileURLToPath(import.meta.url));
 const trainingFormHtml = readFileSync(join(__dirname_local, 'public/training.html'), 'utf-8');
@@ -68,7 +74,19 @@ app.route('/dashboard', dashboardRoutes);
 
 app.route('/leads', leads);
 app.route('/missions', missions);
-app.route('/api/v2', createMissionsV2Api(new MissionStore(pool, {enabled:enabled(),projects:projects()}),configuredExecution(pool)));
+const missionStore = new MissionStore(pool, {enabled:enabled(),projects:projects()});
+const executionControl = configuredExecution(pool);
+const jarvisService = configuredJarvisService(
+  missionStore,
+  new PostgresJarvisAuditLog(pool),
+  process.env,
+  pool,
+);
+app.route('/api/v2/jarvis', createJarvisV2Api(jarvisService));
+app.route('/api/v2/operator', createOperatorV2Api(
+  new OperatorService(pool, missionStore, process.env),
+));
+app.route('/api/v2', createMissionsV2Api(missionStore,executionControl));
 app.route('/api/fullenrich', fullenrich);
 // Remplace l'ancien POST /api/approvals inline : celui-ci verifie le
 // payload_hash, l'expiration, l'auto-approbation et le rejeu.
@@ -83,9 +101,12 @@ app.route('/api/gmail', gmail);
 app.route('/api/demos', demos);
 app.route('/api/training', training);
 app.route('/api/proposals', proposals);
-app.route('/api/gateway-inbox', gatewayInbox);
+app.route('/api/gateway-inbox', createGatewayInboxApi(missionStore));
 
 app.get('/training', (c) => {
+  if (!hasValidDashboardSession(c.req.header('Cookie'))) {
+    return c.redirect('/dashboard/login.html', 302);
+  }
   const secret = trainingSessionSecret();
   if (!secret) {
     return c.text('Training indisponible — TRAINING_FORM_TOKEN non configuré.', 503);
@@ -655,7 +676,13 @@ export { app };
 const port = Number(process.env.PORT) || 3000;
 
 if (import.meta.vitest == null && process.env.NODE_ENV !== 'test') {
+  const rpcDriver = configuredSupersetDriver();
   console.log(`Server starting on port ${port}`);
+  console.log(
+    `superset_rpc_driver=${rpcDriver ? 'configured' : 'absent'} `
+    + `v2_execution=${process.env.AGENTIMPACT_V2_EXECUTION_ENABLED === '1' ? 'on' : 'off'} `
+    + `agent_execution=${process.env.AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED === '1' ? 'on' : 'off'}`,
+  );
   const { serve } = await import('@hono/node-server');
   serve({
     fetch: app.fetch,

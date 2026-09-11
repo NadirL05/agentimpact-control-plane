@@ -225,6 +225,7 @@ async function connectorHealth(): Promise<string[]> {
   if (!process.env.SLACK_BOT_TOKEN) missing.push('Slack');
   if (!GITHUB_TOKEN) missing.push('GitHub');
   if (!process.env.FULLENRICH_WEBHOOK_URL) missing.push('webhook FullEnrich');
+  if (!process.env.FULLENRICH_WEBHOOK_TOKEN) missing.push('token webhook FullEnrich');
 
   if (missing.length > 0) {
     lines.push(`Connecteur(s) non configuré(s) : ${missing.join(', ')}`);

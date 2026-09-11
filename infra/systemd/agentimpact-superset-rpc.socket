@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentImpact Superset RPC bridge socket
+
+[Socket]
+ListenStream=/run/agentimpact-superset-rpc/bridge.sock
+SocketUser=root
+SocketGroup=agentimpact-superset-rpc-client
+SocketMode=0660
+DirectoryMode=0711
+RemoveOnStop=no
+Service=agentimpact-superset-rpc.service
+
+[Install]
+WantedBy=sockets.target

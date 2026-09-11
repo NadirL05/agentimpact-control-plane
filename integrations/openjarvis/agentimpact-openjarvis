@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+install_root="${HOME}/.local/share/agentimpact-openjarvis"
+export AGENTIMPACT_OPERATOR_API_URL="${AGENTIMPACT_OPERATOR_API_URL:-http://10.66.66.1:3443}"
+export AGENTIMPACT_OPERATOR_TOKEN_FILE="${AGENTIMPACT_OPERATOR_TOKEN_FILE:-${HOME}/.openjarvis/agentimpact/operator.env}"
+export AGENTIMPACT_ORGANIZATION_ID="${AGENTIMPACT_ORGANIZATION_ID:-org-agentimpact}"
+export PATH="${HOME}/.local/bin:${PATH}"
+cd "$install_root"
+exec uv run jarvis "$@"

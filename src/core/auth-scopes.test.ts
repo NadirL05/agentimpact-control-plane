@@ -16,11 +16,9 @@ describe('auth-scopes second review', () => {
     ).toBe(true);
   });
 
-  it('exempte Brevo, training/log et dashboard avec auth dédiée', () => {
-    expect(isBearerExempt('POST', '/api/outreach/webhook/brevo')).toBe(true);
-    expect(isBearerExempt('POST', '/api/training/log')).toBe(true);
-    expect(isBearerExempt('POST', '/api/training/week')).toBe(false);
-    expect(isBearerExempt('POST', '/dashboard/login')).toBe(true);
-    expect(isBearerExempt('GET', '/dashboard/login.html')).toBe(true);
+  it('autorise Jarvis actions pour hermes/admin seulement', () => {
+    expect(isRouteAllowed('hermes', 'POST', '/api/v2/jarvis/actions')).toBe(true);
+    expect(isRouteAllowed('admin', 'POST', '/api/v2/jarvis/actions')).toBe(true);
+    expect(isRouteAllowed('bridge', 'POST', '/api/v2/jarvis/actions')).toBe(false);
   });
 });

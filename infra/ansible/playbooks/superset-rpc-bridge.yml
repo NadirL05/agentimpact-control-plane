@@ -1,0 +1,191 @@
+---
+- name: Install the bounded Superset RPC bridge with agent execution disabled
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    repo_root: /opt/agentimpact
+    work_src: "{{ playbook_dir }}/../../../"
+    rpc_user: agentimpact-superset-rpc
+    rpc_group: agentimpact-superset-rpc
+    rpc_client_group: agentimpact-superset-rpc-client
+    rpc_root: /var/lib/agentimpact-superset-rpc
+  tasks:
+    - name: Create unprivileged bridge groups
+      ansible.builtin.group:
+        name: "{{ item }}"
+        system: true
+      loop:
+        - "{{ rpc_group }}"
+        - "{{ rpc_client_group }}"
+
+    - name: Create the unprivileged bridge account
+      ansible.builtin.user:
+        name: "{{ rpc_user }}"
+        group: "{{ rpc_group }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ rpc_root }}"
+        create_home: false
+
+    - name: Create private bridge state directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ rpc_user }}"
+        group: "{{ rpc_group }}"
+        mode: '0700'
+      loop:
+        - "{{ rpc_root }}"
+        - "{{ rpc_root }}/home"
+        - "{{ rpc_root }}/state"
+
+    - name: Verify no Superset runtime home is shared with the bridge
+      ansible.builtin.assert:
+        that:
+          - rpc_root != '/var/lib/agentimpact-superset/home'
+          - rpc_root != '/var/lib/agentimpact-superset/state'
+        fail_msg: bridge_must_not_share_superset_runtime_home
+
+    - name: Resolve the public bridge UID for private peer authentication
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/id
+          - -u
+          - "{{ rpc_user }}"
+      register: rpc_uid
+      changed_when: false
+
+    - name: Refuse a missing unprivileged Superset executor account
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/id
+          - -u
+          - agentimpact-superset
+      changed_when: false
+
+    - name: Create the immutable bridge program directory
+      ansible.builtin.file:
+        path: /opt/agentimpact/superset-rpc
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the bridge program without credentials
+      ansible.builtin.copy:
+        src: "{{ work_src }}/infra/superset-rpc/bridge.py"
+        dest: /opt/agentimpact/superset-rpc/bridge.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install socket-activated bridge units
+      ansible.builtin.copy:
+        src: "{{ work_src }}/infra/systemd/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - agentimpact-superset-rpc.socket
+        - agentimpact-superset-rpc.service
+        - agentimpact-superset-private.socket
+        - agentimpact-superset-private.service
+
+    - name: Configure the sole allowed public peer for the private executor
+      ansible.builtin.copy:
+        content: "SUPERSET_RPC_PUBLIC_UID={{ rpc_uid.stdout }}\n"
+        dest: /etc/agentimpact/superset-rpc-private.env
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Assert Superset credential exists without reading it
+      ansible.builtin.stat:
+        path: /etc/credstore/agentimpact-superset-api-key
+        get_checksum: false
+        get_mime: false
+      register: superset_credential
+      no_log: true
+
+    - name: Refuse a missing private executor credential
+      ansible.builtin.assert:
+        that:
+          - superset_credential.stat.exists
+          - superset_credential.stat.isreg
+          - not superset_credential.stat.islnk
+        fail_msg: superset_private_executor_credential_missing_or_unsafe
+
+    - name: Verify the public bridge cannot traverse private Superset state
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/runuser
+          - -u
+          - "{{ rpc_user }}"
+          - --
+          - /usr/bin/test
+          - '!'
+          - -x
+          - /var/lib/agentimpact-superset
+      changed_when: false
+      no_log: true
+      register: private_state_access_denial
+
+    - name: Verify the public bridge cannot read the private credential
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/runuser
+          - -u
+          - "{{ rpc_user }}"
+          - --
+          - /usr/bin/test
+          - '!'
+          - -r
+          - /etc/credstore/agentimpact-superset-api-key
+      changed_when: false
+      no_log: true
+      register: private_credential_access_denial
+
+    - name: Fail closed if the public bridge can read private Superset material
+      ansible.builtin.assert:
+        that:
+          - private_state_access_denial.rc == 0
+          - private_credential_access_denial.rc == 0
+        fail_msg: bridge_must_not_read_private_manifest
+
+    - name: Keep all business execution flags disabled
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'AGENTIMPACT_V2_EXECUTION_ENABLED') | default('0', true) != '1'
+        fail_msg: business_execution_must_remain_disabled
+
+    - name: Reload the two-process bridge unit definitions
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Stop stale socket-activated service processes
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - agentimpact-superset-rpc.service
+        - agentimpact-superset-private.service
+
+    - name: Enable and restart only local two-process sockets
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: restarted
+      loop:
+        - agentimpact-superset-private.socket
+        - agentimpact-superset-rpc.socket
+
+    - name: Ensure the shared socket directory is traversable but not listable
+      ansible.builtin.file:
+        path: /run/agentimpact-superset-rpc
+        state: directory
+        owner: root
+        group: root
+        mode: '0711'

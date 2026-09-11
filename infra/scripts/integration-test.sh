@@ -220,10 +220,18 @@ check "client inconnu" "404" "$(api_code POST "/api/clients/inexistant/report")"
 
 # --- 8. surface publique -----------------------------------------------------
 title "8. Surface publique"
+private_expected=404
+case "$PUBLIC" in
+  http://127.0.0.1:*|http://localhost:*|https://127.0.0.1:*|https://localhost:*)
+    # Direct loopback reaches the authenticated application. The public tunnel
+    # intentionally hides these routes with 404 before they reach Hono.
+    private_expected=401
+    ;;
+esac
 for route in /leads /actions /api/clients/metrics /api/drive/search /api/briefs/daily; do
-  check "prive: $route" "404" "$(public_code "$PUBLIC$route")"
+  check "prive: $route" "$private_expected" "$(public_code "$PUBLIC$route")"
 done
-check "public: webhook FullEnrich" "401" "$(public_code -X POST "$PUBLIC/api/fullenrich/webhook" -H 'Content-Type: application/json' -d '{}')"
+check "public: webhook FullEnrich" "503" "$(public_code -X POST "$PUBLIC/api/fullenrich/webhook" -H 'Content-Type: application/json' -d '{}')"
 check "public: webhook GitHub" "401" "$(public_code -X POST "$PUBLIC/api/github/webhook" -H 'Content-Type: application/json' -d '{}')"
 
 # --- resultat ----------------------------------------------------------------

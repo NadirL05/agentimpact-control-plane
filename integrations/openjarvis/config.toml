@@ -1,0 +1,42 @@
+[engine]
+default = "ollama"
+
+[intelligence]
+default_model = "qwen3.5:9b"
+
+[agent]
+default_agent = "orchestrator"
+max_turns = 10
+context_from_memory = true
+default_system_prompt = "You are OpenJarvis, Nadir's concise AgentImpact operator interface. Operational state always comes from AgentImpact tools. Never claim an action ran unless the tool result proves it. Explain policy codes in plain French. Publishing and production deployment require an exact explicit approval."
+
+[tools]
+enabled = ""
+
+[tools.mcp]
+enabled = true
+servers = "mcp-servers.json"
+
+[memory]
+enabled = true
+backend = "local"
+max_facts = 500
+
+[security]
+profile = "shared"
+mode = "redact"
+rate_limit_enabled = true
+rate_limit_rpm = 60
+
+[security.capabilities]
+enabled = true
+default_deny = true
+policy_path = "~/.openjarvis/agentimpact/capabilities.json"
+
+[server]
+host = "127.0.0.1"
+port = 8000
+agent = "orchestrator"
+
+[telemetry]
+enabled = true

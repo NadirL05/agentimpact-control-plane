@@ -17,4 +17,28 @@ export {
   workspaceCreateSchema,
 } from './json.js';
 export { redactSecrets, createSupersetCliRunner } from './cli.js';
+export {
+  mapSupersetCliToRpc,
+  buildCodexRateLimitsReadRpc,
+  SupersetRpcClient,
+  createSupersetRpcRunner,
+} from './rpc-client.js';
+export type { SupersetRpcContext, SupersetRpcRequest } from './rpc-client.js';
+export {
+  DEFAULT_SUPERSET_RPC_SOCKET,
+  resolveSupersetRpcSocket,
+  createSupersetRpcBackend,
+  configuredSupersetRpcBackend,
+  createSupersetRpcContext,
+  evaluateSupersetAgentExecutionGate,
+  isSupersetAgentCapabilityArmed,
+  assertSupersetAgentExecutionDisabled,
+  assertBusinessExecutionOff,
+} from './runtime.js';
+export type { SupersetAgentExecutionGateState, SupersetAgentGateReason } from './runtime.js';
+export {
+  runJarvisSupersetRpcIntegration,
+  printJarvisIntegrationReport,
+} from './jarvis-integration-smoke.js';
+export type { JarvisIntegrationReport } from './jarvis-integration-smoke.js';
 export { prepareCodexViaSuperset, CODEX_SUPERSET_INVARIANTS } from './codex-via-superset.js';
