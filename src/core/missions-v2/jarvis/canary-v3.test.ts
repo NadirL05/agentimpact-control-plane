@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   CANARY_V3_ALLOWED_PATH,
@@ -41,7 +42,7 @@ import { evaluateCanaryQuota } from './codex-canary-quota.js';
 
 const LEGACY = '/tmp/agentimpact-superset-poc-stage/superset-linux-x64.tar.gz';
 const PINNED_SHA = 'a'.repeat(64);
-const REPO = '/opt/agentimpact/runner/repos/agentimpact-control-plane.git';
+const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
 const AUTH_HELPER_V3 = join(REPO, 'infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-v3.sh');
 const CANARY_V3 = join(REPO, 'infra/jarvis/root-run-jarvis-v1-2-codex-canary-v3.sh');
 const EXPECTED_CANARY_V3_SHA =

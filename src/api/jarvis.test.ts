@@ -95,4 +95,18 @@ describe('Jarvis API', () => {
     });
     expect(r.status).toBe(403);
   });
+
+  it('rejects organization spoofing at the route boundary', async () => {
+    const r = await app('hermes').request('/api/v2/jarvis/actions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        request_id: randomUUID(),
+        message: 'status',
+        organization_id: 'org-other',
+      }),
+    });
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({error: 'organization_forbidden'});
+  });
 });

@@ -341,14 +341,14 @@ export async function queryCodexAppServerRateLimits(opts?: {
 
   return new Promise((resolve) => {
     let settled = false;
+    let child: ReturnType<typeof spawn> | undefined;
     const finish = (obs: CodexRateLimitObservation) => {
       if (settled) return;
       settled = true;
-      try { child.kill('SIGTERM'); } catch { /* ignore */ }
+      try { child?.kill('SIGTERM'); } catch { /* ignore */ }
       resolve(obs);
     };
 
-    let child;
     try {
       child = spawn(bin, ['app-server', '--stdio'], {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -409,8 +409,8 @@ export async function queryCodexAppServerRateLimits(opts?: {
       }
       if (msg.id === 1 && msg.result !== undefined) {
         // Send initialized notification + rateLimits read
-        child.stdin?.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
-        child.stdin?.write(
+        child?.stdin?.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+        child?.stdin?.write(
           `${JSON.stringify({ id: 2, method: CODEX_RATELIMIT_RPC_METHOD, params: {} })}\n`,
         );
         return;

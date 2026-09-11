@@ -11,6 +11,11 @@ describe('SupersetRpcClient request mapper',()=>{
     expect(mapSupersetCliToRpc(['terminals','create','--workspace',randomUUID(),'--command','printf AGENTIMPACT_SUPERSET_RPC_SMOKE','--json'],context))
       .toMatchObject({operation:'terminal.create',parameters:{profile:'smoke.echo'}});
     expect(buildCodexRateLimitsReadRpc(context)).toMatchObject({operation:'codex.rate_limits.read',parameters:{}});
+    const workspaceId=randomUUID();
+    expect(mapSupersetCliToRpc(['__agentimpact_rpc__','workspace.git_state','--workspace',workspaceId],context))
+      .toMatchObject({operation:'workspace.git_state',parameters:{workspace_id:workspaceId}});
+    expect(mapSupersetCliToRpc(['__agentimpact_rpc__','workspace.diff','--workspace',workspaceId,'--base-sha','a'.repeat(40)],context))
+      .toMatchObject({operation:'workspace.diff',parameters:{workspace_id:workspaceId,base_sha:'a'.repeat(40)}});
   });
   it('never forwards arbitrary argv or a terminal shell command',()=>{
     expect(()=>mapSupersetCliToRpc(['shell','exec','id'],context)).toThrow(new SupersetParseError('rpc_operation_denied'));

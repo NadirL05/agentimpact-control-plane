@@ -45,10 +45,25 @@ function extractUuid(message: string): string | undefined {
   return message.match(UUID_RE)?.[0]?.toLowerCase();
 }
 
+function extractProject(message: string): string {
+  const named = message.match(/\b(?:de|du|pour)\s+([A-Za-z][A-Za-z0-9_-]{0,63})\s*$/i)?.[1];
+  return (named ?? 'PLU-IA').toUpperCase();
+}
+
 const RULES: Rule[] = [
+  { re: /\b(corrige|r[eé]pare|fixe).{0,80}\btests?\b/i, intent: 'mission_create_fix_tests', action: 'mission.create', risk: 'medium',
+    params: (m) => ({
+      title: `Corriger les tests de ${extractProject(m)}`.slice(0, 200),
+      objective: m.slice(0, 4000),
+      project: extractProject(m),
+      requested_worker_type: /\bcursor\b/i.test(m) ? 'cursor' : 'codex',
+      reason: 'jarvis_nl_fix_tests',
+    }) },
   { re: /\b(status|sant[eé]|health|etat\s+du\s+systeme|état\s+du\s+système)\b/i, intent: 'status', action: 'status.get', risk: 'low' },
-  { re: /\b(liste|montre|affiche).{0,40}(mission)/i, intent: 'mission_list', action: 'mission.list', risk: 'low' },
-  { re: /\bmissions?\s+(en\s+cours|ouvertes|actives)\b/i, intent: 'mission_list', action: 'mission.list', risk: 'low' },
+  { re: /\b(liste|montre|affiche).{0,40}(mission)/i, intent: 'mission_list', action: 'mission.list', risk: 'low',
+    params: () => ({ project: 'PLU-IA' }) },
+  { re: /\b(?:quelles?\s+)?missions?\s+(en\s+cours|ouvertes|actives|tournent)\b/i, intent: 'mission_list', action: 'mission.list', risk: 'low',
+    params: () => ({ project: 'PLU-IA' }) },
   { re: /\b(pourquoi|inspecte|d[eé]tail|montre).{0,40}mission\b/i, intent: 'mission_inspect', action: 'mission.inspect', risk: 'low',
     params: (m) => ({ mission_id: extractUuid(m) }) },
   { re: /\b(events?|historique|journal).{0,40}mission\b/i, intent: 'mission_events', action: 'mission.events', risk: 'low',
@@ -57,13 +72,15 @@ const RULES: Rule[] = [
   { re: /\bworkspaces?\b/i, intent: 'workspace_list', action: 'workspace.list', risk: 'low' },
   { re: /\b(liste|montre|affiche).{0,40}projects?\b/i, intent: 'project_list', action: 'project.list', risk: 'low' },
   { re: /\bprojects?\s+list\b/i, intent: 'project_list', action: 'project.list', risk: 'low' },
+  { re: /\b(montre|affiche).{0,40}\bdiff\b/i, intent: 'diff_read', action: 'diff.read', risk: 'low',
+    params: (m) => ({ mission_id: extractUuid(m) }) },
   { re: /\b(cr[eé]e|creer|créer).{0,40}mission\b/i, intent: 'mission_create', action: 'mission.create', risk: 'medium',
     params: (m) => ({ title: m.replace(/^.*mission(?:\s+(?:pour|de))?\s*/i, '').trim().slice(0, 200) || 'mission jarvis' }) },
   { re: /\b(annule|cancel).{0,40}mission\b/i, intent: 'mission_cancel', action: 'mission.cancel', risk: 'medium',
     params: (m) => ({ mission_id: extractUuid(m) }) },
   { re: /\b(arr[eê]te|stoppe?|stop).{0,40}agent\b/i, intent: 'agent_stop', action: 'agent.stop', risk: 'medium',
     params: (m) => ({ mission_id: extractUuid(m) }) },
-  { re: /\b(lance|d[eé]marre|start).{0,40}(codex|cursor|agent)\b/i, intent: 'agent_start', action: 'agent.start', risk: 'high',
+  { re: /\b(lance|d[eé]marre|start|utilise).{0,40}(codex|cursor|agent)\b/i, intent: 'agent_start', action: 'agent.start', risk: 'high',
     params: (m) => {
       const worker = /\bcursor\b/i.test(m) ? 'cursor' : 'codex';
       return {
@@ -73,8 +90,8 @@ const RULES: Rule[] = [
       };
     } },
   { re: /\b(agent\.create|agents\s+create|cr[eé]e\s+un\s+agent)\b/i, intent: 'agent_create', action: 'agent.create', risk: 'critical' },
-  { re: /\b(push|pousse).{0,40}(github|git)\b/i, intent: 'publisher_push', action: 'publisher.push', risk: 'critical' },
-  { re: /\b(cr[eé]e|ouvrir).{0,40}(pr|pull\s+request)\b/i, intent: 'publisher_pr', action: 'publisher.pr_create', risk: 'critical' },
+  { re: /\b(push|pousse|publie)\b(?:.{0,40}(github|git))?/i, intent: 'publisher_push', action: 'publisher.push', risk: 'critical' },
+  { re: /\b(cr[eé]e|ouvrir|pr[eé]pare).{0,40}(pr|pull\s+request)\b/i, intent: 'publisher_pr', action: 'publisher.pr_create', risk: 'critical' },
   { re: /\b(merge|fusionne).{0,40}(pr|pull|branche)\b/i, intent: 'publisher_merge', action: 'publisher.merge', risk: 'critical' },
   { re: /\b(d[eé]ploie|deploy).{0,40}(prod|production|staging)?\b/i, intent: 'deploy', action: 'deploy', risk: 'critical',
     params: () => ({ target: 'prod' }) },

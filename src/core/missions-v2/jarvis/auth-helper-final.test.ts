@@ -3,11 +3,11 @@ import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ARMED_CANARY_V2_SHA256,
   AUTH_HELPER_TTL_SECONDS,
-  CANONICAL_ARMED_CANARY_PATH,
   buildFinalAuthObjectFields,
   canaryScriptHashBinding,
   parseFinalAuthHelperArgv,
@@ -20,7 +20,8 @@ import {
 } from './codex-canary-auth.js';
 import { randomUUID } from 'node:crypto';
 
-const REPO = '/opt/agentimpact/runner/repos/agentimpact-control-plane.git';
+const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
+const SOURCE_CANARY = join(REPO, 'infra/jarvis/root-run-jarvis-v1-2-codex-canary-armed-v2.sh');
 const HELPER_FINAL = join(
   REPO,
   'infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-final.sh',
@@ -115,11 +116,12 @@ describe('final auth helper — argv + canonical binding (static)', () => {
 
   it('shell static probe: no-arg, one legacy, two denied, wrong hash, no Codex', () => {
     const canarySha = createHash('sha256')
-      .update(readFileSync(CANONICAL_ARMED_CANARY_PATH))
+      .update(readFileSync(SOURCE_CANARY))
       .digest('hex');
     expect(canarySha).toBe(ARMED_CANARY_V2_SHA256);
 
-    const noArg = probe([]);
+    const staticEnv = { AGENTIMPACT_AUTH_HELPER_STATIC_CANARY_PATH: SOURCE_CANARY };
+    const noArg = probe([], staticEnv);
     expect(noArg.status).toBe(0);
     expect(noArg.stdout).toContain('HELPER_NO_ARG=PASS');
     expect(noArg.stdout).toContain('AUTH_HELPER_OUTER_COMPAT=PASS');
@@ -138,7 +140,7 @@ describe('final auth helper — argv + canonical binding (static)', () => {
     expect(noArg.stdout).toContain('CODEX_EXECUTION=NO');
     expect(noArg.stdout).not.toContain(LEGACY);
 
-    const one = probe([LEGACY]);
+    const one = probe([LEGACY], staticEnv);
     expect(one.status).toBe(0);
     expect(one.stdout).toContain('HELPER_ONE_LEGACY_POSITIONAL_ARG=PASS');
     expect(one.stdout).toContain('AUTH_HELPER_LEGACY_INFLUENCES_AUTH=NO');
@@ -146,7 +148,7 @@ describe('final auth helper — argv + canonical binding (static)', () => {
     expect(one.stdout).not.toContain(LEGACY);
     expect(one.stdout).toContain('CANARY_AUTHORIZATION_FILE=NOT_CREATED');
 
-    const two = probe([LEGACY, 'extra']);
+    const two = probe([LEGACY, 'extra'], staticEnv);
     expect(two.status).toBe(1);
     expect(two.stderr + two.stdout).toContain('HELPER_TWO_POSITIONAL_ARGS=DENIED');
     expect(two.stderr + two.stdout).toContain('AUTH_HELPER_EXTRA_ARGS_DENIED=PASS');
@@ -156,6 +158,7 @@ describe('final auth helper — argv + canonical binding (static)', () => {
     expect(flag.stderr + flag.stdout).toContain('ARBITRARY_SCRIPT_SELECTION=IMPOSSIBLE');
 
     const wrong = probe([], {
+      ...staticEnv,
       AGENTIMPACT_AUTH_HELPER_STATIC_EXPECTED_SHA: '0'.repeat(64),
     });
     expect(wrong.status).toBe(1);

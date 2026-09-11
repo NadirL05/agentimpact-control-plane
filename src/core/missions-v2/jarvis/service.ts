@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { MissionStore } from '../store.js';
+import type { Plan } from '../model.js';
 import { MissionError } from '../model.js';
 import { configuredSupersetRpcBackend } from '../superset/runtime.js';
 import type { SupersetExecutionBackend } from '../superset/backend.js';
@@ -57,7 +58,7 @@ export type JarvisHermesBridge = {
     organization_id: string;
     actor: string;
     request_id: string;
-  }): Promise<{ simulated: true; execution_backend: 'scheduler_owned'; publisher: 'off' }>;
+  }): Promise<{ execution_backend: 'scheduler_owned'; publisher: 'off'; plan?: Plan }>;
 };
 
 export type JarvisServiceOptions = {
@@ -391,6 +392,49 @@ export class JarvisService {
   private async dispatchMutation(action: JarvisAction): Promise<{ payload: unknown; simulated?: boolean }> {
     switch (action.action as JarvisActionName) {
       case 'mission.create': {
+        if (this.options.store) {
+          const input = {
+            project: String(action.parameters.project),
+            title: String(action.parameters.title),
+            objective: String(action.parameters.objective),
+            source_type: 'command' as const,
+            source_id: action.request_id,
+          };
+          let mission = await this.options.store.admit(input, {
+            principal: action.actor,
+            key: `jarvis:${action.request_id}`,
+          });
+          const handoff = await this.options.hermes?.submitMission?.({
+            title: input.title,
+            objective: input.objective,
+            project: input.project,
+            organization_id: action.organization_id,
+            actor: action.actor,
+            request_id: action.request_id,
+          });
+          if (handoff?.plan && mission.lifecycle_state === 'queued') {
+            mission = await this.options.store.transition(mission.id, mission.state_version, 'planning', {
+              principal: action.actor,
+              key: `jarvis-hermes-plan:${action.request_id}`,
+            });
+            mission = await this.options.store.savePlan(mission.id, mission.state_version, handoff.plan, {
+              principal: action.actor,
+              key: `jarvis-hermes-save:${action.request_id}`,
+            });
+          }
+          return {
+            payload: {
+              mission_id: mission.id,
+              lifecycle_state: mission.lifecycle_state,
+              requested_worker_type: action.parameters.requested_worker_type,
+              hermes_handoff: handoff ? 'accepted' : 'stored_for_hermes',
+              execution_backend: 'scheduler_owned',
+              publisher: 'off',
+              AGENT_STARTED: false,
+              MISSION_CREATED: true,
+            },
+          };
+        }
         const mission = this.mutations.createMission(action);
         return {
           payload: {
@@ -534,8 +578,26 @@ export function configuredJarvisService(
     agentStart,
     allowProviderInvoke: armed,
     hermes: {
-      async submitMission() {
-        return { simulated: true as const, execution_backend: 'scheduler_owned' as const, publisher: 'off' as const };
+      async submitMission(input) {
+        return {
+          execution_backend: 'scheduler_owned' as const,
+          publisher: 'off' as const,
+          plan: {
+            acceptance_criteria: [
+              `Objective satisfied: ${input.objective ?? input.title}`.slice(0, 1000),
+              'Configured tests pass',
+              'Diff is limited to mission-owned files',
+            ],
+            steps: [
+              { title: 'Inspect the repository and reproduce the failure', allowed_paths: [] },
+              { title: 'Apply the smallest coherent fix', allowed_paths: [] },
+              { title: 'Run configured tests and validate the diff', allowed_paths: [] },
+            ],
+            risks: ['Unexpected repository-specific side effects require reconciliation'],
+            completion_criteria: ['Tests pass', 'Diff validation passes', 'Provider and child processes are stopped'],
+            dependencies: [],
+          },
+        };
       },
     },
   });

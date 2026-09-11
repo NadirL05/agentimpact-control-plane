@@ -25,8 +25,19 @@ services:
   api:
     build:
       context: ./app/src
+    image: agentimpact-control-plane:production
     container_name: agentimpact-api
     restart: unless-stopped
+    init: true
+    group_add:
+      - "${SUPERSET_RPC_CLIENT_GID:-980}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       PORT: 3000
       PGHOST: db
@@ -41,7 +52,6 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_HOME_CHANNEL: ${SLACK_HOME_CHANNEL:-}
       APPROVAL_WINDOW_MINUTES: ${APPROVAL_WINDOW_MINUTES:-15}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPOS: ${GITHUB_REPOS:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
@@ -56,12 +66,17 @@ services:
       DASHBOARD_ACCESS_TOKEN: ${DASHBOARD_ACCESS_TOKEN:?DASHBOARD_ACCESS_TOKEN manquant dans .env}
       # Superset public RPC bridge only — never mount private executor / credstore / docker socket.
       AGENTIMPACT_SUPERSET_RPC_SOCKET: /run/agentimpact-superset-rpc/bridge.sock
+      AGENTIMPACT_V2_ENABLED: "1"
+      AGENTIMPACT_V2_PROJECTS: ${AGENTIMPACT_V2_PROJECTS:-PLU-IA}
+      AGENTIMPACT_ORGANIZATION_ID: ${AGENTIMPACT_ORGANIZATION_ID:-org-agentimpact}
       AGENTIMPACT_V2_EXECUTION_ENABLED: "0"
       AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED: "0"
       AGENTIMPACT_EXECUTION_BACKEND: custom
       AGENTIMPACT_V2_CODEX_PUBLISHER_ENABLED: "0"
-      AGENTIMPACT_JARVIS_ENABLED: "0"
-      AGENTIMPACT_JARVIS_MUTATIONS_ENABLED: "0"
+      AGENTIMPACT_JARVIS_ENABLED: "1"
+      AGENTIMPACT_JARVIS_MUTATIONS_ENABLED: "1"
+      AGENTIMPACT_PUBLISHER_ENABLED: "0"
+      AGENTIMPACT_DEPLOY_ENABLED: "0"
     env_file:
       - /etc/agentimpact/tokens/bridge.env
       - /etc/agentimpact/tokens/hermes.env
@@ -78,6 +93,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health',{headers:{authorization:'Bearer '+process.env.CTL_BRIDGE_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     # Expose uniquement en local. Le callback FullEnrich passe par le tunnel
     # cloudflared (/etc/cloudflared/config.yml), restreint au seul chemin
     # /api/fullenrich/webhook.

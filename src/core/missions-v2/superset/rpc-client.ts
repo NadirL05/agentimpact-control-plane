@@ -19,6 +19,10 @@ const base=(operation:string,parameters:Record<string,unknown>,context:SupersetR
 
 /** Converts only the existing backend's fixed argv shapes. No caller-controlled CLI escapes this module. */
 export function mapSupersetCliToRpc(args:string[],context:SupersetRpcContext):SupersetRpcRequest {
+  if(args.length===4&&args[0]==='__agentimpact_rpc__'&&args[1]==='workspace.git_state'&&args[2]==='--workspace')
+    return base('workspace.git_state',{workspace_id:value(args,'--workspace')},context);
+  if(args.length===6&&args[0]==='__agentimpact_rpc__'&&args[1]==='workspace.diff'&&args[2]==='--workspace'&&args[4]==='--base-sha')
+    return base('workspace.diff',{workspace_id:value(args,'--workspace'),base_sha:value(args,'--base-sha')},context);
   if(exact(args,['status','--json'])) return base('health',{},context);
   if(exact(args,['projects','list','--local','--json'])) return base('project.list',{},context);
   if(args[0]==='projects'&&args[1]==='create'&&args.includes('--name')&&args.includes('--local')&&args.includes('--json'))

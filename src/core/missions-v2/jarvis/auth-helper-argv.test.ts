@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ARMED_CANARY_V2_SHA256,
@@ -9,7 +10,7 @@ import {
   parseAuthHelperArgv,
 } from './auth-helper-argv.js';
 
-const REPO = '/opt/agentimpact/runner/repos/agentimpact-control-plane.git';
+const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
 const AUTH_HELPER_V2 = join(
   REPO,
   'infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-v2.sh',

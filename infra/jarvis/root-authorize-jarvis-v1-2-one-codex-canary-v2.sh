@@ -19,7 +19,8 @@ set -euo pipefail
 
 # Pinned armed canary V2 — authorization content is bound to this SHA only.
 EXPECTED_CANARY_SHA256=f3aaa0081634d011e060936ae0517c1d234858626b033f29b635d5fb626c9e60
-DEFAULT_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-run-jarvis-v1-2-codex-canary-armed-v2.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_SCRIPT="${SCRIPT_DIR}/root-run-jarvis-v1-2-codex-canary-armed-v2.sh"
 
 SCRIPT_PATH="${DEFAULT_SCRIPT}"
 TTL_SECONDS=900

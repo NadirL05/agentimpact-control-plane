@@ -171,6 +171,7 @@ export function createSupersetRpcBackend(
     cli: { organizationId: '00000000-0000-4000-8000-000000000000', binary: 'rpc-unused' },
     runner: createSupersetRpcRunner(client, context),
     cleanupValidated: false,
+    rpcMode: true,
   });
 }
 

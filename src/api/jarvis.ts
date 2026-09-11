@@ -9,6 +9,7 @@ import type { JarvisService } from '../core/missions-v2/jarvis/service.js';
 
 export function createJarvisV2Api(service?: JarvisService) {
   const app = new Hono<AppEnv>();
+  const organizationId = (process.env.AGENTIMPACT_ORGANIZATION_ID || 'org-agentimpact').trim();
   app.onError((error, c) => error instanceof MissionError
     ? c.json({ error: error.code }, error.status)
     : c.json({ error: 'jarvis_request_failed' }, 503));
@@ -23,6 +24,10 @@ export function createJarvisV2Api(service?: JarvisService) {
 
   app.post('/actions', async (c) => {
     const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object'
+      || (body as {organization_id?: unknown}).organization_id !== organizationId) {
+      return c.json({ error: 'organization_forbidden' }, 403);
+    }
     const actor = `api:${c.get('authScope')}`;
     const result = await service!.handle(body, actor);
     return c.json(result);

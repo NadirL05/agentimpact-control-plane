@@ -34,7 +34,11 @@ describe('Jarvis planner', () => {
 
     const missions = planJarvisActions({ ...base, message: 'Montre-moi les missions en cours' });
     expect(missions.ok).toBe(true);
-    if (missions.ok) expect(missions.actions[0]?.action).toBe('mission.list');
+    if (missions.ok) expect(missions.actions[0]).toMatchObject({action: 'mission.list', parameters: {project: 'PLU-IA'}});
+
+    const running = planJarvisActions({ ...base, message: 'quelles missions tournent' });
+    expect(running.ok).toBe(true);
+    if (running.ok) expect(running.actions[0]).toMatchObject({action: 'mission.list', parameters: {project: 'PLU-IA'}});
 
     const workspaces = planJarvisActions({ ...base, message: 'liste les workspaces' });
     expect(workspaces.ok).toBe(true);
@@ -47,6 +51,21 @@ describe('Jarvis planner', () => {
     expect(planned.ok).toBe(true);
     if (!planned.ok) return;
     expect(planned.actions.map((a) => a.action)).toEqual(['mission.inspect', 'mission.events']);
+  });
+
+  it('turns the daily French fix request into a complete typed mission', () => {
+    const planned = planJarvisActions({ ...base, message: 'Corrige les tests de PLU-IA' });
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.actions).toHaveLength(1);
+    expect(planned.actions[0]).toMatchObject({
+      action: 'mission.create',
+      parameters: {
+        project: 'PLU-IA',
+        requested_worker_type: 'codex',
+        objective: 'Corrige les tests de PLU-IA',
+      },
+    });
   });
 
   it('fail-closes unknown intent', () => {

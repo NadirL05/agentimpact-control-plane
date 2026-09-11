@@ -91,12 +91,12 @@ class SupersetRpcBridgeTest(unittest.TestCase):
             self.bridge.handle(request("health"), RequestContext(uid=7, gid=7, pid=7))
 
     def test_duplicate_request_replays_only_the_original_response(self) -> None:
-        value = request("workspace.list", {"project_id": str(uuid4())})
+        value = request("terminal.create", {"workspace_id": str(uuid4()), "profile": "smoke.echo"})
         first = self.call(value)
         second = self.call(value)
         self.assertEqual(first, second)
         self.assertEqual(len(self.executor.calls), 1)
-        changed = {**value, "parameters": {"project_id": str(uuid4())}}
+        changed = {**value, "parameters": {"workspace_id": str(uuid4()), "profile": "smoke.echo"}}
         with self.assertRaisesRegex(BridgeError, "request_id_conflict"):
             self.call(changed)
 
@@ -113,7 +113,7 @@ class SupersetRpcBridgeTest(unittest.TestCase):
     def test_fails_closed_when_the_durable_idempotency_window_is_full(self) -> None:
         self.bridge._state["requests"]={str(uuid4()): {"request": "{}", "response": {"ok": True}} for _ in range(MAX_IDEMPOTENCY_RECORDS)}
         with self.assertRaisesRegex(BridgeError, "idempotency_state_full"):
-            self.call(request("health"))
+            self.call(request("terminal.create", {"workspace_id": str(uuid4()), "profile": "smoke.echo"}))
 
     def test_executor_failure_is_not_returned_as_a_runtime_detail(self) -> None:
         class BrokenExecutor:
@@ -129,10 +129,17 @@ class SupersetRpcBridgeTest(unittest.TestCase):
             organization_from_status({"organizationId": "not-an-id"})
 
     def test_private_protocol_allows_only_bridge_generated_argv(self) -> None:
+        workspace_id = str(uuid4())
+        agent_id = str(uuid4())
         allowed = (
             ("status", "--json"),
             ("projects", "list", "--local", "--json"),
             ("terminals", "create", "--workspace", str(uuid4()), "--command", "printf AGENTIMPACT_SUPERSET_RPC_SMOKE", "--json"),
+            ("agents", "create", "--workspace", workspace_id, "--agent", "codex", "--prompt", "bounded task", "--json"),
+            ("agents", "create", "--workspace", workspace_id, "--agent", "cursor-agent", "--prompt", "bounded task", "--json"),
+            ("agents", "stop", "--agent", agent_id, "--json"),
+            ("__internal__", "workspace.git", "state", workspace_id),
+            ("__internal__", "workspace.git", "diff", workspace_id, "a" * 40),
         )
         for argv in allowed:
             self.assertEqual(validate_private_argv(argv, ("/var/lib/agentimpact-superset/fixtures",)), argv)
@@ -144,6 +151,39 @@ class SupersetRpcBridgeTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(BridgeError, "private_argv_denied"):
                 validate_private_argv(argv, ("/var/lib/agentimpact-superset/fixtures",))
+
+    def test_workspace_git_operations_accept_ids_only(self) -> None:
+        workspace_id = str(uuid4())
+        state = self.call(request("workspace.git_state", {"workspace_id": workspace_id}))
+        self.assertEqual(state["ok"], True)
+        self.assertEqual(self.executor.calls[-1], ("__internal__", "workspace.git", "state", workspace_id))
+        diff = self.call(request("workspace.diff", {"workspace_id": workspace_id, "base_sha": "a" * 40}))
+        self.assertEqual(diff["ok"], True)
+        self.assertEqual(self.executor.calls[-1], ("__internal__", "workspace.git", "diff", workspace_id, "a" * 40))
+        with self.assertRaisesRegex(BridgeError, "invalid_base_sha"):
+            self.call(request("workspace.diff", {"workspace_id": workspace_id, "base_sha": "HEAD;id"}))
+
+    def test_mutation_is_reserved_before_executor_and_ambiguous_replay_is_denied(self) -> None:
+        value = request("agent.create", {
+            "workspace_id": str(uuid4()), "agent": "codex", "prompt": "bounded task",
+        })
+        self.bridge.agent_execution_enabled = True
+
+        class AmbiguousExecutor:
+            def run(self, argv):
+                raise BridgeError("superset_unavailable")
+
+        self.bridge.executor = AmbiguousExecutor()
+        with self.assertRaisesRegex(BridgeError, "superset_unavailable"):
+            self.call(value)
+        self.assertEqual(self.bridge._state["requests"][value["request_id"]]["status"], "pending")
+        with self.assertRaisesRegex(BridgeError, "request_outcome_unknown"):
+            self.call(value)
+
+    def test_read_operations_do_not_exhaust_mutation_idempotency_capacity(self) -> None:
+        for _ in range(100):
+            self.call(request("health"))
+        self.assertEqual(self.bridge._state["requests"], {})
 
     def test_forwarder_sends_only_typed_argv_over_private_socket(self) -> None:
         socket_path = Path(self.tmp.name) / "executor.sock"

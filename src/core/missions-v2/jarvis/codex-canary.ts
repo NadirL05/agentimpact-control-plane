@@ -11,7 +11,7 @@ import { mapWorkerToSupersetAgent, agentStartPayloadHash, type JarvisWorkerType 
 import { evaluateSupersetAgentExecutionGate } from '../superset/runtime.js';
 
 export const NADIR_AUTHORIZATION_VALUE = 'ONE_REAL_CODEX_CANARY_ONLY' as const;
-export const CANARY_WORKER: JarvisWorkerType = 'codex';
+export const CANARY_WORKER = 'codex' as const satisfies JarvisWorkerType;
 export const CANARY_ALLOWED_PATH = 'src/increment.js';
 export const CANARY_MAX_CODEX_CALLS = 1;
 export const CANARY_MAX_CURSOR_CALLS = 0;

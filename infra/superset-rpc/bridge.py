@@ -25,6 +25,7 @@ OPERATIONS = frozenset({
     "workspace.inspect", "workspace.delete", "terminal.create", "terminal.read",
     "terminal.send", "terminal.close", "agent.create", "agent.stop",
     "codex.rate_limits.read",
+    "workspace.git_state", "workspace.diff",
 })
 MUTATIONS = frozenset({
     "project.create", "workspace.create", "workspace.delete", "terminal.create",
@@ -32,6 +33,7 @@ MUTATIONS = frozenset({
 })
 # Fixed internal argv only — never a generic Codex CLI or caller-controlled path.
 CODEX_RATE_LIMITS_INTERNAL_ARGV = ("__internal__", "codex.rate_limits.read")
+INTERNAL_WORKSPACE_GIT_PREFIX = ("__internal__", "workspace.git")
 CODEX_BIN = "/var/lib/agentimpact-superset/install/bin/codex"
 CODEX_HOME = "/var/lib/agentimpact-superset/codex-home"
 CODEX_RATE_LIMITS_TIMEOUT_SEC = 15
@@ -382,9 +384,58 @@ class SupersetExecutor:
     def run(self, argv: tuple[str, ...]) -> Any:
         if argv == CODEX_RATE_LIMITS_INTERNAL_ARGV:
             return run_codex_rate_limits_read()
+        if argv[:2] == INTERNAL_WORKSPACE_GIT_PREFIX:
+            return self._workspace_git(argv)
         if argv[0] != "status" and self.organization_id is None:
             self.organization_id = organization_from_status(self._run(("status", "--json"), {}))
         return self._run(argv, {} if self.organization_id is None else {"SUPERSET_ORGANIZATION_ID": self.organization_id})
+
+    def _workspace_git(self, argv: tuple[str, ...]) -> Any:
+        workspace_id = _uuid(argv[3], "workspace_id")
+        if self.organization_id is None:
+            self.organization_id = organization_from_status(self._run(("status", "--json"), {}))
+        details = self._run(
+            ("workspaces", "get", "--workspace", workspace_id, "--json"),
+            {"SUPERSET_ORGANIZATION_ID": self.organization_id},
+        )
+        raw_path = details.get("worktreePath") if isinstance(details, dict) else None
+        if not isinstance(raw_path, str):
+            raise BridgeError("workspace_path_unavailable")
+        worktree = Path(raw_path).resolve(strict=True)
+        workspace_root = Path("/var/lib/agentimpact-superset").resolve(strict=True)
+        if workspace_root not in worktree.parents or not worktree.is_dir():
+            raise BridgeError("workspace_path_denied")
+
+        def git(*args: str, limit: int = MAX_RESULT_BYTES) -> str:
+            try:
+                completed = subprocess.run(
+                    ["/usr/bin/git", "-C", str(worktree), *args], shell=False,
+                    check=False, text=True, stdin=subprocess.DEVNULL,
+                    capture_output=True, timeout=20,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                raise BridgeError("git_operation_failed") from None
+            if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > limit:
+                raise BridgeError("git_operation_failed")
+            return completed.stdout
+
+        if argv[2] == "state" and len(argv) == 4:
+            head = git("rev-parse", "HEAD").strip()
+            branch = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+            dirty = bool(git("status", "--porcelain").strip())
+            if not re.fullmatch(r"[0-9a-f]{40}", head) or not BRANCH.fullmatch(branch):
+                raise BridgeError("git_operation_failed")
+            return {"branch": branch, "head_sha": head, "dirty": dirty}
+        if argv[2] == "diff" and len(argv) == 5:
+            base_sha = argv[4]
+            if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+                raise BridgeError("invalid_base_sha")
+            patch = git("diff", "--no-ext-diff", "--binary", base_sha, "--", limit=900_000)
+            names = git("diff", "--name-only", base_sha, "--")
+            untracked = git("ls-files", "--others", "--exclude-standard")
+            files = sorted(set(filter(None, (names + "\n" + untracked).splitlines())))
+            return {"patch": patch, "files": files, "untracked_files": list(filter(None, untracked.splitlines()))}
+        raise BridgeError("private_argv_denied")
 
 
 def _uuid(value: object, label: str) -> str:
@@ -434,6 +485,14 @@ def validate_private_argv(argv: tuple[str, ...], source_roots: tuple[str, ...]) 
         raise BridgeError("private_argv_denied")
     if argv == CODEX_RATE_LIMITS_INTERNAL_ARGV:
         return argv
+    if len(argv) == 4 and argv[:3] == (*INTERNAL_WORKSPACE_GIT_PREFIX, "state"):
+        _uuid(argv[3], "workspace_id")
+        return argv
+    if len(argv) == 5 and argv[:3] == (*INTERNAL_WORKSPACE_GIT_PREFIX, "diff"):
+        _uuid(argv[3], "workspace_id")
+        if not re.fullmatch(r"[0-9a-f]{40}", argv[4]):
+            raise BridgeError("private_argv_denied")
+        return argv
     if argv in {("status", "--json"), ("projects", "list", "--local", "--json"), ("workspaces", "list", "--json")}:
         return argv
     if len(argv) == 6 and argv[:3] == ("projects", "create", "--name") and argv[-2:] == ("--local", "--json"):
@@ -464,6 +523,17 @@ def validate_private_argv(argv: tuple[str, ...], source_roots: tuple[str, ...]) 
     if len(argv) == 10 and argv[:3] == ("terminals", "send", "--workspace") and argv[4] == "--terminal" and argv[6] == "--text" and argv[7] == "\\u0003" and argv[-1] == "--json":
         _uuid(argv[3], "workspace_id")
         _uuid(argv[5], "terminal_id")
+        return argv
+    if len(argv) == 9 and argv[:3] == ("agents", "create", "--workspace") and argv[4] == "--agent" and argv[6] == "--prompt" and argv[-1] == "--json":
+        _uuid(argv[3], "workspace_id")
+        if argv[5] not in ("codex", "cursor-agent"):
+            raise BridgeError("private_argv_denied")
+        prompt = argv[7]
+        if not 1 <= len(prompt) <= 4096 or "\x00" in prompt:
+            raise BridgeError("private_argv_denied")
+        return argv
+    if len(argv) == 5 and argv[:3] == ("agents", "stop", "--agent") and argv[-1] == "--json":
+        _uuid(argv[3], "agent_id")
         return argv
     raise BridgeError("private_argv_denied")
 
@@ -564,6 +634,14 @@ class Bridge:
             if p:
                 raise BridgeError("invalid_parameters")
             return CODEX_RATE_LIMITS_INTERNAL_ARGV
+        if op == "workspace.git_state":
+            if set(p) != {"workspace_id"}: raise BridgeError("invalid_parameters")
+            return (*INTERNAL_WORKSPACE_GIT_PREFIX, "state", _uuid(p.get("workspace_id"), "workspace_id"))
+        if op == "workspace.diff":
+            if set(p) != {"workspace_id", "base_sha"}: raise BridgeError("invalid_parameters")
+            base_sha = p.get("base_sha")
+            if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", base_sha): raise BridgeError("invalid_base_sha")
+            return (*INTERNAL_WORKSPACE_GIT_PREFIX, "diff", _uuid(p.get("workspace_id"), "workspace_id"), base_sha)
         if op == "agent.create":
             agent = p.get("agent")
             if agent not in ("codex", "cursor-agent"): raise BridgeError("unsupported_agent")
@@ -583,14 +661,27 @@ class Bridge:
         known = self._state["requests"].get(request["request_id"])
         if known is not None:
             if known["request"] != canonical: raise BridgeError("request_id_conflict")
+            if known.get("status") == "pending" or "response" not in known:
+                raise BridgeError("request_outcome_unknown")
             return known["response"]
+        argv = self._argv(request)
         if request["operation"] in MUTATIONS:
             self._fence(request)
-        if len(self._state["requests"]) >= MAX_IDEMPOTENCY_RECORDS:
-            raise BridgeError("idempotency_state_full")
-        response = {"ok": True, "result": _redact(self.executor.run(self._argv(request)))}
-        self._state["requests"][request["request_id"]] = {"request": canonical, "response": response}
-        self._save_state()
+            if len(self._state["requests"]) >= MAX_IDEMPOTENCY_RECORDS:
+                raise BridgeError("idempotency_state_full")
+            # Reserve the one-shot request before crossing the private
+            # executor boundary. A crash after the side effect becomes an
+            # explicit unknown outcome and can never launch a duplicate.
+            self._state["requests"][request["request_id"]] = {
+                "request": canonical, "status": "pending",
+            }
+            self._save_state()
+        response = {"ok": True, "result": _redact(self.executor.run(argv))}
+        if request["operation"] in MUTATIONS:
+            self._state["requests"][request["request_id"]] = {
+                "request": canonical, "status": "completed", "response": response,
+            }
+            self._save_state()
         return response
 
 

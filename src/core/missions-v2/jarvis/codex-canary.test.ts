@@ -137,12 +137,12 @@ describe('Jarvis V1.2 armed Codex canary (static / no-model)', () => {
       writeFileSync(join(root, 'package.json'), packageJsonSource());
       writeFileSync(join(root, 'src/increment.js'), brokenIncrementSource());
       writeFileSync(join(root, 'test/increment.test.js'), incrementTestSource());
-      const before = spawnSync('/usr/bin/node', ['--test', join(root, 'test/increment.test.js')], {
+      const before = spawnSync(process.execPath, ['--test', join(root, 'test/increment.test.js')], {
         encoding: 'utf8',
       });
       expect(before.status).not.toBe(0);
       writeFileSync(join(root, 'src/increment.js'), fixedIncrementSource());
-      const after = spawnSync('/usr/bin/node', ['--test', join(root, 'test/increment.test.js')], {
+      const after = spawnSync(process.execPath, ['--test', join(root, 'test/increment.test.js')], {
         encoding: 'utf8',
       });
       expect(after.status).toBe(0);
