@@ -31,6 +31,9 @@ services:
     init: true
     group_add:
       - "${SUPERSET_RPC_CLIENT_GID:-980}"
+      # The host token stays owned by Hermes and group-readable. Only this
+      # single file is mounted, so the API cannot read the rest of Hermes home.
+      - "${GOOGLE_TOKEN_GID:-987}"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
@@ -84,8 +87,8 @@ services:
     volumes:
       # Stable socket endpoint only; no Superset credential, binary, state or Docker socket is mounted.
       - /run/agentimpact-superset-rpc/bridge.sock:/run/agentimpact-superset-rpc/bridge.sock
-      # Credentials Google montes en lecture seule : le fichier appartient a
-      # Hermes et ne doit jamais etre reecrit par l'API.
+      # Credentials Google montes en lecture seule : root/hermes must provision
+      # this as 0640 hermes:hermes; GOOGLE_TOKEN_GID may override the host GID.
       - /home/hermes/.hermes/google_token.json:/secrets/google_token.json:ro
       # Lecture seule : l'API verifie l'existence des fichiers, ne les ecrit
       # jamais (dev-senior ecrit via son propre montage sandbox).

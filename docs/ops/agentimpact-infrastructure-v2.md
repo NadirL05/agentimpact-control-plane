@@ -107,6 +107,10 @@ cd /opt/agentimpact/runner/worktrees/infra-final-codex
 ./infra/deploy/deploy.sh
 ```
 
+The host Google token must remain `0640 hermes:hermes`. The API receives only
+the Hermes group GID and the single read-only token bind mount; it does not see
+the rest of `/home/hermes`.
+
 Preflight uses Node 22, builds compiled production output, lints, runs all
 TypeScript and RPC tests, executes the PostgreSQL 16 concurrency tests, applies
 migrations 001–015 in a disposable database, audits production and development

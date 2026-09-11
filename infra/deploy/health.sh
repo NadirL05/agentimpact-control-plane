@@ -19,6 +19,7 @@ done
 
 check "$root/infra/scripts/cp-api.sh" bridge GET /health
 check python3 -m py_compile /opt/agentimpact/superset-rpc/bridge.py
+check docker exec agentimpact-api test -r /secrets/google_token.json
 
 body="$(mktemp)"
 trap 'unlink "$body"' EXIT
