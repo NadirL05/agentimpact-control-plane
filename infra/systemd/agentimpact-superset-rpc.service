@@ -12,6 +12,7 @@ Group=agentimpact-superset-rpc
 WorkingDirectory=/var/lib/agentimpact-superset-rpc
 Environment=HOME=/var/lib/agentimpact-superset-rpc/home
 Environment=PYTHONUNBUFFERED=1
+Environment=SUPERSET_RPC_CLIENT_UID=1000
 Environment=AGENTIMPACT_V2_EXECUTION_ENABLED=0
 Environment=AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED=0
 ExecStart=/usr/bin/python3 -I -B /opt/agentimpact/superset-rpc/bridge.py --role public --upstream-socket /run/agentimpact-superset-rpc/executor.sock

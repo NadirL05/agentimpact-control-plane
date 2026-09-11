@@ -231,8 +231,9 @@ class SupersetRpcBridgeTest(unittest.TestCase):
                     # Inline one accept cycle of serve_private without looping forever.
                     with connection:
                         try:
-                            from bridge import peer_context, _receive, _redact
+                            from bridge import peer_context, _drain, _receive, _redact
                             if peer_context(connection).uid != (os.getuid() + 1):
+                                _drain(connection)
                                 raise BridgeError("private_peer_denied")
                             raw = json.loads(_receive(connection, 64 * 1024).decode("utf-8"))
                             argv = validate_private_argv(tuple(raw["argv"]), ("/var/lib/agentimpact-superset/fixtures",))

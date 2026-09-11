@@ -20,6 +20,8 @@ sudo docker image inspect "$previous_image" >/dev/null
 
 sudo install -m 0644 "$backup/compose.yml" /opt/agentimpact/compose.yml
 sudo install -m 0644 "$backup/superset-rpc-bridge.py" /opt/agentimpact/superset-rpc/bridge.py
+sudo tar -xzf "$backup/systemd-units.tar.gz" -C /etc/systemd/system
+sudo systemctl daemon-reload
 if [ -f "$backup/infra-v2-health.sh" ]; then
   sudo install -m 0755 "$backup/infra-v2-health.sh" /opt/agentimpact/scripts/infra-v2-health.sh
 fi

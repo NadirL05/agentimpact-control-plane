@@ -29,7 +29,7 @@ with open(sys.argv[1], 'w', encoding='utf-8') as f:
     json.dump({'request_id':str(uuid.uuid4()),'organization_id':'org-agentimpact','message':'status'},f)
 PY
 jarvis="$($root/infra/scripts/cp-api.sh hermes POST /api/v2/jarvis/actions "$body" 2>/dev/null || true)"
-if printf '%s' "$jarvis" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["results"][0]["ok"]' 2>/dev/null; then
+if printf '%s' "$jarvis" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d["results"][0]; h=r["data"]["health"]; assert r["ok"] and (h.get("ok") or h.get("running"))' 2>/dev/null; then
   echo 'PASS Jarvis typed status'
 else
   echo 'FAIL Jarvis typed status'; fail=$((fail + 1))

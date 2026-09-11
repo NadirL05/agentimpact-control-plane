@@ -100,7 +100,7 @@
         dest: /etc/agentimpact/superset-rpc-private.env
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
 
     - name: Assert Superset credential exists without reading it
       ansible.builtin.stat:

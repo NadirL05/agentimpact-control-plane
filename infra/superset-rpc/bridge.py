@@ -770,9 +770,15 @@ def main() -> None:
     listener = socket.socket(fileno=fd)
     source_roots = ("/var/lib/agentimpact-superset/fixtures",)
     if args.role == "public":
+        try:
+            client_uid = int(os.environ["SUPERSET_RPC_CLIENT_UID"])
+            if client_uid <= 0:
+                raise ValueError
+        except (KeyError, ValueError):
+            raise SystemExit("public_client_uid_required") from None
         agent_execution_enabled = os.environ.get("AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED", "0").strip() == "1"
         bridge = Bridge(
-            executor=ForwardExecutor(args.upstream_socket), state_path=Path(args.state), allowed_uids={0},
+            executor=ForwardExecutor(args.upstream_socket), state_path=Path(args.state), allowed_uids={client_uid},
             agent_execution_enabled=agent_execution_enabled, source_roots=source_roots,
         )
         serve(listener, bridge)

@@ -56,6 +56,11 @@ sudo docker tag "agentimpact-control-plane:$release" agentimpact-control-plane:p
 
 sudo install -m 0644 "$release_dir/infra/compose.yml" /opt/agentimpact/compose.yml
 sudo install -m 0644 "$release_dir/infra/superset-rpc/bridge.py" /opt/agentimpact/superset-rpc/bridge.py
+for unit in agentimpact-superset-rpc.service agentimpact-superset-rpc.socket \
+  agentimpact-superset-private.service agentimpact-superset-private.socket; do
+  sudo install -m 0644 "$release_dir/infra/systemd/$unit" "/etc/systemd/system/$unit"
+done
+sudo systemctl daemon-reload
 sudo ln -sfn "$release_dir" /opt/agentimpact/current
 if [ ! -L /opt/agentimpact/app/src ]; then
   sudo mv /opt/agentimpact/app/src "/opt/agentimpact/app/src.legacy-$release"

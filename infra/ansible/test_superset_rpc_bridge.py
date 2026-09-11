@@ -42,6 +42,7 @@ class SupersetRpcBridgeDeploymentTest(unittest.TestCase):
         self.assertIn('/run/docker.sock',source)
         self.assertIn('/var/lib/agentimpact-superset',source)
         self.assertIn('AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED=0',source)
+        self.assertIn('SUPERSET_RPC_CLIENT_UID=1000',source)
         self.assertNotIn('Environment=SUPERSET_API_KEY=',source)
         self.assertNotIn('LoadCredential=',source)
 
