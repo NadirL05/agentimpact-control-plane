@@ -19,6 +19,7 @@ from uuid import UUID
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESULT_BYTES = 1024 * 1024
 MAX_IDEMPOTENCY_RECORDS = 10_000
+REQUEST_READ_TIMEOUT_SECONDS = 5.0
 UUID_FIELDS = ("request_id", "mission_id", "attempt_id", "fencing_token")
 OPERATIONS = frozenset({
     "health", "project.create", "project.list", "workspace.create", "workspace.list",
@@ -691,17 +692,31 @@ def peer_context(connection: socket.socket) -> RequestContext:
     return RequestContext(uid=uid, gid=gid, pid=pid)
 
 
-def _receive(connection: socket.socket, maximum: int) -> bytes:
+def _receive(
+    connection: socket.socket,
+    maximum: int,
+    timeout_seconds: float = REQUEST_READ_TIMEOUT_SECONDS,
+) -> bytes:
     chunks: list[bytes] = []
     size = 0
-    while True:
-        chunk = connection.recv(min(16_384, maximum + 1 - size))
-        if not chunk:
-            break
-        chunks.append(chunk)
-        size += len(chunk)
-        if size > maximum:
-            raise BridgeError("request_too_large")
+    previous_timeout = connection.gettimeout()
+    connection.settimeout(timeout_seconds)
+    try:
+        while True:
+            try:
+                chunk = connection.recv(min(16_384, maximum + 1 - size))
+            except TimeoutError:
+                raise BridgeError("request_timeout") from None
+            except OSError:
+                raise BridgeError("request_io_error") from None
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > maximum:
+                raise BridgeError("request_too_large")
+    finally:
+        connection.settimeout(previous_timeout)
     if not chunks:
         raise BridgeError("request_too_large")
     return b"".join(chunks)
@@ -731,8 +746,12 @@ def serve(listener: socket.socket, bridge: Bridge) -> None:
         connection, _ = listener.accept()
         with connection:
             try:
+                context = peer_context(connection)
+                if context.uid not in bridge.allowed_uids:
+                    _drain(connection)
+                    raise BridgeError("caller_not_authorized")
                 payload = _receive(connection, MAX_REQUEST_BYTES)
-                response = bridge.handle(json.loads(payload.decode("utf-8")), peer_context(connection))
+                response = bridge.handle(json.loads(payload.decode("utf-8")), context)
             except (BridgeError, UnicodeDecodeError, json.JSONDecodeError):
                 response = {"ok": False, "error": "request_rejected"}
             _send_response(connection, response)

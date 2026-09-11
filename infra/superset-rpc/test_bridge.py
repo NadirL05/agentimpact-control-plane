@@ -13,7 +13,7 @@ from bridge import (
     Bridge, BridgeError, FakeExecutor, ForwardExecutor, RequestContext,
     MAX_IDEMPOTENCY_RECORDS, organization_from_status, validate_private_argv,
     CODEX_RATE_LIMITS_INTERNAL_ARGV, normalize_codex_rate_limits_payload,
-    run_codex_rate_limits_read,
+    run_codex_rate_limits_read, _receive,
 )
 
 
@@ -89,6 +89,16 @@ class SupersetRpcBridgeTest(unittest.TestCase):
     def test_peer_uid_is_required(self) -> None:
         with self.assertRaisesRegex(BridgeError, "caller_not_authorized"):
             self.bridge.handle(request("health"), RequestContext(uid=7, gid=7, pid=7))
+
+    def test_incomplete_client_cannot_hold_the_serial_bridge_forever(self) -> None:
+        server, client = socket.socketpair()
+        try:
+            client.sendall(b'{"incomplete":')
+            with self.assertRaisesRegex(BridgeError, "request_timeout"):
+                _receive(server, 1024, timeout_seconds=0.01)
+        finally:
+            server.close()
+            client.close()
 
     def test_duplicate_request_replays_only_the_original_response(self) -> None:
         value = request("terminal.create", {"workspace_id": str(uuid4()), "profile": "smoke.echo"})
