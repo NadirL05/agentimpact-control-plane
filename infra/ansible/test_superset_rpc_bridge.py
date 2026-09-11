@@ -56,6 +56,15 @@ class SupersetRpcBridgeDeploymentTest(unittest.TestCase):
         self.assertNotIn('IPAddressDeny=',source)
         self.assertNotIn('User=root',source)
 
+    def test_quota_discovery_uses_typed_rpc_and_scoped_userns(self):
+        script=(ROOT/'src/scripts/jarvis-codex-ratelimit-discover.ts').read_text()
+        profile=(ROOT/'infra/apparmor/agentimpact-codex').read_text()
+        self.assertIn('queryCodexRateLimitsViaSupersetRpc',script)
+        self.assertNotIn('queryCodexAppServerRateLimits()',script)
+        self.assertIn('profile agentimpact-codex',profile)
+        self.assertIn('userns,',profile)
+        self.assertNotIn('kernel.apparmor_restrict_unprivileged_userns=0',profile)
+
     def test_deployment_has_no_acl_bridge_to_private_superset_state(self):
         source=(ROOT/'infra/ansible/playbooks/superset-rpc-bridge.yml').read_text()
         self.assertIn('bridge_must_not_read_private_manifest',source)

@@ -111,6 +111,11 @@ The host Google token must remain `0640 hermes:hermes`. The API receives only
 the Hermes group GID and the single read-only token bind mount; it does not see
 the rest of `/home/hermes`.
 
+The host must provide Ubuntu's `bubblewrap` package. The deploy installs the
+source-controlled `infra/apparmor/agentimpact-codex` profile, which grants
+`userns` only to the root-managed Superset Codex binaries while preserving
+`kernel.apparmor_restrict_unprivileged_userns=1` globally.
+
 Preflight uses Node 22, builds compiled production output, lints, runs all
 TypeScript and RPC tests, executes the PostgreSQL 16 concurrency tests, applies
 migrations 001–015 in a disposable database, audits production and development

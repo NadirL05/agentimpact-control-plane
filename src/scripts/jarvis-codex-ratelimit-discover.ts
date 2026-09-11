@@ -17,11 +17,17 @@ import {
   type AgentQuotaRow,
 } from '../core/missions-v2/jarvis/agent-quota.js';
 import {
-  queryCodexAppServerRateLimits,
+  queryCodexRateLimitsViaSupersetRpc,
   observationToPersistWrite,
   persistTrustedProviderCliQuota,
   type CodexRateLimitObservation,
 } from '../core/missions-v2/jarvis/codex-ratelimit-discovery.js';
+import { SupersetRpcClient } from '../core/missions-v2/superset/rpc-client.js';
+import {
+  createSupersetRpcContext,
+  DEFAULT_SUPERSET_RPC_SOCKET,
+  resolveSupersetRpcSocket,
+} from '../core/missions-v2/superset/runtime.js';
 
 function discoveryLabel(d: CodexRateLimitObservation['discovery']): 'PASS' | 'UNAVAILABLE' {
   return d === 'PASS' ? 'PASS' : 'UNAVAILABLE';
@@ -46,7 +52,11 @@ async function main() {
   const probeOnly = process.argv.includes('--probe-only');
   const persist = process.argv.includes('--persist');
 
-  const observation = await queryCodexAppServerRateLimits();
+  const socket = resolveSupersetRpcSocket(process.env) ?? DEFAULT_SUPERSET_RPC_SOCKET;
+  const observation = await queryCodexRateLimitsViaSupersetRpc(
+    new SupersetRpcClient(socket),
+    createSupersetRpcContext(),
+  );
   let persisted = false;
 
   if (persist && !probeOnly) {

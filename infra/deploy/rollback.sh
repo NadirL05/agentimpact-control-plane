@@ -22,6 +22,13 @@ sudo install -m 0644 "$backup/compose.yml" /opt/agentimpact/compose.yml
 sudo install -m 0644 "$backup/superset-rpc-bridge.py" /opt/agentimpact/superset-rpc/bridge.py
 sudo tar -xzf "$backup/systemd-units.tar.gz" -C /etc/systemd/system
 sudo systemctl daemon-reload
+if [ -f "$backup/apparmor-agentimpact-codex" ]; then
+  sudo install -m 0644 "$backup/apparmor-agentimpact-codex" /etc/apparmor.d/agentimpact-codex
+  sudo apparmor_parser -r /etc/apparmor.d/agentimpact-codex
+elif [ -f "$backup/apparmor-agentimpact-codex.absent" ]; then
+  sudo apparmor_parser -R /etc/apparmor.d/agentimpact-codex 2>/dev/null || true
+  if [ -e /etc/apparmor.d/agentimpact-codex ]; then sudo unlink /etc/apparmor.d/agentimpact-codex; fi
+fi
 if [ -f "$backup/infra-v2-health.sh" ]; then
   sudo install -m 0755 "$backup/infra-v2-health.sh" /opt/agentimpact/scripts/infra-v2-health.sh
 fi

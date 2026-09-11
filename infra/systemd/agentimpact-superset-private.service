@@ -35,7 +35,9 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-RestrictNamespaces=yes
+# Bubblewrap may request these namespaces for the Codex sandbox. AppArmor's
+# agentimpact-codex profile remains the executable-level userns gate.
+RestrictNamespaces=user mnt pid ipc uts cgroup net
 SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=

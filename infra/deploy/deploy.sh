@@ -36,6 +36,11 @@ sudo tar --exclude=.git --exclude=node_modules --exclude=dist -C /opt/agentimpac
 sudo tar -C /etc/systemd/system -czf "$backup_dir/systemd-units.tar.gz" \
   agentimpact-superset-rpc.service agentimpact-superset-rpc.socket \
   agentimpact-superset-private.service agentimpact-superset-private.socket
+if [ -f /etc/apparmor.d/agentimpact-codex ]; then
+  sudo cp -a /etc/apparmor.d/agentimpact-codex "$backup_dir/apparmor-agentimpact-codex"
+else
+  sudo install -m 0600 /dev/null "$backup_dir/apparmor-agentimpact-codex.absent"
+fi
 sudo docker inspect agentimpact-api --format '{{.Image}}' \
   >"/tmp/agentimpact-previous-image-$release"
 sudo install -m 0600 "/tmp/agentimpact-previous-image-$release" "$backup_dir/previous-image-id"
@@ -60,6 +65,8 @@ for unit in agentimpact-superset-rpc.service agentimpact-superset-rpc.socket \
   agentimpact-superset-private.service agentimpact-superset-private.socket; do
   sudo install -m 0644 "$release_dir/infra/systemd/$unit" "/etc/systemd/system/$unit"
 done
+sudo install -m 0644 "$release_dir/infra/apparmor/agentimpact-codex" /etc/apparmor.d/agentimpact-codex
+sudo apparmor_parser -r /etc/apparmor.d/agentimpact-codex
 sudo systemctl daemon-reload
 sudo ln -sfn "$release_dir" /opt/agentimpact/current
 if [ ! -L /opt/agentimpact/app/src ]; then

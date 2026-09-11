@@ -11,6 +11,8 @@ test -f "$repo/src/core/missions-v2/superset/backend.ts"
 test -f "$repo/src/core/missions-v2/superset/rpc-client.ts"
 test -f "$repo/infra/superset-rpc/bridge.py"
 test -f "$repo/infra/compose.yml"
+test -x /usr/bin/bwrap || { echo 'preflight: bubblewrap package required for Codex sandbox' >&2; exit 2; }
+sudo -n apparmor_parser -p "$repo/infra/apparmor/agentimpact-codex" >/dev/null
 
 sudo -n docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$repo:$repo" -w "$repo/src" node:22-bookworm sh -eu -c \
