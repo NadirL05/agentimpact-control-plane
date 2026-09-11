@@ -12,8 +12,8 @@ for unit in agentimpact-ctl-bridge.service agentimpact-gateway-inbox-ana.service
   agentimpact-gateway-inbox-hermes.service agentimpact-slack-router.service \
   agentimpact-superset-host.service agentimpact-superset-rpc.service \
   agentimpact-superset-private.service hermes-dashboard.service \
-  hermes-gateway.service hermes-gateway-agentimpact-ana.service \
-  hermes-gateway-agentimpact-dev.service; do
+  hermes-gateway.service hermes-gateway-growth.service \
+  hermes-gateway-memoire.service; do
   check systemctl is-active --quiet "$unit"
 done
 
