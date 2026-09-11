@@ -2,7 +2,7 @@
  * Scopes Bearer pour le control plane — allowlist stricte par identité.
  */
 
-export type AuthScope = 'bridge' | 'hermes' | 'admin';
+export type AuthScope = 'bridge' | 'planner' | 'hermes' | 'operator' | 'admin';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
@@ -59,12 +59,26 @@ const HERMES_RULES: RouteRule[] = [
   { method: 'GET', pattern: /^\/api\/gmail\// },
   { method: 'POST', pattern: /^\/api\/gmail\// },
   { method: 'POST', pattern: /^\/api\/github\/spec$/ },
-  { method: 'POST', pattern: /^\/api\/github\/execute$/ },
-  { method: 'POST', pattern: /^\/api\/github\/review$/ },
+];
+
+// Dedicated V2 planning transport. This identity cannot reach missions,
+// integrations, approvals, providers, Publisher, or the legacy action API.
+const PLANNER_RULES: RouteRule[] = [
+  { method: 'GET', pattern: /^\/health$/ },
+  { method: 'POST', pattern: /^\/api\/gateway-inbox\/claim$/ },
+  { method: 'POST', pattern: /^\/api\/gateway-inbox\/[0-9a-f-]{36}\/complete$/i },
+];
+
+// Dedicated personal/operator identity. It cannot call the broad Hermes,
+// bridge, worker, legacy action, or application integration surfaces.
+const OPERATOR_RULES: RouteRule[] = [
+  { method: 'GET', pattern: /^\/health$/ },
+  { method: 'POST', pattern: /^\/api\/v2\/operator\/actions$/ },
 ];
 
 const ADMIN_RULES: RouteRule[] = [
   ...HERMES_RULES,
+  ...OPERATOR_RULES,
   { method: 'POST', pattern: /^\/api\/v2\/missions\/[0-9a-f-]{36}\/(review|approvals\/bind)$/i },
   { method: 'POST', pattern: /^\/api\/approvals$/ },
   { method: 'POST', pattern: /^\/api\/proposals\/[0-9a-f-]{36}\/promote$/i },
@@ -73,7 +87,9 @@ const ADMIN_RULES: RouteRule[] = [
 
 const SCOPE_RULES: Record<AuthScope, RouteRule[]> = {
   bridge: BRIDGE_RULES,
+  planner: PLANNER_RULES,
   hermes: HERMES_RULES,
+  operator: OPERATOR_RULES,
   admin: ADMIN_RULES,
 };
 

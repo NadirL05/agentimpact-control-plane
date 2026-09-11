@@ -9,9 +9,13 @@ test -f "$repo/src/core/missions-v2/jarvis/agent-start.ts"
 test -f "$repo/src/core/missions-v2/jarvis/agent-quota.ts"
 test -f "$repo/src/core/missions-v2/superset/backend.ts"
 test -f "$repo/src/core/missions-v2/superset/rpc-client.ts"
+test -f "$repo/src/migrations/016_openjarvis_operator_security.sql"
+test -f "$repo/src/migrations/017_v2_inbox_lifecycle.sql"
 test -f "$repo/infra/superset-rpc/bridge.py"
 test -f "$repo/infra/compose.yml"
 test -x /usr/bin/bwrap || { echo 'preflight: bubblewrap package required for Codex sandbox' >&2; exit 2; }
+operator_bind_ip="$(ip -4 -o addr show dev wg0 2>/dev/null | awk '{split($4,a,"/");print a[1];exit}')"
+[[ "$operator_bind_ip" =~ ^10[.] ]] || { echo 'preflight: private WireGuard IPv4 required for operator API' >&2; exit 2; }
 sudo -n apparmor_parser -p "$repo/infra/apparmor/agentimpact-codex" >/dev/null
 
 sudo -n docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \

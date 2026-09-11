@@ -148,6 +148,14 @@ app.post('/execute', async (c) => {
     );
   }
 
+  const claimed = await pool.query(
+    `update agent_actions set status = 'executing'
+      where id = $1 and status = 'approved'
+      returning id`,
+    [actionId],
+  );
+  if (!claimed.rowCount) return c.json({ error: 'execution_already_claimed' }, 409);
+
   const response = await githubFetch(`/repos/${action.payload.repo}/issues`, {
     method: 'POST',
     body: JSON.stringify({

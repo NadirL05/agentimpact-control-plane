@@ -4,19 +4,19 @@
 # Usage:
 #   cp-api.sh <role> <method> <path> [body_file]
 #
-# Rôles : hermes | bridge | admin
+# Rôles : hermes | bridge | operator | admin
 # Charge le token depuis /etc/agentimpact/tokens/<role>.env (jamais accessible au runner).
 # Le token n'apparaît jamais dans argv (curl --config, fichier 0600).
 
 set -euo pipefail
 
-ROLE="${1:?role requis (hermes|bridge|admin)}"
+ROLE="${1:?role requis (hermes|bridge|operator|admin)}"
 METHOD="${2:?method HTTP requis}"
 PATH_URL="${3:?chemin API requis (ex: /health)}"
 BODY_FILE="${4:-}"
 
 case "$ROLE" in
-  hermes|bridge|admin) ;;
+  hermes|bridge|operator|admin) ;;
   *)
     echo '{"error":"invalid_role"}' >&2
     exit 64

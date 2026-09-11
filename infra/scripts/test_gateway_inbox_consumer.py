@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -45,6 +46,14 @@ class GatewayInboxConsumerTest(unittest.TestCase):
         os.environ["GATEWAY_INBOX_TARGET"] = "devin"
         self.assertEqual(load_module().validate_target(), 2)
 
+    def test_load_hermes_token_from_environment_file_credential(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as handle:
+            handle.write("CTL_PLANNER_TOKEN=planner-token-from-systemd\n")
+            token_path = handle.name
+        self.addCleanup(lambda: Path(token_path).unlink(missing_ok=True))
+        os.environ["SLACK_ROUTER_BRIDGE_TOKEN_FILE"] = token_path
+        self.assertEqual(load_module().load_bridge_token(), "planner-token-from-systemd")
+
     def test_run_hermes_uses_nadir_operator_profile(self) -> None:
         os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
         os.environ["HERMES_PROFILE"] = "nadir-operator"
@@ -53,8 +62,9 @@ class GatewayInboxConsumerTest(unittest.TestCase):
             mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
             mod.run_hermes("prompt")
             cmd = mock_run.call_args[0][0]
-            self.assertEqual(cmd[0], "/opt/agentimpact/scripts/run-with-profile.sh")
-            self.assertEqual(cmd[1], "nadir-operator")
+            wrapper = cmd.index("/opt/agentimpact/scripts/run-with-profile.sh")
+            self.assertEqual(cmd[wrapper + 1], "nadir-operator")
+            self.assertEqual(cmd[0], "/usr/bin/bwrap")
 
     def test_run_hermes_uses_agentimpact_growth_for_ana(self) -> None:
         os.environ["GATEWAY_INBOX_TARGET"] = "ana"
@@ -63,18 +73,39 @@ class GatewayInboxConsumerTest(unittest.TestCase):
         with patch.object(mod.subprocess, "run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
             mod.run_hermes("prompt")
-            self.assertEqual(mock_run.call_args[0][0][1], "agentimpact-growth")
+            cmd = mock_run.call_args[0][0]
+            wrapper = cmd.index("/opt/agentimpact/scripts/run-with-profile.sh")
+            self.assertEqual(cmd[wrapper + 1], "agentimpact-growth")
 
-    def test_v2_item_never_invokes_worker_or_completion(self) -> None:
+    def test_run_hermes_hides_control_plane_credentials_from_model(self) -> None:
         os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ["HERMES_PROFILE"] = "nadir-operator"
+        os.environ["SLACK_ROUTER_BRIDGE_TOKEN_FILE"] = "/run/credentials/gateway-bridge-token"
+        os.environ["CTL_PLANNER_TOKEN"] = "secret"
+        os.environ["CREDENTIALS_DIRECTORY"] = "/run/credentials"
         mod = load_module()
-        with patch.object(mod, "api_post", return_value=(200, {"item": {
+        with patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
+            mod.run_hermes("prompt")
+            env = mock_run.call_args.kwargs["env"]
+            self.assertNotIn("SLACK_ROUTER_BRIDGE_TOKEN_FILE", env)
+            self.assertNotIn("CTL_PLANNER_TOKEN", env)
+            self.assertNotIn("CREDENTIALS_DIRECTORY", env)
+            self.assertIn("/run/credentials", mock_run.call_args.args[0])
+
+    def test_v2_item_requests_typed_plan_and_completes_without_worker(self) -> None:
+        os.environ["GATEWAY_INBOX_TARGET"] = "hermes"
+        os.environ["GATEWAY_INBOX_V2_PLANNING_ENABLED"] = "1"
+        mod = load_module()
+        plan = {"acceptance_criteria":["done"],"steps":[{"title":"inspect","allowed_paths":[]}],
+                "risks":[],"completion_criteria":["tests pass"],"dependencies":[]}
+        with patch.object(mod, "api_post", side_effect=[(200, {"item": {
             "id": "synthetic-mission", "target": "hermes", "orchestration_version": 2,
-            "prompt": "PRIVATE_INPUT_SENTINEL",
-        }})) as post, patch.object(mod, "run_hermes") as run:
-            self.assertEqual(mod.process_once("fixture"), "wrong_orchestration_version")
-            run.assert_not_called()
-            self.assertEqual(post.call_count, 1)
+            "prompt": "PRIVATE_INPUT_SENTINEL", "mission_title":"fixture", "project":"TEST",
+        }}), (200,{})]) as post, patch.object(mod, "run_hermes", return_value=json.dumps(plan)) as run:
+            self.assertEqual(mod.process_once("fixture"), "processed")
+            self.assertIn("untrusted data", run.call_args.args[0])
+            self.assertEqual(post.call_args_list[1].args[1], {"plan":plan})
 
     def test_process_once_target_mismatch(self) -> None:
         os.environ["GATEWAY_INBOX_TARGET"] = "hermes"

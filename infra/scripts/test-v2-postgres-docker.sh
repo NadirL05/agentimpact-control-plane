@@ -42,6 +42,11 @@ for migration in "$repo_dir"/src/migrations/[0-9][0-9][0-9]_*.sql; do
   cat "$migration" \
     | sudo -n docker exec -i "$container" psql -p 55437 -v ON_ERROR_STOP=1 -U v2_test -d migration_chain >/dev/null
 done
+sudo -n docker exec "$container" psql -p 55437 -v ON_ERROR_STOP=1 -U v2_test -d migration_chain \
+  -c "INSERT INTO agent_missions(orchestration_version,target_agent,source_type,source_id,title,status,dry_run,requires_human_validation,project,objective,lifecycle_state,request_hash,requested_by) VALUES(2,'hermes','command','migration-fixture','fixture','pending',true,true,'TEST','fixture','queued',repeat('a',64),'test')" \
+  -c "INSERT INTO slack_gateway_inbox(target,prompt,channel_id,thread_ts,user_id,event_id,status,orchestration_version,mission_id) SELECT 'hermes','fixture','operator','migration-fixture','operator','migration-fixture','pending',2,id FROM agent_missions WHERE source_id='migration-fixture'" \
+  -c "UPDATE slack_gateway_inbox SET status='processing' WHERE orchestration_version=2" \
+  -c "UPDATE slack_gateway_inbox SET status='done' WHERE orchestration_version=2" >/dev/null
 sudo -n docker exec "$container" dropdb -p 55437 -U v2_test migration_chain
 sudo -n docker exec "$container" psql -p 55437 -v ON_ERROR_STOP=1 -U v2_test -d postgres \
   -c 'DROP ROLE agentimpact_approval_validator; DROP ROLE agentimpact_codex_control' >/dev/null
@@ -56,4 +61,4 @@ sudo -n docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     core/missions-v2/predeploy-hardening.test.ts
 
 echo 'POSTGRES_CONCURRENCY_TESTS=PASS'
-echo 'MIGRATION_CHAIN_001_015=PASS'
+echo 'MIGRATION_CHAIN_001_017=PASS'

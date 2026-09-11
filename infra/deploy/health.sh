@@ -18,6 +18,25 @@ for unit in agentimpact-ctl-bridge.service agentimpact-gateway-inbox-ana.service
 done
 
 check "$root/infra/scripts/cp-api.sh" bridge GET /health
+operator="$(AGENTIMPACT_OPERATOR_API_URL=http://127.0.0.1:3000 \
+  AGENTIMPACT_OPERATOR_TOKEN_FILE=/etc/agentimpact/tokens/operator.env \
+  python3 - "$root/integrations/openjarvis/agentimpact_mcp.py" <<'PY'
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('agentimpact_mcp',sys.argv[1])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+print(json.dumps(module.call_agentimpact('agentimpact.health',{})))
+PY
+)"
+if printf '%s' "$operator" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["data"]["control_plane"]=="ok"' 2>/dev/null; then
+  echo 'PASS OpenJarvis signed operator API'
+else
+  echo 'FAIL OpenJarvis signed operator API'; fail=$((fail + 1))
+fi
+if [ "$(CP_API_STATUS=1 "$root/infra/scripts/cp-api.sh" operator GET /missions | tail -n 1)" = 403 ]; then
+  echo 'PASS operator scope isolation'
+else
+  echo 'FAIL operator scope isolation'; fail=$((fail + 1))
+fi
 check python3 -m py_compile /opt/agentimpact/superset-rpc/bridge.py
 check docker exec agentimpact-api test -r /secrets/google_token.json
 
@@ -39,6 +58,11 @@ api_user="$(docker inspect -f '{{.Config.User}}' agentimpact-api)"
 equal node "$api_user" 'API unprivileged user'
 mounts="$(docker inspect -f '{{range .Mounts}}{{println .Source " -> " .Destination}}{{end}}' agentimpact-api)"
 case "$mounts" in *docker.sock*|*executor.sock*|*credstore*) echo 'FAIL forbidden API mount'; fail=$((fail + 1));; *) echo 'PASS API mount boundary';; esac
+operator_bind_ip="$(ip -4 -o addr show dev wg0 2>/dev/null | awk '{split($4,a,"/");print a[1];exit}')"
+case "$(ss -lntH 'sport = :3443' 2>/dev/null)" in
+  *"$operator_bind_ip:3443"*) [[ "$operator_bind_ip" =~ ^10[.] ]] && echo 'PASS operator WireGuard listener' || { echo 'FAIL operator WireGuard listener'; fail=$((fail + 1)); };;
+  *) echo 'FAIL operator WireGuard listener'; fail=$((fail + 1));;
+esac
 
 printf 'HEALTH_FAILURES=%d\n' "$fail"
 test "$fail" -eq 0

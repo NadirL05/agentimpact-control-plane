@@ -35,11 +35,6 @@ import { MemoryJarvisAuditLog } from './audit.js';
 import { jarvisConfig } from './config.js';
 import { JarvisMutationRegistry } from './mutations.js';
 import { AgentStartController, agentStartDecisionToPolicy } from './agent-start.js';
-import {
-  CANARY_MAX_RUNTIME_SECONDS,
-  OneShotCodexCallGuard,
-  providerInvokeArmed,
-} from './codex-canary.js';
 
 function requestFingerprint(request: JarvisRequest): string {
   return createHash('sha256').update(JSON.stringify({
@@ -449,6 +444,14 @@ export class JarvisService {
         };
       }
       case 'mission.cancel':
+        if (this.options.store) {
+          return { payload: { mission: await this.options.store.cancel(
+            String(action.parameters.mission_id), String(action.parameters.reason), {
+              principal: action.actor,
+              key: `operator-cancel:${action.request_id}`,
+            },
+          ) } };
+        }
         return { payload: { mission: this.mutations.cancelMission(action) } };
       case 'workspace.create':
         return {
@@ -476,21 +479,10 @@ export class JarvisService {
         return { payload: { ok: true, jarvis: 'ready', business_execution: 'off' }, simulated: true };
       }
       case 'project.list': {
-        const backend = this.superset();
-        if (!backend) return { payload: { projects: [], via: 'unavailable' }, simulated: true };
-        const { createSupersetRpcContext, DEFAULT_SUPERSET_RPC_SOCKET, resolveSupersetRpcSocket } = await import('../superset/runtime.js');
-        const { mapSupersetCliToRpc, SupersetRpcClient } = await import('../superset/rpc-client.js');
-        const socket = resolveSupersetRpcSocket(process.env) ?? DEFAULT_SUPERSET_RPC_SOCKET;
-        const client = new SupersetRpcClient(socket);
-        const ctx = createSupersetRpcContext();
-        const result = await client.call(mapSupersetCliToRpc(['projects', 'list', '--local', '--json'], ctx));
-        return { payload: { projects: result, via: 'superset_rpc' } };
+        return { payload: { projects: [], via: 'legacy_superset_inventory_disabled' }, simulated: true };
       }
       case 'workspace.list': {
-        const backend = this.superset();
-        if (!backend) return { payload: { workspaces: [], via: 'unavailable' }, simulated: true };
-        const projectId = typeof action.parameters.project_id === 'string' ? action.parameters.project_id : undefined;
-        return { payload: { workspaces: await backend.listWorkspaces(projectId), via: 'superset_rpc' } };
+        return { payload: { workspaces: [], via: 'legacy_superset_inventory_disabled' }, simulated: true };
       }
       case 'mission.list': {
         if (!this.options.store) return { payload: { items: [], via: 'store_unavailable' }, simulated: true };
@@ -535,38 +527,12 @@ export function configuredJarvisService(
   if (!cfg.enabled) return undefined;
   const mutations = new JarvisMutationRegistry(pool);
   const auditLog = audit ?? new MemoryJarvisAuditLog();
-  const armed = providerInvokeArmed(env);
-  const callGuard = new OneShotCodexCallGuard();
   const agentStart = new AgentStartController({
     pool,
     mutations,
     audit: auditLog,
-    lowRiskAuto: (env.AGENTIMPACT_JARVIS_AGENT_LOW_RISK_AUTO || '0') === '1',
-    allowProviderInvoke: armed,
-    invokeProvider: armed
-      ? async (ctx) => {
-        if (ctx.superset_agent_id !== 'codex') throw new Error('canary_codex_only');
-        callGuard.recordCodexCall();
-        const { SupersetRpcClient } = await import('../superset/rpc-client.js');
-        const { DEFAULT_SUPERSET_RPC_SOCKET, resolveSupersetRpcSocket } = await import('../superset/runtime.js');
-        const { buildTypedAgentCreateRpc } = await import('./codex-canary.js');
-        const socket = resolveSupersetRpcSocket(env) ?? DEFAULT_SUPERSET_RPC_SOCKET;
-        const client = new SupersetRpcClient(socket, CANARY_MAX_RUNTIME_SECONDS * 1000);
-        const request = buildTypedAgentCreateRpc({
-          request_id: ctx.request_id,
-          mission_id: ctx.mission_id,
-          attempt_id: ctx.attempt_id,
-          fencing_token: ctx.fencing_token,
-          workspace_id: ctx.workspace_id,
-          prompt: ctx.prompt,
-        });
-        const raw = await client.call(request);
-        const agentId = raw && typeof raw === 'object' && 'id' in (raw as object)
-          ? String((raw as { id: unknown }).id)
-          : undefined;
-        return { agent_id: agentId, raw };
-      }
-      : undefined,
+    lowRiskAuto: false,
+    allowProviderInvoke: false,
   });
   return new JarvisService({
     enabled: true,
@@ -576,27 +542,12 @@ export function configuredJarvisService(
     flags: resolveJarvisPolicyFlags(env),
     mutations,
     agentStart,
-    allowProviderInvoke: armed,
+    allowProviderInvoke: false,
     hermes: {
-      async submitMission(input) {
+      async submitMission() {
         return {
           execution_backend: 'scheduler_owned' as const,
           publisher: 'off' as const,
-          plan: {
-            acceptance_criteria: [
-              `Objective satisfied: ${input.objective ?? input.title}`.slice(0, 1000),
-              'Configured tests pass',
-              'Diff is limited to mission-owned files',
-            ],
-            steps: [
-              { title: 'Inspect the repository and reproduce the failure', allowed_paths: [] },
-              { title: 'Apply the smallest coherent fix', allowed_paths: [] },
-              { title: 'Run configured tests and validate the diff', allowed_paths: [] },
-            ],
-            risks: ['Unexpected repository-specific side effects require reconciliation'],
-            completion_criteria: ['Tests pass', 'Diff validation passes', 'Provider and child processes are stopped'],
-            dependencies: [],
-          },
         };
       },
     },

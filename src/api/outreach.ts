@@ -11,7 +11,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { brevoConfigured, sendTransactional } from './brevo.js';
-import { canSend, classifyReply } from '../core/outreach-guards.js';
+import { canSend, classifyReply, type SendVerdict } from '../core/outreach-guards.js';
 import { constantTimeEqualString } from '../core/secure-compare.js';
 import { postMessage, slackConfigured } from './slack.js';
 
@@ -28,22 +28,6 @@ function daysSinceLaunch(): number {
   return Math.floor((Date.now() - LAUNCH_DATE.getTime()) / 86_400_000);
 }
 
-async function isSuppressed(email: string): Promise<boolean> {
-  const result = await pool.query(
-    `select 1 from suppression_list where lower(email) = lower($1) limit 1`,
-    [email],
-  );
-  return result.rowCount! > 0;
-}
-
-async function sentToday(): Promise<number> {
-  const result = await pool.query<{ n: string }>(
-    `select count(*)::text as n from outreach_drafts
-      where sent_at is not null and sent_at::date = current_date`,
-  );
-  return Number(result.rows[0]?.n ?? 0);
-}
-
 async function logEvent(
   actionId: string | null,
   eventType: 'created' | 'executed' | 'failed' | 'blocked_by_policy',
@@ -58,6 +42,20 @@ async function logEvent(
 }
 
 const sendSchema = z.object({ draft_id: z.string().uuid() });
+
+async function addSuppression(email:string,reason:string,source:string):Promise<void> {
+  const client=await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`select pg_advisory_xact_lock(hashtextextended(lower($1),0))`,[email]);
+    await client.query(`insert into suppression_list (email, reason, source)
+      values ($1,$2,$3) on conflict (email) do nothing`,[email,reason,source]);
+    await client.query('COMMIT');
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>undefined);
+    throw error;
+  } finally { client.release(); }
+}
 
 /** Envoie un brouillon deja approuve. */
 app.post('/send', async (c) => {
@@ -110,51 +108,121 @@ app.post('/send', async (c) => {
     return c.json({ error: 'no_recipient_email' }, 422);
   }
 
-  const suppressed = await isSuppressed(draft.to_email);
-  const today = await sentToday();
-  const verdict = canSend({
-    isSuppressed: suppressed,
-    sentToday: today,
-    daysSinceLaunch: daysSinceLaunch(),
-  });
-
-  if (!verdict.allowed) {
+  // The advisory transaction lock serializes the quota observation and the
+  // durable execution reservation across distinct drafts. In-flight sends are
+  // counted, so concurrent requests cannot all observe the same remaining slot.
+  const client = await pool.connect();
+  let blocked: Extract<SendVerdict,{allowed:false}> | undefined;
+  let claimed = false;
+  try {
+    await client.query('BEGIN');
+    await client.query(`select pg_advisory_xact_lock(hashtext('agentimpact-outreach-daily-quota'))`);
+    await client.query(`select pg_advisory_xact_lock(hashtextextended(lower($1),0))`,[draft.to_email]);
+    const suppressed = await client.query(
+      `select 1 from suppression_list where lower(email) = lower($1) limit 1`,
+      [draft.to_email],
+    );
+    const count = await client.query<{n:string}>(`select count(*)::text as n
+      from outreach_drafts d
+      left join agent_actions a on a.id=d.action_id
+      where (d.sent_at is not null and d.sent_at::date=current_date)
+         or (d.sent_at is null and a.status='executing' and a.execution_claimed_at::date=current_date)`);
+    const verdict = canSend({
+      isSuppressed: Boolean(suppressed.rowCount),
+      sentToday: Number(count.rows[0]?.n ?? 0),
+      daysSinceLaunch: daysSinceLaunch(),
+    });
+    if (!verdict.allowed) {
+      blocked = verdict;
+      await client.query('ROLLBACK');
+    } else {
+      const claim = await client.query(`update agent_actions
+        set status='executing',execution_claimed_at=clock_timestamp(),execution_claimed_by=$2
+        where id=$1 and status='approved' and approval_expires_at>clock_timestamp()
+          and exists (select 1 from agent_approvals p where p.action_id=agent_actions.id
+            and p.payload_hash=agent_actions.payload_hash and p.decision='approved'
+            and p.expires_at>clock_timestamp())
+        returning id`,[draft.action_id,PROFILE]);
+      claimed=Boolean(claim.rowCount);
+      if(claimed) await client.query('COMMIT'); else await client.query('ROLLBACK');
+    }
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (blocked) {
     await logEvent(draft.action_id, 'blocked_by_policy', 'outreach_send_blocked', {
       draft_id: draftId,
-      reason: verdict.reason,
+      reason: blocked.reason,
     });
-    return c.json({ error: verdict.reason }, verdict.httpStatus);
+    return c.json({ error: blocked.reason }, blocked.httpStatus);
   }
+  if (!claimed) return c.json({ error: 'send_already_claimed' }, 409);
 
-  const sendResult = await sendTransactional({
-    to: draft.to_email,
-    subject: draft.subject ?? '(sans objet)',
-    textContent: draft.body,
-    headers: { 'X-AgentImpact-Draft-Id': draftId },
-  });
+  // Re-acquire the per-recipient lock after the durable claim and hold it
+  // across the provider side effect. Suppression writers take the same lock,
+  // giving a single linear order: suppression-before-send blocks; a signal
+  // arriving after provider execution waits and protects all future sends.
+  const sendClient=await pool.connect();
+  let sendResult:Awaited<ReturnType<typeof sendTransactional>>;
+  try {
+    await sendClient.query('BEGIN');
+    await sendClient.query(`select pg_advisory_xact_lock(hashtextextended(lower($1),0))`,[draft.to_email]);
+    const suppressed=await sendClient.query(`select 1 from suppression_list where lower(email)=lower($1) limit 1`,[draft.to_email]);
+    if(suppressed.rowCount) {
+      await sendClient.query(`update agent_actions set status='failed',error_message='suppressed_before_provider'
+        where id=$1 and status='executing'`,[draft.action_id]);
+      await sendClient.query('COMMIT');
+      await logEvent(draft.action_id,'blocked_by_policy','outreach_send_blocked',{
+        draft_id:draftId,reason:'suppressed',phase:'before_provider',
+      });
+      return c.json({error:'suppressed'},409);
+    }
+
+    sendResult = await sendTransactional({
+      to: draft.to_email,
+      subject: draft.subject ?? '(sans objet)',
+      textContent: draft.body,
+      headers: { 'X-AgentImpact-Draft-Id': draftId },
+    });
+
+    if (!sendResult.ok) {
+      if(sendResult.outcome==='rejected') {
+        await sendClient.query(`update agent_actions set status='failed',error_message=$2 where id=$1 and status='executing'`,
+          [draft.action_id,sendResult.error]);
+      } else {
+        // Preserve the executing reservation when delivery is ambiguous. It
+        // continues to count against the daily quota until reconciliation.
+        await sendClient.query(`update agent_actions set error_message=$2 where id=$1 and status='executing'`,
+          [draft.action_id,`awaiting_reconciliation:${sendResult.error}`.slice(0,500)]);
+      }
+      await sendClient.query('COMMIT');
+    } else {
+      await sendClient.query(
+        `update outreach_drafts set status='sent',sent_at=now(),brevo_message_id=$2 where id=$1`,
+        [draftId,sendResult.messageId]);
+      await sendClient.query(`update agent_actions set status='executed',executed_at=now() where id=$1`,[draft.action_id]);
+      await sendClient.query('COMMIT');
+    }
+  } catch(error) {
+    await sendClient.query('ROLLBACK').catch(()=>undefined);
+    await pool.query(`update agent_actions set error_message='awaiting_reconciliation:local_transaction_failure'
+      where id=$1 and status='executing'`,[draft.action_id]).catch(()=>undefined);
+    throw error;
+  } finally { sendClient.release(); }
 
   if (!sendResult.ok) {
-    await pool.query(`update agent_actions set status = 'failed', error_message = $2 where id = $1`, [
-      draft.action_id,
-      sendResult.error,
-    ]);
-    await logEvent(draft.action_id, 'failed', 'outreach_send_failed', {
+    await logEvent(draft.action_id, 'failed', sendResult.outcome==='unknown'
+      ? 'outreach_send_awaiting_reconciliation' : 'outreach_send_failed', {
       draft_id: draftId,
       error: sendResult.error,
+      outcome:sendResult.outcome,
     });
-    return c.json({ ok: false, error: sendResult.error }, 502);
+    return c.json({ ok: false, error:sendResult.outcome==='unknown'?'send_outcome_unknown':sendResult.error,
+      reconciliation_required:sendResult.outcome==='unknown' }, 502);
   }
-
-  await pool.query(
-    `update outreach_drafts
-        set status = 'sent', sent_at = now(), brevo_message_id = $2
-      where id = $1`,
-    [draftId, sendResult.messageId],
-  );
-
-  await pool.query(`update agent_actions set status = 'executed', executed_at = now() where id = $1`, [
-    draft.action_id,
-  ]);
 
   await logEvent(draft.action_id, 'executed', 'outreach_sent', {
     draft_id: draftId,
@@ -195,28 +263,13 @@ app.post('/webhook/brevo', async (c) => {
     if (!email || !eventType) continue;
 
     if (eventType === 'hard_bounce') {
-      await pool.query(
-        `insert into suppression_list (email, reason, source)
-         values ($1, 'hard_bounce', 'brevo_webhook')
-         on conflict (email) do nothing`,
-        [email],
-      );
+      await addSuppression(email,'hard_bounce','brevo_webhook');
       suppressed++;
     } else if (eventType === 'spam') {
-      await pool.query(
-        `insert into suppression_list (email, reason, source)
-         values ($1, 'spam_complaint', 'brevo_webhook')
-         on conflict (email) do nothing`,
-        [email],
-      );
+      await addSuppression(email,'spam_complaint','brevo_webhook');
       suppressed++;
     } else if (eventType === 'unsubscribed') {
-      await pool.query(
-        `insert into suppression_list (email, reason, source)
-         values ($1, 'unsubscribe', 'brevo_webhook')
-         on conflict (email) do nothing`,
-        [email],
-      );
+      await addSuppression(email,'unsubscribe','brevo_webhook');
       suppressed++;
     } else if (eventType === 'opened') {
       await pool.query(
@@ -247,12 +300,7 @@ app.post('/suppression', async (c) => {
     return c.json({ error: 'invalid_body', details: parsed.error.flatten() }, 400);
   }
 
-  await pool.query(
-    `insert into suppression_list (email, reason, source)
-     values ($1, $2, 'manual')
-     on conflict (email) do nothing`,
-    [parsed.data.email, parsed.data.reason],
-  );
+  await addSuppression(parsed.data.email,parsed.data.reason,'manual');
 
   return c.json({ ok: true });
 });
@@ -314,12 +362,7 @@ app.post('/conversations/inbound', async (c) => {
   const conversationId = inserted.rows[0].id;
 
   if (classification === 'unsubscribe') {
-    await pool.query(
-      `insert into suppression_list (email, reason, source)
-       values ($1, 'unsubscribe', 'reply_classified')
-       on conflict (email) do nothing`,
-      [fromAddress],
-    );
+    await addSuppression(fromAddress,'unsubscribe','reply_classified');
   }
 
   if (slackConfigured()) {

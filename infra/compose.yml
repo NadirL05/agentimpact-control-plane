@@ -83,6 +83,10 @@ services:
     env_file:
       - /etc/agentimpact/tokens/bridge.env
       - /etc/agentimpact/tokens/hermes.env
+      - path: /etc/agentimpact/tokens/operator.env
+        required: false # deploy.sh provisions it before starting the API
+      - path: /etc/agentimpact/tokens/planner.env
+        required: false # dedicated narrow V2 Hermes planning transport
       - /etc/agentimpact/tokens/admin.env
     volumes:
       # Stable socket endpoint only; no Superset credential, binary, state or Docker socket is mounted.
@@ -107,6 +111,9 @@ services:
     # /api/fullenrich/webhook.
     ports:
       - "127.0.0.1:3000:3000"
+      # OpenJarvis operator endpoint over the encrypted WireGuard interface.
+      # No public-interface bind; HMAC-signed, scoped requests only.
+      - "${AGENTIMPACT_OPERATOR_BIND_IP:-127.0.0.1}:3443:3000"
 
   demo-static:
     image: nginx:alpine
