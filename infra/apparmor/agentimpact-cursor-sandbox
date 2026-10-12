@@ -1,0 +1,12 @@
+# Allow only the pinned Cursor sandbox helper to create the user namespaces
+# required by its native Linux sandbox. The host-wide Ubuntu restriction stays
+# enabled; Cursor's launcher, Node runtime, Superset, Codex and Python do not
+# receive this permission.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentimpact-cursor-sandbox /var/lib/agentimpact-superset/toolchains/cursor/2026.09.08-6caf4ff/payload/cursorsandbox flags=(unconfined) {
+  userns,
+
+  include if exists <local/agentimpact-cursor-sandbox>
+}
