@@ -57,6 +57,12 @@ Playbook `infra/ansible/playbooks/wireguard-ssh-runner.yml` + rôle
 le linger `agentimpact-runner`. Doc :
 [docs/ops/wireguard-ssh-runner.md](../docs/ops/wireguard-ssh-runner.md).
 
+## Sandbox Cursor sous Superset
+
+Le patch système borné NADIR-26 (drop-ins systemd, profil AppArmor épinglé,
+préflight sans fournisseur et rollback) est documenté dans
+[docs/ops/cursor-sandbox-runner.md](../docs/ops/cursor-sandbox-runner.md).
+
 ## agentimpact-profiles/
 
 `.env.example` (gabarits) des 5 profils AgentImpact
