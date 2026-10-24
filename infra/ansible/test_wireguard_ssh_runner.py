@@ -155,6 +155,41 @@ class NormalizeUfwWgSshUnitTest(unittest.TestCase):
         self.assertTrue(second["ok"])
         self.assertFalse(second["changed"])
 
+    def test_new_mac_rule_preserves_existing_peer_rules(self) -> None:
+        after = (
+            "Status: active\n"
+            "[ 1] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.2\n"
+            "[ 2] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.2\n"
+            "[ 3] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.3\n"
+            "[ 4] 22/tcp  LIMIT IN  Anywhere\n"
+        )
+        statuses = iter([SAMPLE_DUPLICATES, SAMPLE_DUPLICATES, after])
+        mutations = []
+
+        def fake_ufw(args, *, check=True):
+            if args == ["status", "numbered"]:
+                return CompletedProcess(args, 0, next(statuses), "")
+            mutations.append(args)
+            return CompletedProcess(args, 0, "", "")
+
+        with patch.object(self.mod, "run_ufw", side_effect=fake_ufw):
+            result = self.mod.ensure_canonical(
+                source="10.66.66.3",
+                destination=DST,
+                interface=IFACE,
+                port=PORT,
+                proto="tcp",
+                remove_duplicates=True,
+                apply=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            mutations,
+            [["insert", "3", "allow", "in", "on", "wg0", "from",
+              "10.66.66.3", "to", DST, "port", PORT, "proto", "tcp"]],
+        )
+
     def test_wg_rule_is_before_public_limit(self) -> None:
         rules = self.mod.parse_numbered(SAMPLE_STATUS)
         limit = next(r for r in rules if self.mod.is_public_ssh_limit(r))

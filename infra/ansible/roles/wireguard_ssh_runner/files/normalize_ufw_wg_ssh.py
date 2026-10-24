@@ -2,7 +2,7 @@
 """Normalise la règle UFW SSH WireGuard canonique (idempotent).
 
 Objectif conceptuel :
-  1. ALLOW 10.66.66.2 -> 10.66.66.1:22 on wg0  (exactement une)
+  1. ALLOW <source> -> 10.66.66.1:22 on wg0  (exactement une par source)
   2. autres règles (exceptions IP publiques temporaires préservées)
   3. LIMIT 22/tcp Anywhere (conservé, jamais remplacé par ALLOW Anywhere)
 

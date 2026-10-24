@@ -1,6 +1,6 @@
 ---
 # Pérennise le chemin SSH officiel Cursor/Codex via WireGuard.
-# Mac (10.66.66.2) → wg0 → 10.66.66.1:22 → agentimpact-runner
+# Pairs WireGuard .2 et Mac Hermes .3 → wg0 → 10.66.66.1:22 → agentimpact-runner
 # SSH public reste break-glass (LIMIT 22/tcp Anywhere).
 #
 # Exécution (root, depuis la racine du dépôt) :

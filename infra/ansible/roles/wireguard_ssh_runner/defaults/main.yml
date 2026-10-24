@@ -3,7 +3,11 @@
 agentimpact_runner_ssh_host: "10.66.66.1"
 agentimpact_runner_ssh_user: "agentimpact-runner"
 agentimpact_runner_ssh_interface: "wg0"
-agentimpact_mac_wg_ip: "10.66.66.2"
+# .2 is an existing peer. The new Mac uses .3; preserve and normalize both.
+agentimpact_mac_wg_ip: "10.66.66.3"
+agentimpact_wg_ssh_source_ips:
+  - "10.66.66.2"
+  - "10.66.66.3"
 agentimpact_runner_ssh_port: "22"
 agentimpact_runner_ssh_proto: "tcp"
 
