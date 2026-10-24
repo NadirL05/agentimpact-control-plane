@@ -20,7 +20,11 @@ Les échecs restent en revue pour qu'un humain puisse les traiter. Déplacer man
 
 ## Déploiement
 
-Prérequis : branche intégrée au build déployé sous `/opt/agentimpact/app`, migrations existantes du routeur et des missions appliquées, accès opérateur à Docker/Postgres et systemd. Le service utilise l'utilisateur existant `agentimpact-slack-router` et les credentials Slack/Postgres existants. Un administrateur Linear doit créer une clé API ayant accès à l'équipe Agentimpact et au projet de missions, puis la placer **hors Git** dans `/etc/agentimpact/credentials/linear-api-key` (`root:root`, mode `0600`). Ne pas communiquer cette clé dans Slack ni dans un ticket.
+Prérequis : accès root sur le VPS, migrations existantes du routeur et des missions appliquées, Docker/Postgres et systemd actifs. Le service utilise l'utilisateur existant `agentimpact-slack-router` et les credentials Slack/Postgres existants. Un administrateur Linear doit créer une clé API ayant accès à l'équipe Agentimpact et au projet de missions. Ne pas communiquer cette clé dans Slack ni dans un ticket.
+
+Depuis le checkout de la branche `feature/linear-mission-tracking` présent sur le VPS, lancer `sudo bash infra/scripts/deploy-linear-sync.sh`. Le script demande la clé en saisie masquée et l'enregistre hors Git dans `/etc/agentimpact/credentials/linear-api-key` (`root:root`, mode `0600`). Il construit le commit dans un répertoire de staging, sauvegarde et vérifie un dump PostgreSQL avant la migration, installe les fichiers et active le service. Il échoue si un prérequis manque.
+
+Les étapes manuelles ci-dessous servent à vérifier ou reprendre un déploiement interrompu :
 
 1. Construire la branche dans un répertoire de staging (`cd <checkout>/src && npm ci && npm run build`). Le build produit `<checkout>/src/dist/linear-sync/`. Installer ce répertoire dans `/opt/agentimpact/app/dist/linear-sync/`, avec le même propriétaire et des permissions de lecture que les artefacts runtime existants ; vérifier ensuite `/opt/agentimpact/app/dist/linear-sync/daemon.js`. Ne pas supposer que `npm run build` dans `app/src` écrira directement dans `app/dist`.
 2. Appliquer `src/migrations/010_linear_mission_sync.sql` à la base `agentimpact`, par le même chemin opérateur que les migrations précédentes. La migration est additive et réexécutable.
