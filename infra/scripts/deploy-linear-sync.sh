@@ -116,7 +116,8 @@ install -o root -g root -m 0644 \
   /etc/systemd/system/agentimpact-linear-sync.service
 systemd-analyze verify /etc/systemd/system/agentimpact-linear-sync.service
 systemctl daemon-reload
-systemctl enable --now agentimpact-linear-sync.service
+systemctl enable agentimpact-linear-sync.service
+systemctl restart agentimpact-linear-sync.service
 systemctl is-active --quiet agentimpact-linear-sync.service
 
 echo 'Service Linear actif. Vérifier ensuite les tickets et le lien dans un fil Slack.'

@@ -1,10 +1,10 @@
 export type LinearIssue = { id: string; identifier: string; url: string };
 
 export class LinearApiError extends Error {
-  constructor(public readonly code: string) { super(code); }
+  constructor(public readonly code: string, public readonly detail = '') { super(code); }
 }
 
-type GraphqlResult<T> = { data?: T; errors?: Array<{ extensions?: { code?: string } }> };
+type GraphqlResult<T> = { data?: T; errors?: Array<{ message?: string; extensions?: { code?: string } }> };
 
 export class LinearClient {
   constructor(
@@ -31,16 +31,24 @@ export class LinearClient {
     catch { throw new LinearApiError('invalid_response'); }
     if (body.errors?.length) {
       const code = body.errors[0]?.extensions?.code;
-      throw new LinearApiError(code && /^[A-Z0-9_]{1,50}$/.test(code) ? `graphql_${code}` : 'graphql_error');
+      throw new LinearApiError(code && /^[A-Z0-9_]{1,50}$/.test(code) ? `graphql_${code}` : 'graphql_error',
+        body.errors[0]?.message ?? '');
     }
     if (!response.ok || !body.data) throw new LinearApiError(`http_${response.status}`);
     return body.data;
   }
 
   async getIssue(id: string): Promise<LinearIssue | null> {
-    const data = await this.request<{ issue: LinearIssue | null }>(
-      'query($id:String!){issue(id:$id){id identifier url}}', { id });
-    return data.issue ?? null;
+    try {
+      const data = await this.request<{ issue: LinearIssue | null }>(
+        'query($id:String!){issue(id:$id){id identifier url}}', { id });
+      return data.issue ?? null;
+    } catch (error) {
+      // Linear returns INPUT_ERROR for a valid UUID that does not identify an issue.
+      if (error instanceof LinearApiError && error.code === 'graphql_INPUT_ERROR'
+        && /^Could not find referenced Issue\.?$/i.test(error.detail)) return null;
+      throw error;
+    }
   }
 
   async createIssue(input: {
