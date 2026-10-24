@@ -6,6 +6,8 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 
 MODULE_PATH = (
@@ -37,7 +39,7 @@ Status: active
 
      To                         Action      From
      --                         ------      ----
-[ 1] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1
+[ 1] 10.66.66.1 22/tcp on wg0   ALLOW IN    10.66.66.2
 [ 2] 45.144.113.141 22/tcp      ALLOW IN    Anywhere
 [ 3] 176.171.153.193 22/tcp     ALLOW IN    Anywhere
 [ 4] 82.224.78.70 22/tcp        ALLOW IN    Anywhere
@@ -51,15 +53,15 @@ Status: active
 
 [ 1] 45.144.113.141 22/tcp      ALLOW IN    Anywhere
 [ 2] 22/tcp                     LIMIT IN    Anywhere
-[ 3] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1
+[ 3] 10.66.66.1 22/tcp on wg0   ALLOW IN    10.66.66.2
 """
 
 
 SAMPLE_DUPLICATES = """
 Status: active
 
-[ 1] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1
-[ 2] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1
+[ 1] 10.66.66.1 22/tcp on wg0   ALLOW IN    10.66.66.2
+[ 2] 10.66.66.1 22/tcp on wg0   ALLOW IN    10.66.66.2
 [ 3] 22/tcp                     LIMIT IN    Anywhere
 """
 
@@ -67,7 +69,7 @@ Status: active
 SAMPLE_GLOBAL_ALLOW = """
 Status: active
 
-[ 1] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1
+[ 1] 10.66.66.1 22/tcp on wg0   ALLOW IN    10.66.66.2
 [ 2] 22/tcp                     ALLOW IN    Anywhere
 [ 3] 22/tcp                     LIMIT IN    Anywhere
 """
@@ -95,10 +97,98 @@ class NormalizeUfwWgSshUnitTest(unittest.TestCase):
         ]
         self.assertEqual(len(wg), 1)
         self.assertEqual(wg[0].number, 1)
-        self.assertIn(SRC, wg[0].left)
+        self.assertIn(DST, wg[0].left)
         self.assertIn(f"on {IFACE}", wg[0].left.lower())
         self.assertIn("22/tcp", wg[0].left)
-        self.assertIn(DST, wg[0].right)
+        self.assertIn(SRC, wg[0].right)
+
+    def test_reversed_source_destination_is_not_canonical(self) -> None:
+        reversed_rule = self.mod.parse_numbered(
+            "[ 1] 10.66.66.2 22/tcp on wg0   ALLOW IN    10.66.66.1"
+        )[0]
+        self.assertFalse(
+            self.mod.is_wg_ssh_allow(
+                reversed_rule,
+                source=SRC,
+                destination=DST,
+                interface=IFACE,
+                port=PORT,
+            )
+        )
+
+    def test_created_rule_is_recognized_on_next_run(self) -> None:
+        before = "Status: active\n[ 1] 22/tcp  LIMIT IN  Anywhere\n"
+        after = (
+            "Status: active\n"
+            "[ 1] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.2\n"
+            "[ 2] 22/tcp  LIMIT IN  Anywhere\n"
+        )
+        calls = iter([before, before, after, after])
+
+        def fake_ufw(args, *, check=True):
+            if args == ["status", "numbered"]:
+                return CompletedProcess(args, 0, next(calls), "")
+            self.assertEqual(
+                args,
+                [
+                    "insert", "1", "allow", "in", "on", "wg0", "from",
+                    SRC, "to", DST, "port", PORT, "proto", "tcp",
+                ],
+            )
+            return CompletedProcess(args, 0, "", "")
+
+        options = dict(
+            source=SRC,
+            destination=DST,
+            interface=IFACE,
+            port=PORT,
+            proto="tcp",
+            remove_duplicates=True,
+            apply=True,
+        )
+        with patch.object(self.mod, "run_ufw", side_effect=fake_ufw):
+            first = self.mod.ensure_canonical(**options)
+            second = self.mod.ensure_canonical(**options)
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["changed"])
+        self.assertTrue(second["ok"])
+        self.assertFalse(second["changed"])
+
+    def test_new_mac_rule_preserves_existing_peer_rules(self) -> None:
+        after = (
+            "Status: active\n"
+            "[ 1] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.2\n"
+            "[ 2] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.2\n"
+            "[ 3] 10.66.66.1 22/tcp on wg0  ALLOW IN  10.66.66.3\n"
+            "[ 4] 22/tcp  LIMIT IN  Anywhere\n"
+        )
+        statuses = iter([SAMPLE_DUPLICATES, SAMPLE_DUPLICATES, after])
+        mutations = []
+
+        def fake_ufw(args, *, check=True):
+            if args == ["status", "numbered"]:
+                return CompletedProcess(args, 0, next(statuses), "")
+            mutations.append(args)
+            return CompletedProcess(args, 0, "", "")
+
+        with patch.object(self.mod, "run_ufw", side_effect=fake_ufw):
+            result = self.mod.ensure_canonical(
+                source="10.66.66.3",
+                destination=DST,
+                interface=IFACE,
+                port=PORT,
+                proto="tcp",
+                remove_duplicates=True,
+                apply=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            mutations,
+            [["insert", "3", "allow", "in", "on", "wg0", "from",
+              "10.66.66.3", "to", DST, "port", PORT, "proto", "tcp"]],
+        )
 
     def test_wg_rule_is_before_public_limit(self) -> None:
         rules = self.mod.parse_numbered(SAMPLE_STATUS)

@@ -2,7 +2,7 @@
 """Normalise la règle UFW SSH WireGuard canonique (idempotent).
 
 Objectif conceptuel :
-  1. ALLOW 10.66.66.2 -> 10.66.66.1:22 on wg0  (exactement une)
+  1. ALLOW <source> -> 10.66.66.1:22 on wg0  (exactement une par source)
   2. autres règles (exceptions IP publiques temporaires préservées)
   3. LIMIT 22/tcp Anywhere (conservé, jamais remplacé par ALLOW Anywhere)
 
@@ -121,13 +121,14 @@ def is_wg_ssh_allow(
     dst = destination.lower()
     port_token = f"{port}/tcp"
 
-    if f"on {iface}" not in left:
+    if not re.search(rf"\bon {re.escape(iface)}\b", left):
         return False
-    if port_token not in left:
+    if not re.search(rf"(?<!\S){re.escape(port_token)}(?!\S)", left):
         return False
-    if src not in left:
+    # `ufw status` prints "To  Action  From": destination is on the left.
+    if not left.startswith(f"{dst} "):
         return False
-    if dst not in right and dst not in left:
+    if right.split(" #", 1)[0].strip() != src:
         return False
     return True
 

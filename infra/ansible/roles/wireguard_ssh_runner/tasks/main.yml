@@ -1,5 +1,5 @@
 ---
-# Pérennise SSH officiel Mac→WireGuard→10.66.66.1→agentimpact-runner.
+# Pérennise SSH des pairs WireGuard .2 et Mac .3 vers agentimpact-runner.
 # CRITIQUE : règle ALLOW wg0 AVANT le LIMIT 22/tcp public (break-glass).
 # Idempotent. Ne régénère aucune clé. Ne modifie pas les peers WireGuard.
 # Ne supprime pas les exceptions IP publiques temporaires.
@@ -27,6 +27,12 @@
   register: ssh_active
   changed_when: false
   failed_when: ssh_active.stdout | trim != "active"
+
+- name: Vérifier fail2ban.service actif
+  command: systemctl is-active fail2ban
+  register: fail2ban_active
+  changed_when: false
+  failed_when: fail2ban_active.stdout | trim != "active"
 
 - name: Créer répertoire rollback bundle wireguard-ssh-runner
   file:
@@ -82,7 +88,7 @@
 - name: Préflight dry-run normaliseur UFW
   command: >
     /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
-    --source {{ agentimpact_mac_wg_ip }}
+    --source {{ item }}
     --destination {{ agentimpact_runner_ssh_host }}
     --interface {{ agentimpact_runner_ssh_interface }}
     --port {{ agentimpact_runner_ssh_port }}
@@ -91,11 +97,12 @@
   register: ufw_normalize_preflight
   changed_when: false
   failed_when: ufw_normalize_preflight.rc != 0 or not (ufw_normalize_preflight.stdout | from_json).ok
+  loop: "{{ agentimpact_wg_ssh_source_ips }}"
 
 - name: Appliquer normalisation UFW WireGuard SSH (idempotent)
   command: >
     /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
-    --source {{ agentimpact_mac_wg_ip }}
+    --source {{ item }}
     --destination {{ agentimpact_runner_ssh_host }}
     --interface {{ agentimpact_runner_ssh_interface }}
     --port {{ agentimpact_runner_ssh_port }}
@@ -104,6 +111,34 @@
   register: ufw_normalize_apply
   changed_when: (ufw_normalize_apply.stdout | from_json).changed | default(false)
   failed_when: ufw_normalize_apply.rc != 0 or not (ufw_normalize_apply.stdout | from_json).ok
+  loop: "{{ agentimpact_wg_ssh_source_ips }}"
+
+- name: Exclure seulement les pairs WireGuard autorisés du bannissement SSH
+  copy:
+    dest: /etc/fail2ban/jail.d/99-agentimpact-wireguard-ssh.local
+    content: |
+      [sshd]
+      ignoreip = 127.0.0.1/8 ::1 {{ agentimpact_wg_ssh_source_ips | join(' ') }}
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  register: fail2ban_wg_config
+
+- name: Valider la configuration fail2ban avant rechargement
+  command: fail2ban-client -d
+  changed_when: false
+  no_log: true
+
+- name: Recharger uniquement la jail SSH si la configuration a changé
+  command: fail2ban-client reload sshd
+  when: fail2ban_wg_config.changed
+
+- name: Vérifier l'exclusion fail2ban des pairs WireGuard autorisés
+  command: fail2ban-client get sshd ignoreip
+  register: fail2ban_ssh_ignoreip
+  changed_when: false
+  failed_when: (agentimpact_wg_ssh_source_ips | difference(fail2ban_ssh_ignoreip.stdout.split()) | length) > 0
 
 - name: Activer linger agentimpact-runner (survit au reboot)
   command: loginctl enable-linger {{ agentimpact_runner_ssh_user }}
@@ -125,7 +160,7 @@
 - name: Vérifier ordre UFW post-apply (script check-only)
   command: >
     /usr/bin/python3 /usr/local/lib/agentimpact/normalize_ufw_wg_ssh.py
-    --source {{ agentimpact_mac_wg_ip }}
+    --source {{ item }}
     --destination {{ agentimpact_runner_ssh_host }}
     --interface {{ agentimpact_runner_ssh_interface }}
     --port {{ agentimpact_runner_ssh_port }}
@@ -137,6 +172,7 @@
     ufw_normalize_verify.rc != 0
     or not (ufw_normalize_verify.stdout | from_json).ok
     or (ufw_normalize_verify.stdout | from_json).changed | default(false)
+  loop: "{{ agentimpact_wg_ssh_source_ips }}"
 
 - name: Sauvegarder ufw status numbered (post)
   shell: |
@@ -171,6 +207,7 @@
       - "WG_SSH_RULE_IAC=PASS"
       - "RUNNER_LINGER=PASS"
       - "SSH_SERVICE={{ ssh_active.stdout | trim }}"
+      - "FAIL2BAN_SSH_WG_EXCLUSION=PASS"
       - "AGENTIMPACT_HEALTH={{ healthz.content | trim }}"
       - "AGENTIMPACT_READY={{ readyz.content | trim }}"
       - "ROLLBACK_PATH={{ rollback_bundle_dir }}"

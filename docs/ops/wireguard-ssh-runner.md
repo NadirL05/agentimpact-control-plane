@@ -3,7 +3,7 @@
 Chemin normal (pas l'IP publique VPS) :
 
 ```text
-Mac (10.66.66.2)
+Mac Hermes (10.66.66.3)
   → WireGuard (wg0)
   → 10.66.66.1:22
   → agentimpact-runner
@@ -15,7 +15,7 @@ Mac (10.66.66.2)
 AGENTIMPACT_RUNNER_SSH_HOST=10.66.66.1
 AGENTIMPACT_RUNNER_SSH_USER=agentimpact-runner
 AGENTIMPACT_RUNNER_SSH_INTERFACE=wg0
-AGENTIMPACT_MAC_WG_IP=10.66.66.2
+AGENTIMPACT_MAC_WG_IP=10.66.66.3
 ```
 
 ## Modèle `~/.ssh/config` (Mac uniquement — ne pas gérer depuis le VPS)
@@ -35,11 +35,13 @@ Host agentimpact
 
 ## UFW — ordre attendu
 
-1. `ALLOW` `10.66.66.2` → `10.66.66.1:22/tcp` sur `wg0` (règle canonique IaC)
-2. Règles SSH publiques explicites conservées si présentes (break-glass / exceptions temporaires)
-3. `LIMIT 22/tcp Anywhere` (rate-limit public — **jamais** `ALLOW Anywhere` sur 22)
+1. `ALLOW` `10.66.66.2` → `10.66.66.1:22/tcp` sur `wg0` (pair déjà présent, conservé)
+2. `ALLOW` `10.66.66.3` → `10.66.66.1:22/tcp` sur `wg0` (nouveau Mac, seulement si `.3` est libre)
+3. Règles SSH publiques explicites conservées si présentes (break-glass / exceptions temporaires)
+4. `LIMIT 22/tcp Anywhere` (rate-limit public — **jamais** `ALLOW Anywhere` sur 22)
 
 La règle WireGuard doit être **avant** le `LIMIT`, sinon Cursor/Codex (rafales SSH) se font bloquer sur `wg0`.
+Le rôle exclut seulement les deux pairs WireGuard `10.66.66.2` et `10.66.66.3` de la jail SSH Fail2Ban ; les IP publiques restent soumises à Fail2Ban. `ufw status` affiche la destination dans la colonne `To` et la source dans `From`.
 
 ## Break-glass
 
@@ -59,7 +61,8 @@ Ils ne font **pas** partie du design permanent. Ne les supprimer qu'après :
 1. déploiement IaC WireGuard
 2. vérification ordre UFW
 3. smoke Mac `ssh agentimpact` + 15 connexions
-4. absence de nouveaux `UFW LIMIT BLOCK` `IN=wg0 SRC=10.66.66.2 DPT=22`
+4. absence de nouveaux `UFW LIMIT BLOCK` `IN=wg0 SRC=10.66.66.3 DPT=22`
+5. `fail2ban-client get sshd ignoreip` contient `.2` et `.3`
 
 La règle historique `82.224.78.70` doit être analysée séparément (pas de suppression automatique).
 
@@ -115,5 +118,5 @@ done
 Puis sur le VPS (root), confirmer l'absence de nouveaux blocs :
 
 ```bash
-grep 'UFW LIMIT BLOCK' /var/log/ufw.log | grep 'IN=wg0' | grep 'SRC=10.66.66.2' | grep 'DPT=22' | tail
+grep 'UFW LIMIT BLOCK' /var/log/ufw.log | grep 'IN=wg0' | grep 'SRC=10.66.66.3' | grep 'DPT=22' | tail
 ```
