@@ -31,7 +31,8 @@ FROM sources s
 LEFT JOIN linear_mission_links l
   ON l.source_kind=s.source_kind AND l.source_id=s.source_id
 WHERE (l.synced_at IS NULL OR s.updated_at>l.synced_at
-  OR (s.channel_id IS NOT NULL AND l.slack_notified_at IS NULL))
+  OR (s.channel_id IS NOT NULL AND s.thread_ts IS NOT NULL
+    AND l.slack_notified_at IS NULL))
   AND (l.retry_after IS NULL OR l.retry_after<=now())
 ORDER BY s.created_at,s.source_id
 LIMIT $1`;
