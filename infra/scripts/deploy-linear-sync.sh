@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the reviewed Linear mission mirror on the AgentImpact VPS.
-# Run from a root terminal. Does not delete or restart existing services.
+# Run from a root terminal. Restarts only the Linear sync service.
 set -Eeuo pipefail
 umask 077
 
@@ -119,6 +119,10 @@ systemctl daemon-reload
 systemctl enable agentimpact-linear-sync.service
 systemctl restart agentimpact-linear-sync.service
 systemctl is-active --quiet agentimpact-linear-sync.service
+
+# A fixed INPUT_ERROR should be retried immediately instead of waiting for backoff.
+"${compose[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U agentimpact_app -d agentimpact \
+  -c "UPDATE linear_mission_links SET retry_after=now(),updated_at=now() WHERE error_code='graphql_INPUT_ERROR' AND retry_after>now();"
 
 echo 'Service Linear actif. Vérifier ensuite les tickets et le lien dans un fil Slack.'
 echo "Sauvegarde conservée : $backup"

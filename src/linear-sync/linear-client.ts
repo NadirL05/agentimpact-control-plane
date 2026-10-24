@@ -46,7 +46,7 @@ export class LinearClient {
     } catch (error) {
       // Linear returns INPUT_ERROR for a valid UUID that does not identify an issue.
       if (error instanceof LinearApiError && error.code === 'graphql_INPUT_ERROR'
-        && /^Could not find referenced Issue\.?$/i.test(error.detail)) return null;
+        && /^(?:Could not find referenced Issue\.?|Entity not found: Issue)$/i.test(error.detail)) return null;
       throw error;
     }
   }
