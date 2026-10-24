@@ -40,6 +40,7 @@ Host agentimpact
 3. `LIMIT 22/tcp Anywhere` (rate-limit public — **jamais** `ALLOW Anywhere` sur 22)
 
 La règle WireGuard doit être **avant** le `LIMIT`, sinon Cursor/Codex (rafales SSH) se font bloquer sur `wg0`.
+Le rôle exclut seulement le peer Mac `10.66.66.2` de la jail SSH Fail2Ban ; les IP publiques restent soumises à Fail2Ban. `ufw status` affiche la destination dans la colonne `To` et la source dans `From`.
 
 ## Break-glass
 
@@ -60,6 +61,7 @@ Ils ne font **pas** partie du design permanent. Ne les supprimer qu'après :
 2. vérification ordre UFW
 3. smoke Mac `ssh agentimpact` + 15 connexions
 4. absence de nouveaux `UFW LIMIT BLOCK` `IN=wg0 SRC=10.66.66.2 DPT=22`
+5. `fail2ban-client get sshd ignoreip` contient `10.66.66.2`
 
 La règle historique `82.224.78.70` doit être analysée séparément (pas de suppression automatique).
 

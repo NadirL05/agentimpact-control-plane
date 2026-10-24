@@ -28,6 +28,12 @@
   changed_when: false
   failed_when: ssh_active.stdout | trim != "active"
 
+- name: Vérifier fail2ban.service actif
+  command: systemctl is-active fail2ban
+  register: fail2ban_active
+  changed_when: false
+  failed_when: fail2ban_active.stdout | trim != "active"
+
 - name: Créer répertoire rollback bundle wireguard-ssh-runner
   file:
     path: "{{ rollback_bundle_dir }}"
@@ -105,6 +111,33 @@
   changed_when: (ufw_normalize_apply.stdout | from_json).changed | default(false)
   failed_when: ufw_normalize_apply.rc != 0 or not (ufw_normalize_apply.stdout | from_json).ok
 
+- name: Exclure seulement le peer WireGuard Mac du bannissement SSH
+  copy:
+    dest: /etc/fail2ban/jail.d/99-agentimpact-wireguard-ssh.local
+    content: |
+      [sshd]
+      ignoreip = 127.0.0.1/8 ::1 {{ agentimpact_mac_wg_ip }}
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  register: fail2ban_wg_config
+
+- name: Valider la configuration fail2ban avant rechargement
+  command: fail2ban-client -d
+  changed_when: false
+  no_log: true
+
+- name: Recharger uniquement la jail SSH si la configuration a changé
+  command: fail2ban-client reload sshd
+  when: fail2ban_wg_config.changed
+
+- name: Vérifier l'exclusion fail2ban du peer WireGuard Mac
+  command: fail2ban-client get sshd ignoreip
+  register: fail2ban_ssh_ignoreip
+  changed_when: false
+  failed_when: agentimpact_mac_wg_ip not in fail2ban_ssh_ignoreip.stdout
+
 - name: Activer linger agentimpact-runner (survit au reboot)
   command: loginctl enable-linger {{ agentimpact_runner_ssh_user }}
   args:
@@ -171,6 +204,7 @@
       - "WG_SSH_RULE_IAC=PASS"
       - "RUNNER_LINGER=PASS"
       - "SSH_SERVICE={{ ssh_active.stdout | trim }}"
+      - "FAIL2BAN_SSH_WG_EXCLUSION=PASS"
       - "AGENTIMPACT_HEALTH={{ healthz.content | trim }}"
       - "AGENTIMPACT_READY={{ readyz.content | trim }}"
       - "ROLLBACK_PATH={{ rollback_bundle_dir }}"
