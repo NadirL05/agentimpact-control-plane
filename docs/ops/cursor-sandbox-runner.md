@@ -79,82 +79,68 @@ est attendu et ne doit pas être transformé en test CI.
 Ne jamais exécuter ni installer en root directement depuis le worktree
 Superset, modifiable par `agentimpact-superset`. Root crée d'abord un checkout
 detached depuis GitHub au SHA complet approuvé par la PR. L'URL ne contient
-aucun secret ; l'administrateur doit employer son mécanisme GitHub root déjà
-approuvé si le dépôt exige une authentification.
+aucun secret : le dépôt est public. La PR publie le SHA complet à utiliser ; le
+nom du staging doit contenir exactement ce SHA, sinon l'installateur refuse.
 
 ```bash
-approved_sha=APPROVED_FULL_40_HEX_SHA_FROM_PR
-case "$approved_sha" in (*[!0-9a-f]*|'') exit 64;; esac
-test "${#approved_sha}" -eq 40
-staging="/var/lib/agentimpact-staging/nadir-26-$approved_sha"
-sudo test ! -e "$staging"
-sudo install -d -m 0755 -o root -g root /var/lib/agentimpact-staging
-sudo git clone --no-checkout https://github.com/NadirL05/agentimpact-control-plane.git "$staging"
-sudo git -C "$staging" fetch origin "$approved_sha"
-sudo git -C "$staging" checkout --detach "$approved_sha"
-test "$(sudo git -C "$staging" rev-parse HEAD)" = "$approved_sha"
-test -z "$(sudo git -C "$staging" status --porcelain)"
-sudo chown -R root:root "$staging"
-sudo chmod -R go-w "$staging"
-
-sudo -u agentimpact-superset "$staging/infra/scripts/cursor-sandbox-preflight.sh" --static
-sudo /usr/sbin/apparmor_parser -p "$staging/infra/apparmor/agentimpact-cursor-sandbox" >/dev/null
+umask 022
+sha=FULL_40_HEX_SHA_PINNED_IN_PR_COMMENT
+stage="/var/lib/agentimpact-staging/nadir-26-$sha"
+install -d -m 0755 -o root -g root /var/lib/agentimpact-staging
+git clone --no-checkout https://github.com/NadirL05/agentimpact-control-plane.git "$stage"
+git -C "$stage" checkout --detach "$sha"
+test "$(git -C "$stage" rev-parse HEAD)" = "$sha"
+test -z "$(git -C "$stage" status --porcelain)"
+chown -R root:root "$stage" && chmod -R go-w "$stage"
 ```
 
-Le bundle fixe ci-dessous refuse explicitement l'écrasement. Conserver ce
-bundle pour le rollback. Continuer dans le même shell, avec `staging` défini :
+Un clone déjà créé par root sous `umask 077` reste accepté : les sources
+`0600` et scripts `0700` sont plus restrictifs et l'installateur vérifie
+toujours propriétaire, groupe, absence d'écriture groupe/autrui, commit et
+propreté Git. Il installe ensuite les destinations avec leurs modes explicites
+`0644` ou `0755`; aucun `chmod` correctif du checkout n'est requis.
+
+Après ce clone sécurisé, l'unique commande d'installation à coller dans la
+console root hPanel est :
 
 ```bash
-sudo test ! -e /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox
-sudo install -d -m 0700 /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox
-sudo systemctl is-active agentimpact-superset-host.service \
-  | sudo tee /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/host.was-active >/dev/null
-sudo systemctl is-active agentimpact-superset-private.service \
-  | sudo tee /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/private.was-active >/dev/null || true
-
-for spec in \
-  /etc/apparmor.d/agentimpact-cursor-sandbox:apparmor \
-  /etc/systemd/system/agentimpact-superset-host.service.d/50-cursor-sandbox.conf:host-dropin \
-  /etc/systemd/system/agentimpact-superset-private.service.d/50-cursor-toolchain-readonly.conf:private-dropin \
-  /usr/local/libexec/agentimpact-cursor-sandbox-preflight:preflight; do
-  target="${spec%%:*}"
-  name="${spec##*:}"
-  if sudo test -e "$target"; then
-    sudo cp -a "$target" "/var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/$name.previous"
-  else
-    sudo install -m 0600 /dev/null "/var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/$name.absent"
-  fi
-done
-sudo install -m 0600 /dev/null /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/BACKUP_COMPLETE
-
-sudo install -d -m 0755 \
-  /etc/systemd/system/agentimpact-superset-host.service.d \
-  /etc/systemd/system/agentimpact-superset-private.service.d \
-  /usr/local/libexec
-sudo install -m 0755 "$staging/infra/scripts/cursor-sandbox-preflight.sh" \
-  /usr/local/libexec/agentimpact-cursor-sandbox-preflight
-sudo install -m 0644 "$staging/infra/systemd/agentimpact-superset-host.service.d/50-cursor-sandbox.conf" \
-  /etc/systemd/system/agentimpact-superset-host.service.d/50-cursor-sandbox.conf
-sudo install -m 0644 "$staging/infra/systemd/agentimpact-superset-private.service.d/50-cursor-toolchain-readonly.conf" \
-  /etc/systemd/system/agentimpact-superset-private.service.d/50-cursor-toolchain-readonly.conf
-sudo install -m 0644 "$staging/infra/apparmor/agentimpact-cursor-sandbox" \
-  /etc/apparmor.d/agentimpact-cursor-sandbox
-
-sudo /usr/sbin/apparmor_parser -r /etc/apparmor.d/agentimpact-cursor-sandbox
-sudo systemctl daemon-reload
-sudo systemctl restart agentimpact-superset-private.service
-sudo systemctl restart agentimpact-superset-host.service
-sudo systemctl --no-pager --full status agentimpact-superset-host.service
-sudo journalctl -u agentimpact-superset-host.service -n 30 --no-pager \
-  | grep 'CURSOR_SANDBOX_PREFLIGHT=PASS'
-sudo systemctl show agentimpact-superset-host.service \
-  -p RestrictNamespaces -p NoNewPrivileges -p PrivateTmp -p ProtectSystem
-sudo grep '^agentimpact-cursor-sandbox ' /sys/kernel/security/apparmor/profiles
+"$stage/infra/scripts/root-install-cursor-sandbox-runner.sh" --ack-agent-interruption
 ```
 
-Ces contrôles prouvent seulement que le bac à sable peut être construit sous
-les contraintes réelles du service. Ils ne prouvent pas qu'un agent Cursor
+Le flag est l'accusé explicite déjà autorisé par le propriétaire ; aucune autre
+question interactive n'est posée. L'installateur :
+
+- vérifie checkout detached/propre, origine GitHub, ownership root, modes,
+  identité systemd, hashes du payload et syntaxe AppArmor ;
+- annonce `AGENT_INTERRUPTION=YES` avant tout changement ;
+- sauvegarde chaque cible et l'état des services dans un bundle `0700` avec
+  sommes SHA-256 avant la première mutation ;
+- installe atomiquement les quatre artefacts et la commande de rollback ;
+- redémarre seulement l'exécuteur privé s'il était actif, puis le host ;
+- exige le préflight runtime dans l'invocation systemd courante ;
+- déclenche automatiquement le rollback si une installation, un reload, un
+  restart ou une vérification post-restart échoue ;
+- retourne `ALREADY_CONVERGED` sans redémarrer si le même état a déjà réussi.
+
+Un résultat `PATCH_APPLIED_PREFLIGHT_PASS_NOT_LIVE_VERIFIED` prouve uniquement
+que le bac à sable peut être construit. Il ne prouve pas qu'un agent Cursor
 complet fonctionne.
+
+## Canal administrateur disponible
+
+Aucun mécanisme distant existant n'est autorisé pour ce patch :
+
+- le bridge `hermesctl` est non-root, sans capabilities, et limité à la lecture
+  et aux propositions ;
+- `agentimpact.deploy.execute` reste bloqué par `deploy_worker_unavailable` ;
+- le déploiement général nécessite lui-même un shell sudo local et des preuves
+  Publisher/déploiement sans rapport avec NADIR-26 ;
+- GitHub Actions utilise un runner hébergé sans accès au VPS ;
+- les playbooks Ansible sont locaux avec `become: true` et exigent donc aussi
+  une autorité root sur l'hôte.
+
+La console root hPanel reste nécessaire. Ne pas détourner le bridge, un agent,
+le permis Cursor ou un workflow CI pour appliquer ces fichiers.
 
 ## Smoke test réel requis
 
@@ -176,45 +162,15 @@ fonctionnel.
 ## Retour arrière
 
 Le rollback interrompt à nouveau le host. Il ne supprime ni workspace, ni
-lease, ni donnée Superset.
+lease, ni donnée Superset. L'installateur l'appelle automatiquement en cas
+d'échec. Après une installation réussie, la commande manuelle courte est :
 
 ```bash
-sudo test -f /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/BACKUP_COMPLETE
-sudo systemctl stop agentimpact-superset-host.service
-sudo systemctl stop agentimpact-superset-private.service
-
-for spec in \
-  /etc/systemd/system/agentimpact-superset-host.service.d/50-cursor-sandbox.conf:host-dropin \
-  /etc/systemd/system/agentimpact-superset-private.service.d/50-cursor-toolchain-readonly.conf:private-dropin \
-  /usr/local/libexec/agentimpact-cursor-sandbox-preflight:preflight; do
-  target="${spec%%:*}"
-  name="${spec##*:}"
-  if sudo test -f "/var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/$name.previous"; then
-    sudo cp -a "/var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/$name.previous" "$target"
-  else
-    sudo unlink "$target"
-  fi
-done
-
-if sudo test -f /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/apparmor.previous; then
-  sudo cp -a /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/apparmor.previous \
-    /etc/apparmor.d/agentimpact-cursor-sandbox
-  sudo /usr/sbin/apparmor_parser -r /etc/apparmor.d/agentimpact-cursor-sandbox
-else
-  sudo /usr/sbin/apparmor_parser -R /etc/apparmor.d/agentimpact-cursor-sandbox
-  sudo unlink /etc/apparmor.d/agentimpact-cursor-sandbox
-fi
-
-sudo systemctl daemon-reload
-if sudo grep -qx active /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/private.was-active; then
-  sudo systemctl start agentimpact-superset-private.service
-fi
-if sudo grep -qx active /var/lib/agentimpact/rollback/nadir-26-cursor-sandbox/host.was-active; then
-  sudo systemctl start agentimpact-superset-host.service
-fi
-sudo systemctl show agentimpact-superset-host.service -p RestrictNamespaces
+agentimpact-cursor-sandbox-rollback
 ```
 
-Le résultat attendu après rollback est le retour à `RestrictNamespaces=yes` et
-le retour de l'échec Cursor `EPERM`, sans désactiver le sandbox ni modifier le
-sysctl AppArmor.
+Le script vérifie les sommes du bundle, restaure exactement présent/absent,
+profil AppArmor, état des services et valeur `RestrictNamespaces`, puis devient
+un no-op explicite après succès. Le résultat attendu est le retour à
+`RestrictNamespaces=yes` et à l'échec Cursor `EPERM`, sans désactiver le sandbox
+ni modifier le sysctl AppArmor.
