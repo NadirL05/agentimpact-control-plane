@@ -16,16 +16,18 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : tests T2 verts (6e essai refusé, en-têtes présents).
   - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (T1 + T2, 12 tests) et `src/api/dashboard-app.test.ts` (2) verts ; script de connexion sorti dans `login.js` et bouton sans `onclick`, pour que la CSP n'accepte aucun script en ligne. Vérification en production à l'étape 9.
   - Réf. TRD « Auth et rôles », SECURITY.
-- [ ] 3. Rapporter la consommation d'IA des missions.
+- [x] 3. Rapporter la consommation d'IA des missions.
   - Dans squad-agents-config : l'exécuteur ajoute `result.usage` (tokens Codex lus dans la session de la mission ; coût de la relecture Claude via sortie JSON).
   - PR séparée dans ce dépôt-là.
   - Fini : une mission terminée porte `result.usage` ; tests T3 verts côté exécuteur.
+  - Preuve 20/11 : squad-agents-config PR #111 fusionnée et installée (15:44 UTC, sauvegarde `live-fixes/20261120T154408Z-mission-usage`) ; extraction vérifiée sur la mission AGE-115 (940 528 tokens, gpt-6-astra).
   - Réf. TRD « Champs result ».
-- [ ] 4. API `GET /dashboard/api/missions`.
+- [x] 4. API `GET /dashboard/api/missions`.
   - Missions dev-senior avec : ticket, projet, statut, étape, durée (`processed_at` ou maintenant moins `created_at`), lien PR, explication du blocage (dictionnaire des codes d'erreur de l'exécuteur), tokens et coût estimé (MISSION_COST_PRICES).
   - Filtres : a_relire, bloquees, en_cours, toutes. Pagination 50.
   - Cookie de session requis.
   - Fini : tests T4 verts.
+  - Preuve 20/11 : `src/core/mission-board.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T4, 6 dont la requête sur le schéma réel via PGlite) verts. Coût en euros affiché seulement quand MISSION_COST_PRICES est posé ([À CONFIRMER] tarif) ; sinon tokens seuls.
   - Réf. TRD « Architecture », APP_FLOW « Onglet Missions ».
 - [ ] 5. État des PR GitHub.
   - Lecture `GET /repos/.../pulls/n` limitée aux dépôts autorisés, cache 5 min, état « inconnu » si GitHub ne répond pas.

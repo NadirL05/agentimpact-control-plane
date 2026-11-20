@@ -14,6 +14,10 @@ import {
 } from '../core/signed-session.js';
 import { dashboardSessionSecret, hasValidDashboardSession } from '../core/dashboard-session.js';
 import { createLoginRateLimiter, loginClientKey } from '../core/login-rate-limit.js';
+import { z } from 'zod';
+import {
+  BOARD_FILTERS, matchesFilter, parsePrices, toBoardItem, weekTotals, type MissionRow,
+} from '../core/mission-board.js';
 
 const __dirname_local = fileURLToPath(new URL('.', import.meta.url));
 // src/api → src/dashboard (dev, tests) ; dist/api → dist/dashboard (image Docker).
@@ -108,6 +112,64 @@ app.post('/login', async (c) => {
     sessionCookieHeader('ai_dashboard', token, '/', 8 * 60 * 60, secureCookies()),
   );
   return c.json({ ok: true });
+});
+
+type BoardQuery = (sql: string, params: unknown[]) => Promise<{ rows: MissionRow[] }>;
+// Import paresseux : db.js exige les variables PG dès son chargement.
+let boardQuery: BoardQuery = async (sql, params) =>
+  (await import('./db.js')).pool.query(sql, params) as unknown as { rows: MissionRow[] };
+
+/** Tests uniquement : remplace l'accès à la base. */
+export function setMissionBoardQuery(query: BoardQuery): void {
+  boardQuery = query;
+}
+
+const boardParams = z.object({
+  filter: z.enum(BOARD_FILTERS).default('a_relire'),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).max(450).default(0),
+});
+
+// 500 dernières missions Dev Senior : assez pour la semaine et l'historique récent.
+const BOARD_SQL = `select m.id, m.source_id, m.source_url, m.title, m.status, a.status as action_status,
+    m.payload, m.result, m.error_message, m.created_at, m.processed_at
+  from agent_missions m
+  left join agent_actions a on a.id = m.action_id
+  where m.target_agent = 'dev-senior'
+    and coalesce(to_jsonb(m)->>'orchestration_version', '1') = '1'
+  order by m.created_at desc
+  limit 500`;
+
+// Onglet Missions (étape 4) : lecture seule, cookie de session obligatoire.
+app.get('/api/missions', async (c) => {
+  if (!hasValidDashboardSession(c.req.header('Cookie'))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const parsed = boardParams.safeParse({
+    filter: c.req.query('filter') ?? undefined,
+    limit: c.req.query('limit') ?? undefined,
+    offset: c.req.query('offset') ?? undefined,
+  });
+  if (!parsed.success) return c.json({ error: 'invalid_query' }, 400);
+  const { filter, limit, offset } = parsed.data;
+  try {
+    const { rows } = await boardQuery(BOARD_SQL, []);
+    const now = new Date();
+    const prices = parsePrices(process.env.MISSION_COST_PRICES);
+    const all = rows.map((row) => toBoardItem(row, prices, now));
+    const selected = all.filter((i) => matchesFilter(i.category, filter));
+    if (filter === 'a_relire') selected.reverse(); // la plus ancienne PR à relire en premier
+    const counts = Object.fromEntries(BOARD_FILTERS.map((f) => [f, all.filter((i) => matchesFilter(i.category, f)).length]));
+    c.header('Cache-Control', 'no-store');
+    return c.json({
+      filter, limit, offset, total: selected.length, counts,
+      week: weekTotals(all, now), prices_configured: prices !== null,
+      items: selected.slice(offset, offset + limit),
+    });
+  } catch (error) {
+    console.error('dashboard missions query failed', error instanceof Error ? error.message : 'unknown');
+    return c.json({ error: 'missions_unavailable' }, 503);
+  }
 });
 
 /** Chemin relatif au montage : `c.req.path` est le chemin complet (`/dashboard/app.js`). */

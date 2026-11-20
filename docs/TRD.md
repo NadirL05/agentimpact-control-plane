@@ -109,7 +109,9 @@ Aucune intégration Linear.
 
 **[NOUVEAU]**
 
-- MISSION_COST_PRICES (JSON de prix par million de tokens et par modèle) [À CONFIRMER : valeurs].
+- MISSION_COST_PRICES : JSON `{"models": {"<modèle>|default": {"input", "cached_input", "output"}}, "usd_to_eur"}`, prix en euros par million de tokens ; absent ou invalide = coût « — » [À CONFIRMER : valeurs].
+
+`GET /dashboard/api/missions?filter=a_relire|bloquees|en_cours|toutes&limit&offset` (étape 4) : cookie de session obligatoire (401 sinon) ; lit les 500 dernières missions dev-senior V1 ; renvoie `{filter, total, counts, week {missions, tokens, cost_eur}, prices_configured, items[]}` ; chaque item porte ticket, titre, dépôt, catégorie, durée, lien PR, ligne Tests, blocage expliqué (`core/mission-board.ts`, dictionnaire des codes de l'exécuteur, jamais le message brut) et usage (tokens, modèle, coût estimé). Base indisponible : 503 générique.
 - DASHBOARD_LOGIN_MAX_ATTEMPTS (défaut 5).
 - DASHBOARD_COOKIE_SECURE (mettre `0` pour désactiver le flag `Secure` en production, par exemple pour un test en HTTP local ; défaut : actif si NODE_ENV=production).
 

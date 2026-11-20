@@ -19,7 +19,7 @@ Au moins 80 % des lignes du code nouveau : `dashboard-routes.ts`, nouvelle route
 | T1 — service du tableau de bord | `/dashboard/login.html` et `/dashboard/app.js` en 200 avec le bon type ; `/dashboard/` en 302 sans session, 200 avec ; chemin `../` refusé ; fichier inconnu en 404. |
 | T2 — durcissement | cookie avec `Secure` en production ; 6e essai de connexion en 15 min → 429 ; message identique pour mot de passe faux et inconnu ; en-têtes CSP, HSTS, X-Frame-Options et nosniff présents ; erreur réseau affichée « Impossible de charger » (test du rendu de `app.js` avec jsdom). |
 | T3 — usage IA (dépôt squad-agents-config) | `result.usage` présent avec les tokens Codex de la session de la mission ; absent sans erreur si la session est introuvable ; jamais de chemin ni de secret dans le résultat. |
-| T4 — API missions | sans cookie → 401 ; token agent seul → 403 ; filtres a_relire, bloquees, en_cours, toutes ; durée calculée ; coût = tokens × prix ; code de blocage inconnu → phrase générique ; aucun champ « None » ; pagination. |
+| T4 — API missions | sans cookie → 401 ; token agent seul (sans cookie) → 401 ; base indisponible → 503 générique ; filtre ou pagination invalides → 400 ; filtres a_relire, bloquees, en_cours, toutes ; durée calculée ; coût = tokens × prix ; code de blocage inconnu → phrase générique ; aucun champ « None » ; pagination. |
 | T5 — état des PR | PR ouverte, fusionnée ou fermée ; dépôt hors liste non interrogé ; GitHub en erreur → état « inconnu » et réponse 200 ; cache 5 min respecté (un seul appel). |
 | T6 — interface | rendu des 4 filtres ; états vide, chargement et erreur ; ligne dépliée ; total de la semaine ; échappement HTML des titres. |
 | T7 — E2E | scénario ci-dessous, vert. |
