@@ -3,6 +3,9 @@ import { Hono } from 'hono';
 import dashboardRoutes, { resetDashboardLoginLimiter, setMissionBoardQuery, setPrStatusClient } from './dashboard-routes.js';
 import { issueSignedSessionToken } from '../core/signed-session.js';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>;
+
 // T1 (docs/TESTING.md) : le tableau de bord est servi sous /dashboard comme dans server.ts.
 const SECRET = 'dashboard-test-secret-at-least-32-chars';
 
@@ -126,8 +129,8 @@ describe('dashboard-routes durcissement (T2)', () => {
   });
 
   it('message identique pour tout mauvais mot de passe', async () => {
-    const a = await (await login('mauvais')).json();
-    const b = await (await login('x'.repeat(40))).json();
+    const a = await (await login('mauvais')).json() as Json;
+    const b = await (await login('x'.repeat(40))).json() as Json;
     expect(a).toEqual({ error: 'unauthorized' });
     expect(b).toEqual(a);
   });
@@ -191,7 +194,7 @@ describe('dashboard-routes API missions (T4)', () => {
   });
 
   it('filtre « à relire » par défaut, compte chaque filtre', async () => {
-    const body = await (await get()).json();
+    const body = await (await get()).json() as Json;
     expect(body.filter).toBe('a_relire');
     expect(body.items.map((i: { ticket: string }) => i.ticket)).toEqual(['AGE-9001']);
     expect(body.counts).toEqual({ a_relire: 1, bloquees: 1, en_cours: 1, toutes: 3 });
@@ -199,10 +202,10 @@ describe('dashboard-routes API missions (T4)', () => {
   });
 
   it('bloquées avec explication, en cours, toutes et pagination', async () => {
-    const blocked = await (await get('?filter=bloquees')).json();
+    const blocked = await (await get('?filter=bloquees')).json() as Json;
     expect(blocked.items[0].block.text).toContain('échoue maintenant (test)');
-    expect((await (await get('?filter=en_cours')).json()).items).toHaveLength(1);
-    const page = await (await get('?filter=toutes&limit=2&offset=2')).json();
+    expect(((await (await get('?filter=en_cours')).json()) as Json).items).toHaveLength(1);
+    const page = await (await get('?filter=toutes&limit=2&offset=2')).json() as Json;
     expect(page.total).toBe(3);
     expect(page.items).toHaveLength(1);
   });
@@ -228,7 +231,7 @@ describe('dashboard-routes API missions (T4)', () => {
       values ($1, 'dev-senior', 'linear', 'AGE-9100', 'AGE-9100 T', 'pending', '{"repo":"test/demo"}'),
              ($1, 'hermes', 'linear', 'AGE-9101', 'AGE-9101 autre agent', 'pending', '{}')`, [action.rows[0].id]);
     setMissionBoardQuery((sql, params) => pool.query(sql, params) as never);
-    const body = await (await get('?filter=toutes')).json();
+    const body = await (await get('?filter=toutes')).json() as Json;
     expect(body.items.map((i: { ticket: string; category: string }) => [i.ticket, i.category])).toEqual([['AGE-9100', 'en_cours']]);
   }, 30_000); // PGlite démarre une base complète : lent quand toute la suite tourne en parallèle.
 });
@@ -247,7 +250,7 @@ describe('dashboard-routes état des PR (T5)', () => {
   it('ne garde « à relire » que les PR ouvertes ou d’état inconnu', async () => {
     const states: Record<string, 'open' | 'merged' | 'closed'> = { 1: 'open', 2: 'merged', 3: 'closed' };
     setPrStatusClient({ state: async (url) => states[String(url).split('/').pop() as string] });
-    const body = await (await app().request('/dashboard/api/missions', { headers: { Cookie: sessionCookie() } })).json();
+    const body = await (await app().request('/dashboard/api/missions', { headers: { Cookie: sessionCookie() } })).json() as Json;
     expect(body.items.map((i: { ticket: string; pr_state: string }) => [i.ticket, i.pr_state])).toEqual([['AGE-901', 'open']]);
     expect(body.counts.a_relire).toBe(1);
   });
@@ -256,7 +259,7 @@ describe('dashboard-routes état des PR (T5)', () => {
     setPrStatusClient({ state: async () => 'unknown' });
     const res = await app().request('/dashboard/api/missions', { headers: { Cookie: sessionCookie() } });
     expect(res.status).toBe(200);
-    expect((await res.json()).items.every((i: { pr_state: string }) => i.pr_state === 'unknown')).toBe(true);
+    expect(((await res.json()) as Json).items.every((i: { pr_state: string }) => i.pr_state === 'unknown')).toBe(true);
   });
 });
 
