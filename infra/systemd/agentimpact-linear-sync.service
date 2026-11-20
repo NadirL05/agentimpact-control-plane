@@ -1,0 +1,30 @@
+[Unit]
+Description=AgentImpact Linear mission mirror
+After=network-online.target docker.service agentimpact-slack-router.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=agentimpact-slack-router
+Group=agentimpact-slack-router
+SupplementaryGroups=agentimpact-grok-client
+WorkingDirectory=/opt/agentimpact/app
+EnvironmentFile=/etc/agentimpact/slack-router.env
+EnvironmentFile=/etc/agentimpact/linear-sync.env
+LoadCredential=linear-api-key:/etc/agentimpact/credentials/linear-api-key
+LoadCredential=slack-bot-token:/etc/agentimpact/credentials/slack-router-bot-token
+LoadCredential=pg-password:/etc/agentimpact/credentials/slack-router-db-password
+Environment=LINEAR_API_KEY_FILE=%d/linear-api-key
+Environment=LINEAR_SYNC_SLACK_TOKEN_FILE=%d/slack-bot-token
+Environment=LINEAR_SYNC_PG_PASSWORD_FILE=%d/pg-password
+ExecStart=/usr/bin/node /opt/agentimpact/app/dist/linear-sync/daemon.js
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/agentimpact/app
+
+[Install]
+WantedBy=multi-user.target

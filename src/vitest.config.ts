@@ -8,6 +8,7 @@ export default defineConfig({
       'middleware/**/*.test.ts',
       'slack-router/**/*.test.ts',
       'grok-worker/**/*.test.ts',
+      'linear-sync/**/*.test.ts',
     ],
     exclude: [
       'node_modules',
