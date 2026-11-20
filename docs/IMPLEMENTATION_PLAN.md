@@ -41,9 +41,10 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : tests T6 verts.
   - Preuve 20/11 : `src/api/dashboard-missions-ui.test.ts` (8) vert ; aperçu local avec missions fictives vérifié dans le navigateur (onglet, 4 filtres, ligne bloquée dépliée avec raison et action, total de la semaine) et à 375 px sans défilement horizontal ; aucune erreur CSP. Script `src/dashboard/missions.js` (externe, CSP), ouverture directe par `#missions`.
   - Réf. APP_FLOW « Écrans », « États ».
-- [ ] 7. Scénario E2E du parcours principal.
+- [x] 7. Scénario E2E du parcours principal.
   - Playwright, en local et non en CI pour économiser les minutes : connexion, onglet Missions, filtre à relire, lien PR, bloquées avec explication.
   - Fini : `npm run test:e2e` vert.
+  - Preuve 20/11 : 2 scénarios verts (4,7 s) dans `mcr.microsoft.com/playwright:v1.65.1-noble` sur le serveur AWS (dossier jetable supprimé ensuite) : connexion refusée puis acceptée, onglet Missions, « À relire » sans la PR fusionnée, « Bloquées » avec raison et action, « Toutes » sans « None », 375 px sans défilement, ouverture par `#missions` sans erreur CSP. Pas lancé sur le Mac (disque presque plein).
   - Réf. APP_FLOW « Parcours principal » ; T7.
 - [ ] 8. Accès web protégé.
   - Cloudflare Tunnel (cloudflared) qui publie `/dashboard/*` seulement, et politique Access réservée à l'e-mail de Nadir.

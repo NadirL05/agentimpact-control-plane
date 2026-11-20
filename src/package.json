@@ -13,7 +13,8 @@
     "slack-router": "tsx slack-router/daemon.ts",
     "grok-worker": "tsx grok-worker/server.ts",
     "smoke:superset-rpc": "tsx scripts/jarvis-superset-rpc-smoke.ts",
-    "lint:md": "markdownlint-cli2 --config ../.markdownlint-cli2.jsonc \"../docs/**/*.md\""
+    "lint:md": "markdownlint-cli2 --config ../.markdownlint-cli2.jsonc \"../docs/**/*.md\"",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
     "@electric-sql/pglite-pg16": "npm:@electric-sql/pglite@0.2.0",
+    "@playwright/test": "1.65.1",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.21.0",
     "eslint": "^9.0.0",

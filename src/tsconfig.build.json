@@ -1,12 +1,16 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "exclude": [
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/testing/**"
+    "**/testing/**",
+    "e2e/**",
+    "playwright.config.ts"
   ]
 }

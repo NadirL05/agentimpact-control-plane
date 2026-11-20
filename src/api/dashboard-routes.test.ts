@@ -230,7 +230,7 @@ describe('dashboard-routes API missions (T4)', () => {
     setMissionBoardQuery((sql, params) => pool.query(sql, params) as never);
     const body = await (await get('?filter=toutes')).json();
     expect(body.items.map((i: { ticket: string; category: string }) => [i.ticket, i.category])).toEqual([['AGE-9100', 'en_cours']]);
-  });
+  }, 30_000); // PGlite démarre une base complète : lent quand toute la suite tourne en parallèle.
 });
 
 describe('dashboard-routes état des PR (T5)', () => {
