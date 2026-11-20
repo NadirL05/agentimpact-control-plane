@@ -11,7 +11,7 @@ L'outil est interne. Le parcours type « inscription → action de valeur → pa
 | Portail Cloudflare Access (e-mail + code) | avant `/dashboard` | **[NOUVEAU]**, hors code |
 | Connexion | `/dashboard/login.html` | **[LU]** (404 corrigé à l'étape 1) |
 | Accueil : profils, policies, workflows | `/dashboard/` | **[LU]** |
-| Onglet Missions : liste et filtres | `/dashboard/#missions` | **[NOUVEAU]** |
+| Onglet Missions : liste et filtres | `/dashboard/#missions` | **[NOUVEAU]**, codé à l'étape 6 (`src/dashboard/missions.js`) |
 | Détail d'une mission (ligne dépliée) | même page | **[NOUVEAU]** |
 | Workflows | `src/dashboard/workflows.html` | **[LU]**, non servi (404), hors MVP |
 | Séance sport | `/training` | **[LU]**, hors périmètre |

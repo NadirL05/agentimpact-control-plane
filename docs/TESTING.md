@@ -52,4 +52,11 @@ Au moins 80 % des lignes du code nouveau : `dashboard-routes.ts`, nouvelle route
 cd src && npm run lint && npm run build && npm test && npm run test:e2e
 ```
 
-`test:e2e` (Playwright) est ajouté à l'étape 7. Sur le serveur, `infra/deploy/preflight.sh` lance l'ensemble, plus `npm audit` et les tests Python d'infra **[LU]**.
+`test:e2e` (Playwright 1.65.1, `src/playwright.config.ts`, scénarios `src/e2e/*.spec.ts`, serveur de données fictives `src/e2e/fixture-server.ts`) demande un navigateur Chromium. Pour ne rien télécharger sur un poste au disque plein, on le lance sur le serveur dans l'image officielle, sans rien installer sur l'hôte :
+
+```bash
+docker run --rm --ipc=host -v "$PWD:/work" -w /work/src mcr.microsoft.com/playwright:v1.65.1-noble \
+  bash -lc 'npm ci --ignore-scripts && npm rebuild esbuild && npx playwright test'
+```
+
+Depuis un Mac, créer l'archive avec `COPYFILE_DISABLE=1` : sinon les fichiers `._*` de macOS sont lus comme des tests et font échouer Playwright. Sur le serveur, `infra/deploy/preflight.sh` lance l'ensemble, plus `npm audit` et les tests Python d'infra **[LU]**.

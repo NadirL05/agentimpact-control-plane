@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "./dist",
     "rootDir": ".",
     "strict": true,
@@ -13,7 +15,10 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "types": ["node", "vitest/globals"]
+    "types": [
+      "node",
+      "vitest/globals"
+    ]
   },
   "include": [
     "index.ts",
@@ -26,7 +31,8 @@
     "slack-router/**/*.ts",
     "grok-worker/**/*.ts",
     "linear-sync/**/*.ts",
-    "codex-worker/**/*.ts"
+    "codex-worker/**/*.ts",
+    "e2e/**/*.ts"
   ],
   "exclude": [
     "node_modules",
