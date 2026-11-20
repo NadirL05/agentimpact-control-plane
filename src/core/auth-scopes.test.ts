@@ -21,4 +21,11 @@ describe('auth-scopes second review', () => {
     expect(isRouteAllowed('admin', 'POST', '/api/v2/jarvis/actions')).toBe(true);
     expect(isRouteAllowed('bridge', 'POST', '/api/v2/jarvis/actions')).toBe(false);
   });
+  it('exempte le tableau de bord du Bearer, avec ou sans slash final, sans élargir', () => {
+    expect(isBearerExempt('GET', '/dashboard')).toBe(true);
+    expect(isBearerExempt('GET', '/dashboard/')).toBe(true);
+    expect(isBearerExempt('GET', '/dashboard/app.js')).toBe(true);
+    expect(isBearerExempt('GET', '/dashboardx')).toBe(false);
+    expect(isBearerExempt('POST', '/dashboard')).toBe(false);
+  });
 });

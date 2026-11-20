@@ -60,8 +60,10 @@ export function sessionCookieHeader(
   token: string,
   path: string,
   maxAgeSeconds: number,
+  secure = false,
 ): string {
-  return `${name}=${token}; HttpOnly; SameSite=Lax; Path=${path}; Max-Age=${maxAgeSeconds}`;
+  const base = `${name}=${token}; HttpOnly; SameSite=Lax; Path=${path}; Max-Age=${maxAgeSeconds}`;
+  return secure ? `${base}; Secure` : base;
 }
 
 export function parseCookieHeader(header: string | undefined): Record<string, string> {

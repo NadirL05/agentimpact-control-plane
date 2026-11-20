@@ -10,7 +10,7 @@ Dashboard statique qui consomme l'API du control plane.
 npm run api
 ```
 
-1. Ouvrir `dashboard/index.html` dans un navigateur, ou le servir avec un serveur statique :
+1. Ouvrir `src/dashboard/index.html` dans un navigateur, ou le servir avec un serveur statique :
 
 ```bash
 # Avec Python
@@ -38,4 +38,6 @@ Tu peux héberger ce dashboard sur :
 - GitHub Pages
 - Netlify
 
-Il suffit de pointer vers le dossier `dashboard/` et de configurer l'URL de l'API.
+Il suffit de pointer vers le dossier `src/dashboard/` et de configurer l'URL de l'API.
+
+En production, l'API sert `index.html`, `login.html` et `app.js` sous `/dashboard/` (copiés dans l'image par `src/Dockerfile`).

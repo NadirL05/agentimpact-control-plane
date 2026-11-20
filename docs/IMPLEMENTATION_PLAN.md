@@ -1,0 +1,56 @@
+# IMPLEMENTATION_PLAN — Onglet Missions et accès protégé
+
+Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS) est l'état de départ et n'est pas replanifié ici. Chaque étape tient en moins d'une demi-journée et n'est cochée qu'après ses tests (TESTING.md).
+
+- [x] 1. Réparer le service du tableau de bord.
+  - Déplacer `dashboard/` dans `src/dashboard/` et le copier dans l'image Docker (`src/Dockerfile`).
+  - Corriger la correspondance des chemins statiques (`dashboard-routes.ts:19-22`, chemin relatif au montage).
+  - Ajouter des tests de route.
+  - Fini : `/dashboard/login.html` et `/dashboard/app.js` renvoient 200, `/dashboard/` renvoie 302 vers la connexion sans session ; tests T1 verts.
+  - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (6 tests) et `core/auth-scopes.test.ts` verts ; `npm run build` OK. Vérification en production à l'étape 9 (l'image actuelle n'est pas reconstruite).
+  - Réf. TRD « Contraintes », APP_FLOW « Connexion ».
+- [x] 2. Durcir la connexion et les en-têtes.
+  - Cookie `Secure` derrière HTTPS ; limite de 5 essais par 15 min et par IP sur `POST /dashboard/login` ; message générique.
+  - En-têtes CSP, HSTS, X-Frame-Options, nosniff sur `/dashboard/*`.
+  - Erreur réseau affichée comme erreur, et non comme vide (`app.js:77-79`).
+  - Fini : tests T2 verts (6e essai refusé, en-têtes présents).
+  - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (T1 + T2, 12 tests) et `src/api/dashboard-app.test.ts` (2) verts ; script de connexion sorti dans `login.js` et bouton sans `onclick`, pour que la CSP n'accepte aucun script en ligne. Vérification en production à l'étape 9.
+  - Réf. TRD « Auth et rôles », SECURITY.
+- [x] 3. Rapporter la consommation d'IA des missions.
+  - Dans squad-agents-config : l'exécuteur ajoute `result.usage` (tokens Codex lus dans la session de la mission ; coût de la relecture Claude via sortie JSON).
+  - PR séparée dans ce dépôt-là.
+  - Fini : une mission terminée porte `result.usage` ; tests T3 verts côté exécuteur.
+  - Preuve 20/11 : squad-agents-config PR #111 fusionnée et installée (15:44 UTC, sauvegarde `live-fixes/20261120T154408Z-mission-usage`) ; extraction vérifiée sur la mission AGE-115 (940 528 tokens, gpt-6-astra).
+  - Réf. TRD « Champs result ».
+- [x] 4. API `GET /dashboard/api/missions`.
+  - Missions dev-senior avec : ticket, projet, statut, étape, durée (`processed_at` ou maintenant moins `created_at`), lien PR, explication du blocage (dictionnaire des codes d'erreur de l'exécuteur), tokens et coût estimé (MISSION_COST_PRICES).
+  - Filtres : a_relire, bloquees, en_cours, toutes. Pagination 50.
+  - Cookie de session requis.
+  - Fini : tests T4 verts.
+  - Preuve 20/11 : `src/core/mission-board.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T4, 6 dont la requête sur le schéma réel via PGlite) verts. Coût en euros affiché seulement quand MISSION_COST_PRICES est posé ([À CONFIRMER] tarif) ; sinon tokens seuls.
+  - Réf. TRD « Architecture », APP_FLOW « Onglet Missions ».
+- [x] 5. État des PR GitHub.
+  - Lecture `GET /repos/.../pulls/n` limitée aux dépôts autorisés, cache 5 min, état « inconnu » si GitHub ne répond pas.
+  - Le filtre « à relire » ne garde que les PR ouvertes non fusionnées.
+  - Fini : tests T5 verts (dont dépôt hors liste refusé et GitHub en panne).
+  - Preuve 20/11 : `src/core/pr-status.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T5, 2) verts. En production, l'état réel dépend de [À CONFIRMER] GITHUB_TOKEN en lecture sur les 14 dépôts : sans droit, les PR restent « inconnu » et donc à relire (dégradation prévue).
+  - Réf. TRD « Intégrations ».
+- [ ] 6. Interface de l'onglet Missions.
+  - Onglet dans `src/dashboard/index.html` et `app.js` : filtres, lignes, détail déplié, total de la semaine, rechargement toutes les 30 s.
+  - États vide, chargement et erreur ; lisible sur mobile (375 px).
+  - Fini : tests T6 verts.
+  - Réf. APP_FLOW « Écrans », « États ».
+- [ ] 7. Scénario E2E du parcours principal.
+  - Playwright, en local et non en CI pour économiser les minutes : connexion, onglet Missions, filtre à relire, lien PR, bloquées avec explication.
+  - Fini : `npm run test:e2e` vert.
+  - Réf. APP_FLOW « Parcours principal » ; T7.
+- [ ] 8. Accès web protégé.
+  - Cloudflare Tunnel (cloudflared) qui publie `/dashboard/*` seulement, et politique Access réservée à l'e-mail de Nadir.
+  - Fini : depuis le téléphone, l'adresse demande l'e-mail puis le mot de passe ; toute autre route de l'API reste injoignable de l'extérieur (T8).
+  - Bloquée par [À CONFIRMER] domaine et compte Cloudflare.
+  - Réf. TRD « Stack ».
+- [ ] 9. Déploiement.
+  - `infra/deploy/preflight.sh` puis `deploy.sh`, sauvegarde et retour arrière prévus.
+  - Fini : santé OK, onglet visible à l'adresse protégée, missions du jour affichées.
+  - Bloquée par [À CONFIRMER] accord de Nadir sur les 7 commits en attente sur `main` et le déploiement en production (porte de mise en production).
+  - Réf. SECURITY ; T9.
