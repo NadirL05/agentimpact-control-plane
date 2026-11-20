@@ -7,7 +7,7 @@ L'outil est interne. Le parcours type « inscription → action de valeur → pa
 ## Écrans
 
 | Écran | Chemin | Statut |
-|---|---|---|
+| --- | --- | --- |
 | Portail Cloudflare Access (e-mail + code) | avant `/dashboard` | **[NOUVEAU]**, hors code |
 | Connexion | `/dashboard/login.html` | **[LU]** (404 corrigé à l'étape 1) |
 | Accueil : profils, policies, workflows | `/dashboard/` | **[LU]** |
@@ -60,7 +60,7 @@ flowchart TD
 ## États par écran
 
 | Écran | Vide | Chargement | Erreur |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Connexion **[LU]** | — | bouton désactivé pendant l'envoi | « Mot de passe incorrect » ; « Trop d'essais, réessayez dans 15 min » **[NOUVEAU]** |
 | Accueil **[LU]** | « Aucun profil / policy / workflow » | « Chargement… » dans chaque carte | Aujourd'hui une erreur s'affiche comme un état vide (`app.js:77-79`) : à corriger, un message « Impossible de charger » doit apparaître |
 | Onglet Missions **[NOUVEAU]** | « Aucune mission à relire » (ou bloquée, ou en cours, selon le filtre) | squelette de 3 lignes | « Impossible de charger les missions » + bouton Réessayer. GitHub indisponible : état de PR « inconnu », la page reste utilisable |
@@ -69,7 +69,7 @@ flowchart TD
 ## Accès par rôle
 
 | Rôle | Accès |
-|---|---|
+| --- | --- |
 | Nadir (seul utilisateur) | lecture de tous les écrans du tableau de bord |
 | Tokens agents (hermes, bridge…) | aucun accès aux écrans ; API seulement **[LU]** |
 | Toute autre personne | arrêtée par Cloudflare Access |

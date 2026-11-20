@@ -5,7 +5,7 @@ Rédigé le 20/11/2026 depuis le code (`main` b9e3089). **[LU]** constaté (fich
 ## Stack et justification
 
 | Choix | Raison |
-|---|---|
+| --- | --- |
 | Node 22 + TypeScript ESM, Hono 4 (`src/package.json`) **[LU]** | API légère, typée ; même langage que les agents et scripts. CI en Node 20 (`.github/workflows/ci-src.yml`) **[LU]** : à aligner sur 22. |
 | PostgreSQL 16 (`infra/compose.yml`, conteneur `agentimpact-db`) **[LU]** | Transactions et contraintes pour l'audit, l'anti-rejeu et le fencing des missions. |
 | SQL brut paramétré via `pg` (`src/api/db.ts`) **[LU]** | Contrôle fin des requêtes, pas d'ORM à auditer. |
@@ -80,7 +80,7 @@ Rédigé le 20/11/2026 depuis le code (`main` b9e3089). **[LU]** constaté (fich
 **[LU]**
 
 | Intégration | Mode |
-|---|---|
+| --- | --- |
 | Slack | sortant `chat.postMessage` ; entrant en Socket Mode |
 | GitHub | spec / issues / review ; webhook HMAC |
 | FullEnrich | webhook à token, accepté aussi en query |
