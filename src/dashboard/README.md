@@ -40,5 +40,4 @@ Tu peux héberger ce dashboard sur :
 
 Il suffit de pointer vers le dossier `src/dashboard/` et de configurer l'URL de l'API.
 
-
 En production, l'API sert `index.html`, `login.html` et `app.js` sous `/dashboard/` (copiés dans l'image par `src/Dockerfile`).
