@@ -33,7 +33,7 @@ ALTER TABLE slack_gateway_inbox
   ADD COLUMN mission_id uuid UNIQUE REFERENCES agent_missions(id),
   ADD CONSTRAINT slack_inbox_version_contract CHECK (
     (orchestration_version = 1 AND mission_id IS NULL) OR
-    (orchestration_version = 2 AND mission_id IS NOT NULL AND target = 'hermes' AND status = 'pending')
+    (orchestration_version = 2 AND mission_id IS NOT NULL AND target = 'hermes')
   );
 CREATE TABLE mission_plans (
   mission_id uuid NOT NULL REFERENCES agent_missions(id),

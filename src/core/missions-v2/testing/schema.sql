@@ -22,3 +22,7 @@ CREATE TABLE agent_missions (
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(source_type,source_id)
 );
+-- Existing production business-table prerequisite exercised by migration 016.
+CREATE TABLE leads (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid()
+);

@@ -1,0 +1,13 @@
+{
+  "name": "AgentImpact Publisher",
+  "url": "https://agentimpact.fr",
+  "hook_attributes": { "active": false },
+  "redirect_url": "https://agentimpact.fr/github-app/setup",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "metadata": "read",
+    "pull_requests": "write"
+  },
+  "default_events": []
+}

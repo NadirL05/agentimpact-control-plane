@@ -22,6 +22,7 @@
     "core/**/*.ts",
     "middleware/**/*.ts",
     "cli/**/*.ts",
+    "scripts/**/*.ts",
     "slack-router/**/*.ts",
     "grok-worker/**/*.ts",
     "codex-worker/**/*.ts"

@@ -1,0 +1,13 @@
+ROOT_AUTHORIZE_JARVIS_V1_2_ONE_CODEX_CANARY_FINAL_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-final.sh
+ROOT_AUTHORIZE_JARVIS_V1_2_ONE_CODEX_CANARY_FINAL_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-authorize-jarvis-v1-2-one-codex-canary-final.sh
+NEW_AUTH_HELPER_SHA256=bd2d484529684218ccff84aecaa439f62813b7ef2d21f8b6165ad7caa10bac91
+CANARY_SCRIPT_SHA256=f3aaa0081634d011e060936ae0517c1d234858626b033f29b635d5fb626c9e60
+ARMED_CANARY_V2_UNCHANGED=YES
+OUTER_VERIFIER=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+OUTER_VERIFIER_SHA256=d336569d0d30304ddd8504d5ac1247af135f82c8e2a9ea60920b6b920c50de41
+OUTER_VERIFIER_UNCHANGED=YES
+OUTER_ENV_ISOLATION=UNCHANGED
+AUTH_HELPER_CANONICAL_SCRIPT_BINDING=PASS
+AUTH_HELPER_OUTER_COMPAT=PASS
+ARBITRARY_SCRIPT_SELECTION=IMPOSSIBLE
+NOTE=No_live_auth_created_during_prepare

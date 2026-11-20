@@ -10,6 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { pool } from './db.js';
+import { constantTimeEqualString } from '../core/secure-compare.js';
 
 const app = new Hono();
 
@@ -46,7 +47,7 @@ function splitName(contactName: string | null): { firstName: string; lastName: s
   return { firstName: parts[0] ?? '', lastName: parts[1] ?? '' };
 }
 
-function buildPayload(lead: LeadRow) {
+function buildPayload(lead: LeadRow, requestId: string) {
   const { firstName, lastName } = splitName(lead.contact_name);
 
   return {
@@ -65,9 +66,19 @@ function buildPayload(lead: LeadRow) {
           'contact.personal_emails',
           'contact.phones',
         ],
-        custom: { user_id: lead.id },
+        custom: { user_id: lead.id, request_id: requestId },
       },
     ],
+  };
+}
+
+/** Never persist or return the callback URL: production commonly carries the
+ * webhook bearer token in its query string for FullEnrich compatibility. */
+function redactPayload(payload: ReturnType<typeof buildPayload>) {
+  return {
+    ...payload,
+    webhook_url: '[configured]',
+    webhook_events: { contact_finished: '[configured]' },
   };
 }
 
@@ -76,12 +87,13 @@ function buildPayload(lead: LeadRow) {
  * d'unicite sur payload_hash ne doit pas bloquer un reenrichissement legitime.
  */
 async function recordAction(
-  payload: unknown,
+  payload: ReturnType<typeof buildPayload>,
   leadId: string,
   dryRun: boolean,
   status: 'proposed' | 'executing',
 ): Promise<string> {
-  const hashInput = JSON.stringify({ payload, nonce: randomUUID() });
+  const auditPayload = redactPayload(payload);
+  const hashInput = JSON.stringify({ payload: auditPayload, nonce: randomUUID() });
   const payloadHash = createHash('sha256').update(hashInput).digest('hex');
 
   const result = await pool.query<{ id: string }>(
@@ -93,7 +105,7 @@ async function recordAction(
       PROFILE,
       INTENT,
       JSON.stringify([leadId]),
-      JSON.stringify(payload),
+      JSON.stringify(auditPayload),
       payloadHash,
       dryRun,
       status,
@@ -187,27 +199,40 @@ app.post('/enrich', async (c) => {
     return c.json({ success: false, error: 'missing_webhook_url_config' }, 503);
   }
 
-  const payload = buildPayload(lead);
+  const requestId = randomUUID();
+  const payload = buildPayload(lead, requestId);
 
   if (dryRun) {
     const actionId = await recordAction(payload, leadId, true, 'proposed');
-    return c.json({ success: true, dry_run: true, action_id: actionId, payload });
+    return c.json({ success: true, dry_run: true, action_id: actionId, payload: redactPayload(payload) });
   }
 
   if (!API_KEY) {
     return c.json({ success: false, error: 'missing_api_key_config' }, 503);
   }
 
-  const actionId = await recordAction(payload, leadId, false, 'executing');
-
-  await pool.query(
+  const claim = await pool.query(
     `update leads
         set fullenrich_status = 'pending',
             fullenrich_started_at = now(),
+            fullenrich_request_id = $2,
             fullenrich_error = null
-      where id = $1`,
-    [leadId],
+      where id = $1
+        and coalesce(fullenrich_status, '') not in ('pending', 'completed')
+      returning id`,
+    [leadId, requestId],
   );
+  if (!claim.rowCount) {
+    return c.json({ success: false, error: 'enrichment_already_claimed' }, 409);
+  }
+
+  let actionId: string;
+  try {
+    actionId = await recordAction(payload, leadId, false, 'executing');
+  } catch (error) {
+    await markLeadFailed(leadId, 'action_claim_failed', requestId);
+    throw error;
+  }
 
   let response: Response;
   let raw: string;
@@ -225,13 +250,19 @@ app.post('/enrich', async (c) => {
     raw = await response.text();
   } catch (error) {
     const message = error instanceof Error ? error.message : 'network_error';
-    await markLeadFailed(leadId, message);
+    // The provider may have accepted before the transport failed. Keep this
+    // generation pending so a matching callback can reconcile it, and block a
+    // replacement generation from overwriting an unknown outcome.
+    await pool.query(`update leads set fullenrich_error=$2
+      where id=$1 and fullenrich_status='pending' and fullenrich_request_id=$3`,
+    [leadId, `awaiting_reconciliation:${message}`.slice(0, 500), requestId]);
     await finishAction(actionId, 'failed', message);
     await logEvent(actionId, 'failed', 'fullenrich_request_failed', {
       lead_id: leadId,
       message,
     });
-    return c.json({ success: false, error: 'fullenrich_unreachable', message }, 502);
+    return c.json({ success: false, error: 'fullenrich_outcome_unknown', message,
+      reconciliation_required: true }, 502);
   }
 
   let parsedResponse: unknown = null;
@@ -254,7 +285,7 @@ app.post('/enrich', async (c) => {
       ? `fullenrich_http_${response.status}`
       : 'no_enrichment_id';
 
-    await markLeadFailed(leadId, message);
+    await markLeadFailed(leadId, message, requestId);
     await finishAction(actionId, 'failed', message);
     await logEvent(actionId, 'failed', 'fullenrich_request_rejected', {
       lead_id: leadId,
@@ -273,13 +304,35 @@ app.post('/enrich', async (c) => {
     );
   }
 
-  await pool.query(
+  const recorded=await pool.query(
     `update leads
         set fullenrich_enrichment_id = $2,
             fullenrich_last_response = $3::jsonb
-      where id = $1`,
-    [leadId, enrichmentId, JSON.stringify({ enrichment_id: enrichmentId })],
+      where id = $1 and fullenrich_status='pending' and fullenrich_request_id=$4`,
+    [leadId, enrichmentId, JSON.stringify({ enrichment_id: enrichmentId }), requestId],
   );
+  if (!recorded.rowCount) {
+    // FullEnrich may deliver the matching webhook before its HTTP response.
+    // Preserve that successful terminal state and attach the provider id.
+    const reconciled = await pool.query(
+      `update leads
+          set fullenrich_enrichment_id = coalesce(fullenrich_enrichment_id, $2)
+        where id = $1 and fullenrich_status='completed' and fullenrich_request_id=$3
+        returning id`,
+      [leadId, enrichmentId, requestId],
+    );
+    if (!reconciled.rowCount) {
+      await finishAction(actionId, 'failed', 'enrichment_generation_lost');
+      return c.json({ success: false, error: 'enrichment_generation_lost' }, 409);
+    }
+    await finishAction(actionId, 'executed');
+    await logEvent(actionId, 'executed', 'fullenrich_requested_after_callback', {
+      lead_id: leadId,
+      enrichment_id: enrichmentId,
+    });
+    return c.json({ success: true, lead_id: leadId, enrichment_id: enrichmentId,
+      action_id: actionId, reconciled: true });
+  }
 
   await finishAction(actionId, 'executed');
   await logEvent(actionId, 'executed', 'fullenrich_requested', {
@@ -295,12 +348,12 @@ app.post('/enrich', async (c) => {
   });
 });
 
-async function markLeadFailed(leadId: string, message: string): Promise<void> {
+async function markLeadFailed(leadId: string, message: string, requestId: string): Promise<void> {
   await pool.query(
     `update leads
         set fullenrich_status = 'failed', fullenrich_error = $2
-      where id = $1`,
-    [leadId, message],
+      where id = $1 and fullenrich_status = 'pending' and fullenrich_request_id = $3`,
+    [leadId, message, requestId],
   );
 }
 
@@ -309,12 +362,13 @@ async function markLeadFailed(leadId: string, message: string): Promise<void> {
  * memes colonnes avec les memes valeurs.
  */
 app.post('/webhook', async (c) => {
-  if (WEBHOOK_TOKEN) {
-    const provided =
-      c.req.header('x-webhook-token') ?? c.req.query('token') ?? '';
-    if (provided !== WEBHOOK_TOKEN) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
+  if (!WEBHOOK_TOKEN) {
+    return c.json({ error: 'webhook_unavailable' }, 503);
+  }
+  const provided =
+    c.req.header('x-webhook-token') ?? c.req.query('token') ?? '';
+  if (!constantTimeEqualString(provided, WEBHOOK_TOKEN)) {
+    return c.json({ error: 'unauthorized' }, 401);
   }
 
   const payload = await c.req.json().catch(() => null);
@@ -326,7 +380,7 @@ app.post('/webhook', async (c) => {
   const envelope = payload as { data?: unknown[]; datas?: unknown[] };
   const first = envelope.data?.[0] ?? envelope.datas?.[0];
   const contact = (first ?? {}) as {
-    custom?: { user_id?: unknown };
+    custom?: { user_id?: unknown; request_id?: unknown };
     contact?: Record<string, unknown>;
   };
 
@@ -335,6 +389,10 @@ app.post('/webhook', async (c) => {
 
   if (!leadId || !z.string().uuid().safeParse(leadId).success) {
     return c.json({ error: 'missing_user_id' }, 400);
+  }
+  const requestId = typeof contact.custom?.request_id === 'string' ? contact.custom.request_id : null;
+  if (requestId !== null && !z.string().uuid().safeParse(requestId).success) {
+    return c.json({ error: 'invalid_request_id' }, 400);
   }
 
   const contactData = contact.contact ?? {};
@@ -363,7 +421,8 @@ app.post('/webhook', async (c) => {
             contact_work_emails = $4::jsonb,
             contact_personal_emails = $5::jsonb,
             contact_phones = $6::jsonb
-      where id = $1
+      where id = $1 and fullenrich_status='pending'
+        and (fullenrich_request_id=$7::uuid or (fullenrich_request_id is null and $7::uuid is null))
       returning id`,
     [
       leadId,
@@ -372,11 +431,19 @@ app.post('/webhook', async (c) => {
       JSON.stringify(workEmails),
       JSON.stringify(personalEmails),
       JSON.stringify(phones),
+      requestId,
     ],
   );
 
   if (result.rowCount === 0) {
-    return c.json({ error: 'lead_not_found', lead_id: leadId }, 404);
+    const existing = await pool.query<{ fullenrich_status: string | null; fullenrich_request_id: string | null }>(
+      `select fullenrich_status,fullenrich_request_id from leads where id=$1`, [leadId]);
+    if (!existing.rows[0]) return c.json({ error: 'lead_not_found', lead_id: leadId }, 404);
+    const sameGeneration = existing.rows[0].fullenrich_request_id === requestId;
+    if (existing.rows[0].fullenrich_status === 'completed' && sameGeneration) {
+      return c.json({ ok: true, lead_id: leadId, replayed: true });
+    }
+    return c.json({ error: 'stale_or_unknown_enrichment', lead_id: leadId }, 409);
   }
 
   await logEvent(null, 'executed', 'fullenrich_completed', {

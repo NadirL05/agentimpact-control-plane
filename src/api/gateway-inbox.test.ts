@@ -15,7 +15,7 @@ vi.mock('./db.js', () => ({
   },
 }));
 
-import gatewayInbox from './gateway-inbox.js';
+import gatewayInbox, { createGatewayInboxApi } from './gateway-inbox.js';
 
 const app = new Hono();
 app.route('/', gatewayInbox);
@@ -93,6 +93,72 @@ describe('gateway-inbox claim isolation', () => {
     });
     expect(res.status).toBe(400);
     expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('refuse le planning V2 au token bridge', async () => {
+    const scoped = new Hono();
+    scoped.use('*', async (c, next) => {
+      c.set('authScope' as never, 'bridge' as never);
+      await next();
+    });
+    scoped.route('/', createGatewayInboxApi({} as never));
+    const res = await scoped.request('/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'hermes', include_v2: true }),
+    });
+    expect(res.status).toBe(403);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('refuse toute revendication V1 au token planner', async () => {
+    const scoped = new Hono();
+    scoped.use('*', async (c, next) => {
+      c.set('authScope' as never, 'planner' as never);
+      await next();
+    });
+    scoped.route('/', createGatewayInboxApi({} as never));
+    const res = await scoped.request('/claim', {
+      method: 'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({target:'ana'}),
+    });
+    expect(res.status).toBe(403);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('refuse toute completion V1 au token planner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({rows:[{orchestration_version:1,mission_id:null,status:'processing'}]});
+    const scoped = new Hono();
+    scoped.use('*', async (c, next) => {
+      c.set('authScope' as never, 'planner' as never);
+      await next();
+    });
+    scoped.route('/', createGatewayInboxApi({} as never));
+    const res=await scoped.request('/00000000-0000-0000-0000-000000000001/complete',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'forged'}),
+    });
+    expect(res.status).toBe(403);
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('autorise le planning V2 uniquement au token planner', async () => {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({});
+    const scoped = new Hono();
+    scoped.use('*', async (c, next) => {
+      c.set('authScope' as never, 'planner' as never);
+      await next();
+    });
+    scoped.route('/', createGatewayInboxApi({} as never));
+    const res = await scoped.request('/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'hermes', include_v2: true }),
+    });
+    expect(res.status).toBe(204);
+    expect(mockQuery.mock.calls[1][0]).toContain("IN ('1','2')");
   });
 
   it('claim atomique avec FOR UPDATE SKIP LOCKED', async () => {

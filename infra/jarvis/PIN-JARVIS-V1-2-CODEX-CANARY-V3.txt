@@ -1,0 +1,14 @@
+ROOT_AUTHORIZE_JARVIS_V1_2_ONE_CODEX_CANARY_V3_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-authorize-jarvis-v1-2-one-codex-canary-v3.sh
+ROOT_AUTHORIZE_JARVIS_V1_2_ONE_CODEX_CANARY_V3_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-authorize-jarvis-v1-2-one-codex-canary-v3.sh
+AUTH_HELPER_V3_SHA256=841bac80bf99bbead0a573022d083eef323f4dbf736d5245da479ab4f8f0928a
+ROOT_RUN_JARVIS_V1_2_CODEX_CANARY_V3_SCRIPT=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-run-jarvis-v1-2-codex-canary-v3.sh
+ROOT_RUN_JARVIS_V1_2_CODEX_CANARY_V3_RUNNER=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-run-jarvis-v1-2-codex-canary-v3.sh
+CODEX_CANARY_V3_SHA256=bcdef0f2e452bb9a8b046056c1519fbdfcc03d71ea514d9bd4e8427869db085d
+OUTER_VERIFIER=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+OUTER_VERIFIER_SHA256=d336569d0d30304ddd8504d5ac1247af135f82c8e2a9ea60920b6b920c50de41
+OUTER_VERIFIER_UNCHANGED=YES
+OUTER_ENV_ISOLATION=UNCHANGED
+BASE_COMPOSE_IMMUTABLE=YES
+TEMP_COMPOSE_OVERRIDE=YES
+NOTE=Do_not_create_live_auth_or_execute_Codex_during_prepare
+GATE=GATE_NADIR_JARVIS_V1_2_CODEX_CANARY_V3_READY

@@ -1,0 +1,4 @@
+ROOT_JARVIS_V1_READONLY_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-deploy-jarvis-v1-readonly.sh
+ROOT_JARVIS_V1_READONLY_SHA256=3a0b89034976e3388f1ee36df259ad980eea63ab3e18acda3ec71d4f18dbffa1
+OUTER_VERIFY=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+GATE_ON_SUCCESS=GATE_NADIR_JARVIS_V1_READONLY

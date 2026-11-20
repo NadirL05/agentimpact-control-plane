@@ -88,7 +88,8 @@ class HermesctlBridgePreflightRuntimeTest(unittest.TestCase):
             raise unittest.SkipTest("ansible-playbook indisponible")
         if not PREFLIGHT_SCRIPT.is_file():
             raise unittest.SkipTest("script préflight manquant")
-        PREFLIGHT_SCRIPT.chmod(PREFLIGHT_SCRIPT.stat().st_mode | stat.S_IXUSR)
+        if not os.access(PREFLIGHT_SCRIPT, os.X_OK):
+            PREFLIGHT_SCRIPT.chmod(PREFLIGHT_SCRIPT.stat().st_mode | stat.S_IXUSR)
 
     def _write_bridge(self, directory: Path, content: str = SECRET_MARKER + "\n") -> Path:
         path = directory / "bridge.env"
