@@ -1,0 +1,7 @@
+Validé par Nadir le 2026-11-20 (« Je valide »).
+[À CONFIRMER] restants :
+- domaine de l'adresse protégée et e-mail autorisé par Cloudflare Access (bloque l'étape 8)
+- tarif par million de tokens pour le coût IA estimé, MISSION_COST_PRICES (bloque l'affichage en euros de l'étape 4 ; les tokens s'affichent sans)
+- GITHUB_TOKEN couvrant les 14 dépôts en lecture, dont ERP-AxENR/home-eco-enr (bloque l'étape 5)
+- accord sur les 7 commits de main pas encore en production (bloque l'étape 9)
+- durée de conservation RGPD des leads et conversations (hors onglet Missions)
