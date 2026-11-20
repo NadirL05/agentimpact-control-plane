@@ -9,7 +9,9 @@ COPY . .
 RUN npm run build \
  && mkdir -p dist/api/public dist/registries \
  && cp api/public/training.html dist/api/public/training.html \
- && cp registries/*.json dist/registries/
+ && cp registries/*.json dist/registries/ \
+ && mkdir -p dist/dashboard \
+ && cp dashboard/index.html dashboard/login.html dashboard/login.js dashboard/app.js dist/dashboard/
 
 FROM node:22-alpine AS production
 
