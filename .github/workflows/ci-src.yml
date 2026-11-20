@@ -12,7 +12,8 @@ on:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # Image figée : ubuntu-latest a perdu PostgreSQL 16 (CI rouge depuis fin octobre 2026).
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -38,6 +39,13 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Ensure PostgreSQL 16 test binaries
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends postgresql-16
+          fi
 
       - name: Check isolated PostgreSQL test binaries
         run: test -x /usr/lib/postgresql/16/bin/initdb
