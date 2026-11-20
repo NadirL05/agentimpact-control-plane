@@ -2,11 +2,12 @@
 
 Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS) est l'état de départ et n'est pas replanifié ici. Chaque étape tient en moins d'une demi-journée et n'est cochée qu'après ses tests (TESTING.md).
 
-- [ ] 1. Réparer le service du tableau de bord.
-  - Copier `dashboard/` dans l'image Docker (`src/Dockerfile`).
+- [x] 1. Réparer le service du tableau de bord.
+  - Déplacer `dashboard/` dans `src/dashboard/` et le copier dans l'image Docker (`src/Dockerfile`).
   - Corriger la correspondance des chemins statiques (`dashboard-routes.ts:19-22`, chemin relatif au montage).
   - Ajouter des tests de route.
   - Fini : `/dashboard/login.html` et `/dashboard/app.js` renvoient 200, `/dashboard/` renvoie 302 vers la connexion sans session ; tests T1 verts.
+  - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (6 tests) et `core/auth-scopes.test.ts` verts ; `npm run build` OK. Vérification en production à l'étape 9 (l'image actuelle n'est pas reconstruite).
   - Réf. TRD « Contraintes », APP_FLOW « Connexion ».
 - [ ] 2. Durcir la connexion et les en-têtes.
   - Cookie `Secure` derrière HTTPS ; limite de 5 essais par 15 min et par IP sur `POST /dashboard/login` ; message générique.
@@ -31,7 +32,7 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : tests T5 verts (dont dépôt hors liste refusé et GitHub en panne).
   - Réf. TRD « Intégrations ».
 - [ ] 6. Interface de l'onglet Missions.
-  - Onglet dans `dashboard/index.html` et `app.js` : filtres, lignes, détail déplié, total de la semaine, rechargement toutes les 30 s.
+  - Onglet dans `src/dashboard/index.html` et `app.js` : filtres, lignes, détail déplié, total de la semaine, rechargement toutes les 30 s.
   - États vide, chargement et erreur ; lisible sur mobile (375 px).
   - Fini : tests T6 verts.
   - Réf. APP_FLOW « Écrans », « États ».

@@ -5,7 +5,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { constantTimeEqualString } from '../core/secure-compare.js';
 import {
   issueSignedSessionToken,
@@ -14,7 +14,8 @@ import {
 import { dashboardSessionSecret, hasValidDashboardSession } from '../core/dashboard-session.js';
 
 const __dirname_local = fileURLToPath(new URL('.', import.meta.url));
-const DASHBOARD_ROOT = normalize(join(__dirname_local, '../../../dashboard'));
+// src/api → src/dashboard (dev, tests) ; dist/api → dist/dashboard (image Docker).
+const DASHBOARD_ROOT = normalize(join(__dirname_local, '../dashboard'));
 
 const STATIC_FILES: Record<string, string> = {
   '/login.html': 'text/html; charset=utf-8',
@@ -59,18 +60,26 @@ app.post('/login', async (c) => {
   return c.json({ ok: true });
 });
 
-app.get('/', (c) => {
+/** Chemin relatif au montage : `c.req.path` est le chemin complet (`/dashboard/app.js`). */
+function relativePath(fullPath: string): string {
+  const rel = fullPath.replace(/^\/dashboard(?=\/|$)/, '');
+  return rel === '' ? '/' : rel;
+}
+
+function serveIndex(c: Context) {
   if (!hasValidDashboardSession(c.req.header('Cookie'))) {
     return c.redirect('/dashboard/login.html', 302);
   }
-
   const html = loadDashboardFile('index.html');
   if (!html) return c.text('Dashboard unavailable', 503);
   return c.html(html);
-});
+}
+
+app.get('/', serveIndex);
 
 app.get('/*', (c) => {
-  const path = c.req.path;
+  const path = relativePath(c.req.path);
+  if (path === '/') return serveIndex(c);
   const contentType = STATIC_FILES[path];
   if (!contentType) {
     return c.notFound();
@@ -80,8 +89,7 @@ app.get('/*', (c) => {
     return c.redirect('/dashboard/login.html', 302);
   }
 
-  const fileName = path.startsWith('/') ? path.slice(1) : path;
-  const content = loadDashboardFile(fileName);
+  const content = loadDashboardFile(path.slice(1));
   if (!content) return c.notFound();
   return c.body(content, 200, { 'Content-Type': contentType });
 });

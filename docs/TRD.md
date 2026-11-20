@@ -10,7 +10,7 @@ Rédigé le 20/11/2026 depuis le code (`main` b9e3089). **[LU]** constaté (fich
 | PostgreSQL 16 (`infra/compose.yml`, conteneur `agentimpact-db`) **[LU]** | Transactions et contraintes pour l'audit, l'anti-rejeu et le fencing des missions. |
 | SQL brut paramétré via `pg` (`src/api/db.ts`) **[LU]** | Contrôle fin des requêtes, pas d'ORM à auditer. |
 | Zod (`src/package.json`) **[LU]** | Validation serveur des entrées. |
-| Dashboard HTML/JS statique sans framework (`dashboard/`) **[LU]** | Pas de build front ; servi par l'API. Conservé pour l'onglet Missions. |
+| Dashboard HTML/JS statique sans framework (`src/dashboard/`, copié dans l'image vers `dist/dashboard/`) **[LU]** | Pas de build front ; servi par l'API. Conservé pour l'onglet Missions. |
 | Docker (node:22-alpine, `USER node`, conteneur read-only) **[LU : src/Dockerfile, compose]** | Isolation et déploiement reproductible (`infra/deploy/*.sh`). |
 | Cloudflare Tunnel + Access devant `/dashboard` **[NOUVEAU]** | Aucun port ouvert sur le serveur ; connexion par e-mail vérifié avant même d'atteindre l'API ; cloudflared déjà utilisé **[LU : commentaire compose]**. [À CONFIRMER : domaine, ex. pilotage.agentimpact.fr]. |
 
@@ -130,4 +130,7 @@ Aucune intégration Linear.
 Autres :
 
 - **Minutes GitHub Actions limitées** (3 000/mois, choix de Nadir du 20/11) : la CI existante reste (`ci-src.yml`), pas de nouveaux workflows coûteux.
-- Le tableau de bord n'est pas copié dans l'image Docker et sa route statique compare un chemin complet à des clés relatives (`dashboard-routes.ts:19-22`) **[DÉDUIT]**. Deux causes probables du 404, à corriger à l'étape 1 du plan.
+- Le 404 du tableau de bord avait deux causes, corrigées à l'étape 1 :
+  - les fichiers étaient hors du contexte de build Docker (`src/`) : ils sont déplacés dans `src/dashboard/` et copiés par `src/Dockerfile` ;
+  - la route comparait le chemin complet (`/dashboard/app.js`) à des clés relatives : le chemin est maintenant ramené au montage.
+- `/dashboard` sans barre finale est aussi exempté du Bearer et redirige vers la connexion.

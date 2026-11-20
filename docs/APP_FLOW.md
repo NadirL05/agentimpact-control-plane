@@ -9,11 +9,11 @@ L'outil est interne. Le parcours type « inscription → action de valeur → pa
 | Écran | Chemin | Statut |
 |---|---|---|
 | Portail Cloudflare Access (e-mail + code) | avant `/dashboard` | **[NOUVEAU]**, hors code |
-| Connexion | `/dashboard/login.html` | **[LU]** (aujourd'hui en 404, à réparer) |
+| Connexion | `/dashboard/login.html` | **[LU]** (404 corrigé à l'étape 1) |
 | Accueil : profils, policies, workflows | `/dashboard/` | **[LU]** |
 | Onglet Missions : liste et filtres | `/dashboard/#missions` | **[NOUVEAU]** |
 | Détail d'une mission (ligne dépliée) | même page | **[NOUVEAU]** |
-| Workflows | `/dashboard/workflows.html` | **[LU]**, non servi, hors MVP |
+| Workflows | `src/dashboard/workflows.html` | **[LU]**, non servi (404), hors MVP |
 | Séance sport | `/training` | **[LU]**, hors périmètre |
 
 ## Parcours principal

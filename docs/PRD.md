@@ -11,7 +11,7 @@ Point de vue de Nadir, seul opérateur humain **[LU : « awaiting_nadir_review �
 Constats au 20/11/2026 :
 
 - le tableau de bord renvoie 404 sur le serveur (`/dashboard/`, `/dashboard/login.html`) **[LU : curl 127.0.0.1:3000]** et n'est joignable que depuis le serveur (ports liés à 127.0.0.1) **[LU : infra/compose.yml]** ;
-- il ne montre que profils, policies et workflows **[LU : dashboard/app.js:76-80]** ;
+- il ne montre que profils, policies et workflows **[LU : src/dashboard/app.js:76-80]** ;
 - les missions Dev Senior sont lancées par « go AGE-xx » dans Slack depuis le 20/11 (dépôt squad-agents-config, étapes 22-23) **[LU]**.
 
 ## Client cible

@@ -3,7 +3,7 @@
 Rédigé le 20/11/2026 depuis le code (`main` b9e3089). Une case n'est cochée qu'avec sa preuve (commande, fichier, capture). « État actuel » = constat **[LU]** ou **[DÉDUIT]** ; « À faire » renvoie au plan.
 
 - [ ] **Aucun secret dans le code, l'historique git ou le bundle front ; `.env*` dans `.gitignore`.**
-  - État actuel : tokens lus par variables d'environnement et fichiers `/etc/agentimpact/tokens/*.env` (compose) **[LU]** ; le tableau de bord ne contient aucune clé **[LU : dashboard/*.js]**.
+  - État actuel : tokens lus par variables d'environnement et fichiers `/etc/agentimpact/tokens/*.env` (compose) **[LU]** ; le tableau de bord ne contient aucune clé **[LU : src/dashboard/*.js]**.
   - À faire : vérifier `.gitignore` et lancer un scan de l'historique (gitleaks ou GitGuardian) avant de cocher.
 - [ ] **Seules les clés publiques sont exposées côté client.**
   - État actuel : aucune clé dans `dashboard/` **[LU]**. L'onglet Missions n'expose que des liens de PR et des comptes de tokens, jamais de jeton GitHub ni de détails d'erreur bruts.
