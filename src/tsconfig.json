@@ -30,6 +30,7 @@
     "scripts/**/*.ts",
     "slack-router/**/*.ts",
     "grok-worker/**/*.ts",
+    "linear-sync/**/*.ts",
     "codex-worker/**/*.ts",
     "e2e/**/*.ts"
   ],
