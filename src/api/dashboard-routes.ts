@@ -18,6 +18,7 @@ import { z } from 'zod';
 import {
   BOARD_FILTERS, matchesFilter, parsePrices, toBoardItem, weekTotals, type MissionRow,
 } from '../core/mission-board.js';
+import { createPrStatusClient, type PrStatusClient } from '../core/pr-status.js';
 
 const __dirname_local = fileURLToPath(new URL('.', import.meta.url));
 // src/api → src/dashboard (dev, tests) ; dist/api → dist/dashboard (image Docker).
@@ -119,6 +120,17 @@ type BoardQuery = (sql: string, params: unknown[]) => Promise<{ rows: MissionRow
 let boardQuery: BoardQuery = async (sql, params) =>
   (await import('./db.js')).pool.query(sql, params) as unknown as { rows: MissionRow[] };
 
+let prStatus: PrStatusClient | null = null;
+function prClient(): PrStatusClient {
+  prStatus ??= createPrStatusClient({ token: process.env.GITHUB_TOKEN });
+  return prStatus;
+}
+
+/** Tests uniquement : remplace le client GitHub. */
+export function setPrStatusClient(client: PrStatusClient | null): void {
+  prStatus = client;
+}
+
 /** Tests uniquement : remplace l'accès à la base. */
 export function setMissionBoardQuery(query: BoardQuery): void {
   boardQuery = query;
@@ -157,6 +169,15 @@ app.get('/api/missions', async (c) => {
     const now = new Date();
     const prices = parsePrices(process.env.MISSION_COST_PRICES);
     const all = rows.map((row) => toBoardItem(row, prices, now));
+    // Étape 5 : une PR fusionnée ou fermée n'est plus « à relire ». 50 PR au plus
+    // par requête, 5 appels GitHub en parallèle, réponses en cache 5 min.
+    const toCheck = all.filter((i) => i.category === 'a_relire' && i.pr_url).slice(0, 50);
+    for (let k = 0; k < toCheck.length; k += 5) {
+      await Promise.all(toCheck.slice(k, k + 5).map(async (item) => {
+        item.pr_state = await prClient().state(item.pr_url);
+        if (item.pr_state === 'merged' || item.pr_state === 'closed') item.category = 'terminee';
+      }));
+    }
     const selected = all.filter((i) => matchesFilter(i.category, filter));
     if (filter === 'a_relire') selected.reverse(); // la plus ancienne PR à relire en premier
     const counts = Object.fromEntries(BOARD_FILTERS.map((f) => [f, all.filter((i) => matchesFilter(i.category, f)).length]));

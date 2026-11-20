@@ -29,10 +29,11 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : tests T4 verts.
   - Preuve 20/11 : `src/core/mission-board.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T4, 6 dont la requête sur le schéma réel via PGlite) verts. Coût en euros affiché seulement quand MISSION_COST_PRICES est posé ([À CONFIRMER] tarif) ; sinon tokens seuls.
   - Réf. TRD « Architecture », APP_FLOW « Onglet Missions ».
-- [ ] 5. État des PR GitHub.
+- [x] 5. État des PR GitHub.
   - Lecture `GET /repos/.../pulls/n` limitée aux dépôts autorisés, cache 5 min, état « inconnu » si GitHub ne répond pas.
   - Le filtre « à relire » ne garde que les PR ouvertes non fusionnées.
   - Fini : tests T5 verts (dont dépôt hors liste refusé et GitHub en panne).
+  - Preuve 20/11 : `src/core/pr-status.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T5, 2) verts. En production, l'état réel dépend de [À CONFIRMER] GITHUB_TOKEN en lecture sur les 14 dépôts : sans droit, les PR restent « inconnu » et donc à relire (dégradation prévue).
   - Réf. TRD « Intégrations ».
 - [ ] 6. Interface de l'onglet Missions.
   - Onglet dans `src/dashboard/index.html` et `app.js` : filtres, lignes, détail déplié, total de la semaine, rechargement toutes les 30 s.

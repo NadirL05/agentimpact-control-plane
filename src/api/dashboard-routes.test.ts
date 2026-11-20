@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import dashboardRoutes, { resetDashboardLoginLimiter, setMissionBoardQuery } from './dashboard-routes.js';
+import dashboardRoutes, { resetDashboardLoginLimiter, setMissionBoardQuery, setPrStatusClient } from './dashboard-routes.js';
 import { issueSignedSessionToken } from '../core/signed-session.js';
 
 // T1 (docs/TESTING.md) : le tableau de bord est servi sous /dashboard comme dans server.ts.
@@ -175,6 +175,7 @@ describe('dashboard-routes API missions (T4)', () => {
     saved = process.env.DASHBOARD_ACCESS_TOKEN;
     process.env.DASHBOARD_ACCESS_TOKEN = SECRET;
     setMissionBoardQuery(async () => ({ rows: rows as never }));
+    setPrStatusClient({ state: async () => 'open' });
   });
   afterEach(() => {
     if (saved === undefined) delete process.env.DASHBOARD_ACCESS_TOKEN;
@@ -231,3 +232,31 @@ describe('dashboard-routes API missions (T4)', () => {
     expect(body.items.map((i: { ticket: string; category: string }) => [i.ticket, i.category])).toEqual([['AGE-9100', 'en_cours']]);
   });
 });
+
+describe('dashboard-routes état des PR (T5)', () => {
+  const pr = (n: number) => ({ id: `00000000-0000-4000-8000-00000000000${n}`, source_id: `AGE-90${n}`, source_url: null,
+    title: `AGE-90${n} T`, status: 'completed', action_status: 'executed', payload: {},
+    result: { pr_url: `https://github.com/NadirL05/demo/pull/${n}`, delivery: 'pull_request' },
+    error_message: null, created_at: new Date(), processed_at: new Date() });
+  beforeEach(() => {
+    process.env.DASHBOARD_ACCESS_TOKEN = SECRET;
+    setMissionBoardQuery(async () => ({ rows: [pr(1), pr(2), pr(3)] as never }));
+  });
+  afterEach(() => setPrStatusClient(null));
+
+  it('ne garde « à relire » que les PR ouvertes ou d’état inconnu', async () => {
+    const states: Record<string, 'open' | 'merged' | 'closed'> = { 1: 'open', 2: 'merged', 3: 'closed' };
+    setPrStatusClient({ state: async (url) => states[String(url).split('/').pop() as string] });
+    const body = await (await app().request('/dashboard/api/missions', { headers: { Cookie: sessionCookie() } })).json();
+    expect(body.items.map((i: { ticket: string; pr_state: string }) => [i.ticket, i.pr_state])).toEqual([['AGE-901', 'open']]);
+    expect(body.counts.a_relire).toBe(1);
+  });
+
+  it('GitHub en panne : la page répond, PR « inconnu » laissées à relire', async () => {
+    setPrStatusClient({ state: async () => 'unknown' });
+    const res = await app().request('/dashboard/api/missions', { headers: { Cookie: sessionCookie() } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).items.every((i: { pr_state: string }) => i.pr_state === 'unknown')).toBe(true);
+  });
+});
+

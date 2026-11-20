@@ -92,7 +92,7 @@ Aucune intégration Linear.
 
 **[NOUVEAU]**
 
-- **GitHub, lecture de l'état des PR** : `GET /repos/{owner}/{repo}/pulls/{n}` pour les PR des missions. Le dépôt est déduit de `pr_url`, limité à NadirL05/* et ERP-AxENR/home-eco-enr. Jeton existant `GITHUB_TOKEN` [À CONFIRMER : couvre les 14 dépôts en lecture, dont ERP-AxENR]. Cache 5 min.
+- **GitHub, lecture de l'état des PR** (codé à l'étape 5, `core/pr-status.ts` : dépôts NadirL05/* et ERP-AxENR/home-eco-enr seulement, délai 5 s, cache 5 min, 1 min pour un inconnu ; 50 PR au plus par requête, 5 en parallèle ; une PR fusionnée ou fermée passe en « terminée ») : `GET /repos/{owner}/{repo}/pulls/{n}` pour les PR des missions. Le dépôt est déduit de `pr_url`, limité à NadirL05/* et ERP-AxENR/home-eco-enr. Jeton existant `GITHUB_TOKEN` [À CONFIRMER : couvre les 14 dépôts en lecture, dont ERP-AxENR]. Cache 5 min.
 - **Cloudflare Tunnel et Access** : configuration hors code (cloudflared, politique Access).
 
 ## Variables d'environnement (noms seulement)

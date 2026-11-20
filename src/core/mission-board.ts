@@ -154,6 +154,8 @@ export interface BoardItem {
   created_at: string;
   duration_s: number | null;
   pr_url: string | null;
+  /** État GitHub de la PR (étape 5) : null tant qu'il n'a pas été lu. */
+  pr_state: 'open' | 'merged' | 'closed' | 'unknown' | null;
   tests: string | null;
   block: { text: string; action: string } | null;
   usage: UsageSummary;
@@ -188,6 +190,7 @@ export function toBoardItem(row: MissionRow, prices: Prices | null, now = new Da
     created_at: Number.isFinite(created.getTime()) ? created.toISOString() : String(row.created_at),
     duration_s: seconds(row.created_at, row.processed_at, now),
     pr_url: str(row.result?.pr_url),
+    pr_state: null,
     tests: row.status === 'completed' ? testsLine(row.result) : null,
     block: explainBlock(row),
     usage: usageOf(row, prices),
