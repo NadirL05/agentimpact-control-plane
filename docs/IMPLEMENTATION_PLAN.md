@@ -35,10 +35,11 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : tests T5 verts (dont dépôt hors liste refusé et GitHub en panne).
   - Preuve 20/11 : `src/core/pr-status.test.ts` (5) et `src/api/dashboard-routes.test.ts` (T5, 2) verts. En production, l'état réel dépend de [À CONFIRMER] GITHUB_TOKEN en lecture sur les 14 dépôts : sans droit, les PR restent « inconnu » et donc à relire (dégradation prévue).
   - Réf. TRD « Intégrations ».
-- [ ] 6. Interface de l'onglet Missions.
+- [x] 6. Interface de l'onglet Missions.
   - Onglet dans `src/dashboard/index.html` et `app.js` : filtres, lignes, détail déplié, total de la semaine, rechargement toutes les 30 s.
   - États vide, chargement et erreur ; lisible sur mobile (375 px).
   - Fini : tests T6 verts.
+  - Preuve 20/11 : `src/api/dashboard-missions-ui.test.ts` (8) vert ; aperçu local avec missions fictives vérifié dans le navigateur (onglet, 4 filtres, ligne bloquée dépliée avec raison et action, total de la semaine) et à 375 px sans défilement horizontal ; aucune erreur CSP. Script `src/dashboard/missions.js` (externe, CSP), ouverture directe par `#missions`.
   - Réf. APP_FLOW « Écrans », « États ».
 - [ ] 7. Scénario E2E du parcours principal.
   - Playwright, en local et non en CI pour économiser les minutes : connexion, onglet Missions, filtre à relire, lien PR, bloquées avec explication.
