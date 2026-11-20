@@ -28,7 +28,12 @@ if [ -z "$TOKEN_FILE" ] || [ ! -r "$TOKEN_FILE" ]; then
   exit 2
 fi
 
-token="$(tr -d '\r\n' <"$TOKEN_FILE")"
+raw="$(tr -d '\r' <"$TOKEN_FILE")"
+if [[ "$raw" == *"="* ]]; then
+  token="$(printf '%s\n' "$raw" | sed -nE 's/^CTL_(PLANNER|BRIDGE)_TOKEN=(.*)$/\2/p' | head -n1)"
+else
+  token="$(printf '%s' "$raw" | tr -d '\n')"
+fi
 if [ -z "$token" ]; then
   echo "wait_control_plane_ready: token_empty" >&2
   exit 2

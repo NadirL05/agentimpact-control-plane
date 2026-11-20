@@ -24,7 +24,7 @@ function isDashboardReadRoute(method: string, path: string): boolean {
   );
 }
 
-export type TokenConfig = Record<AuthScope, string>;
+export type TokenConfig = {bridge:string;hermes:string;admin:string;operator?:string;planner?:string};
 
 export { constantTimeEqualString };
 
@@ -36,6 +36,8 @@ function normalizePath(path: string): string {
 export function loadTokenConfig(): TokenConfig {
   const bridge = process.env.CTL_BRIDGE_TOKEN;
   const hermes = process.env.CTL_HERMES_TOKEN;
+  const operator = process.env.CTL_OPERATOR_TOKEN;
+  const planner = process.env.CTL_PLANNER_TOKEN;
   const admin = process.env.CTL_ADMIN_TOKEN;
 
   if (!bridge || !hermes || !admin) {
@@ -43,8 +45,12 @@ export function loadTokenConfig(): TokenConfig {
       'CTL_BRIDGE_TOKEN, CTL_HERMES_TOKEN and CTL_ADMIN_TOKEN are required',
     );
   }
+  const optional=[operator,planner].filter((value):value is string=>Boolean(value));
+  if (optional.some(value=>value.length<32)||new Set([bridge,hermes,admin,...optional]).size!==3+optional.length) {
+    throw new Error('Control-plane bearer tokens must be distinct and at least 32 characters');
+  }
 
-  return { bridge, hermes, admin };
+  return { bridge, hermes, admin, ...(operator?{operator}:{}), ...(planner?{planner}:{}) };
 }
 
 export function resolveScopeFromToken(
@@ -52,6 +58,8 @@ export function resolveScopeFromToken(
   config: TokenConfig,
 ): AuthScope | null {
   if (constantTimeEqualString(token, config.admin)) return 'admin';
+  if (config.operator&&constantTimeEqualString(token, config.operator)) return 'operator';
+  if (config.planner&&constantTimeEqualString(token, config.planner)) return 'planner';
   if (constantTimeEqualString(token, config.hermes)) return 'hermes';
   if (constantTimeEqualString(token, config.bridge)) return 'bridge';
   return null;

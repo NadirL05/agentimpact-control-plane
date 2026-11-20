@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentImpact private Superset executor socket
+
+[Socket]
+ListenStream=/run/agentimpact-superset-rpc/executor.sock
+SocketUser=agentimpact-superset-rpc
+SocketGroup=agentimpact-superset
+SocketMode=0660
+DirectoryMode=0711
+RemoveOnStop=no
+Service=agentimpact-superset-private.service
+
+[Install]
+WantedBy=sockets.target

@@ -40,3 +40,13 @@ Ce document d\u00e9crit l'architecture g\u00e9n\u00e9rale du control plane Agent
 - Journalisation syst\u00e9matique des actions sensibles.
 - S\u00e9paration des environnements (dev, staging, prod).
 - Revue r\u00e9guli\u00e8re des policies et profils.
+
+## V2 Execution (HYBRID)
+
+Superset est le backend d'ex\u00e9cution pr\u00e9f\u00e9r\u00e9 (worktree/terminal/process).
+Le Control Plane conserve scheduler, attempts, fencing, approvals, budgets, quotas
+et s\u00e9paration publisher. Runtime custom R8.2 : d\u00e9pr\u00e9ci\u00e9, non retir\u00e9.
+
+D\u00e9tails : [v2-superset-execution-adapter.md](./v2-superset-execution-adapter.md).
+
+Rollback : [ops/superset-execution-adapter-rollback.md](./ops/superset-execution-adapter-rollback.md).

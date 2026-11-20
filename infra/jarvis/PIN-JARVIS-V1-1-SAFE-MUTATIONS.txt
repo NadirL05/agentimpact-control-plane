@@ -1,0 +1,6 @@
+ROOT_JARVIS_V1_1_SAFE_MUTATIONS_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-deploy-jarvis-v1-1-safe-mutations.sh
+ROOT_JARVIS_V1_1_SAFE_MUTATIONS_SHA256=50448c48af41b385ebb160fe54ed7bdf63701325a16434329b5439e051294748
+REPO_COPY=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-deploy-jarvis-v1-1-safe-mutations.sh
+OUTER_VERIFY=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+OUTER_VERIFY_SHA256=d336569d0d30304ddd8504d5ac1247af135f82c8e2a9ea60920b6b920c50de41
+GATE_ON_SUCCESS=GATE_NADIR_JARVIS_V1_1_SAFE_MUTATIONS

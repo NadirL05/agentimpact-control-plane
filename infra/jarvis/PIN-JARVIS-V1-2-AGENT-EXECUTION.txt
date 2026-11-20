@@ -1,0 +1,13 @@
+ROOT_JARVIS_V1_2_STAGE_A_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-deploy-jarvis-v1-2-agent-execution-stage-a.sh
+ROOT_JARVIS_V1_2_STAGE_A_REPO_COPY=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-deploy-jarvis-v1-2-agent-execution-stage-a.sh
+ROOT_JARVIS_V1_2_STAGE_A_SHA256=1155510eb5aef9f9d08f3c688180c8e3c3563eb70ce0cc46a4a8efdd3b92a0d2
+ROOT_JARVIS_V1_2_STAGE_B_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-validate-jarvis-v1-2-agent-execution-stage-b.sh
+ROOT_JARVIS_V1_2_STAGE_B_REPO_COPY=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-validate-jarvis-v1-2-agent-execution-stage-b.sh
+ROOT_JARVIS_V1_2_STAGE_B_SHA256=067ce815c922abbcdb7de4c35d993d0e3fe5ad5fc552293b4ac483e90ae67946
+ROOT_JARVIS_V1_2_CODEX_CANARY_SCRIPT=/opt/agentimpact/runner/superset-rpc-bridge/scripts/root-run-jarvis-v1-2-codex-canary.sh
+ROOT_JARVIS_V1_2_CODEX_CANARY_REPO_COPY=/opt/agentimpact/runner/repos/agentimpact-control-plane.git/infra/jarvis/root-run-jarvis-v1-2-codex-canary.sh
+ROOT_JARVIS_V1_2_CODEX_CANARY_SHA256=68921b9ec1b8bef89a0c4f2f1993ff9324167f533e8f69e41325acc9fd241439
+OUTER_VERIFY=/opt/agentimpact/runner/superset-poc-phase2/outer-verify-and-run.py
+OUTER_VERIFY_SHA256=d336569d0d30304ddd8504d5ac1247af135f82c8e2a9ea60920b6b920c50de41
+GATE_ON_STAGE_A_B_SUCCESS=GATE_NADIR_JARVIS_V1_2_REAL_AGENT_CANARY_READY
+NOTE=Do_not_run_codex_canary_until_gate_and_Nadir_authorization

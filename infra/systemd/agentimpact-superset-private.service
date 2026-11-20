@@ -1,0 +1,50 @@
+[Unit]
+Description=AgentImpact private typed Superset executor
+After=network-online.target agentimpact-superset-host.service
+Wants=network-online.target
+Requires=agentimpact-superset-private.socket
+ConditionPathExists=/etc/credstore/agentimpact-superset-api-key
+
+[Service]
+Type=simple
+User=agentimpact-superset
+Group=agentimpact-superset
+WorkingDirectory=/var/lib/agentimpact-superset/home
+Environment=HOME=/var/lib/agentimpact-superset/home
+Environment=SUPERSET_HOME=/var/lib/agentimpact-superset/install
+Environment=SUPERSET_HOME_DIR=/var/lib/agentimpact-superset/state
+Environment=PYTHONUNBUFFERED=1
+Environment=AGENTIMPACT_V2_EXECUTION_ENABLED=0
+Environment=AGENTIMPACT_SUPERSET_AGENT_EXECUTION_ENABLED=0
+EnvironmentFile=/etc/agentimpact/superset-rpc-private.env
+LoadCredential=superset_api_key:/etc/credstore/agentimpact-superset-api-key
+ExecStart=/usr/bin/python3 -I -B /opt/agentimpact/superset-rpc/bridge.py --role private
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=20
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Bubblewrap may request these namespaces for the Codex sandbox. AppArmor's
+# agentimpact-codex profile remains the executable-level userns gate.
+RestrictNamespaces=user mnt pid ipc uts cgroup net
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=/root /home/agentimpact-runner /var/lib/agentimpact-codex-worker /var/run/docker.sock /run/docker.sock /opt/agentimpact/app /etc/agentimpact/tokens /etc/agentimpact/credentials
+ReadOnlyPaths=/var/lib/agentimpact-superset/install
+ReadWritePaths=/var/lib/agentimpact-superset
+
+[Install]
+WantedBy=multi-user.target

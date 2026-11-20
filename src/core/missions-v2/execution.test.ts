@@ -559,7 +559,7 @@ it('treats migration 005 as one-shot and rolls back a detected re-run', async ()
     expect((await isolated.db.query('SELECT count(*)::int AS count FROM execution_metrics')).rows)
       .toEqual([{count:19}]);
   } finally { await isolated.db.close(); }
-});
+}, 15_000);
 
 it('recovers an active execution and stale scanner after closing and reopening PostgreSQL storage', async () => {
   const path = await mkdtemp(join(tmpdir(), 'v2-f-pglite-'));

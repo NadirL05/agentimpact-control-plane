@@ -20,7 +20,7 @@ export function brevoConfigured(): boolean {
 
 export type SendResult =
   | { ok: true; messageId: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; outcome: 'rejected' | 'unknown' };
 
 /**
  * Envoie un email transactionnel unique. L'appelant DOIT avoir verifie la
@@ -33,7 +33,7 @@ export async function sendTransactional(params: {
   textContent: string;
   headers?: Record<string, string>;
 }): Promise<SendResult> {
-  if (!API_KEY) return { ok: false, error: 'missing_brevo_api_key' };
+  if (!API_KEY) return { ok: false, error: 'missing_brevo_api_key', outcome:'rejected' };
 
   try {
     const response = await fetch(`${BREVO_API}/smtp/email`, {
@@ -57,12 +57,13 @@ export async function sendTransactional(params: {
     const body = (await response.json()) as { messageId?: string; message?: string };
 
     if (!response.ok || !body.messageId) {
-      return { ok: false, error: body.message ?? `brevo_http_${response.status}` };
+      return { ok: false, error: body.message ?? `brevo_http_${response.status}`,
+        outcome:response.status>=400&&response.status<500?'rejected':'unknown' };
     }
 
     return { ok: true, messageId: body.messageId };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'brevo_unreachable' };
+    return { ok: false, error: error instanceof Error ? error.message : 'brevo_unreachable', outcome:'unknown' };
   }
 }
 
