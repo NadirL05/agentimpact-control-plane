@@ -15,7 +15,7 @@ Au moins 80 % des lignes du code nouveau : `dashboard-routes.ts`, nouvelle route
 ## Tests par étape du plan
 
 | Étape | Tests |
-|---|---|
+| --- | --- |
 | T1 — service du tableau de bord | `/dashboard/login.html` et `/dashboard/app.js` en 200 avec le bon type ; `/dashboard/` en 302 sans session, 200 avec ; chemin `../` refusé ; fichier inconnu en 404. |
 | T2 — durcissement | cookie avec `Secure` en production ; 6e essai de connexion en 15 min → 429 ; message identique pour mot de passe faux et inconnu ; en-têtes CSP, HSTS, X-Frame-Options et nosniff présents ; erreur réseau affichée « Impossible de charger » (test du rendu de `app.js` avec jsdom). |
 | T3 — usage IA (dépôt squad-agents-config) | `result.usage` présent avec les tokens Codex de la session de la mission ; absent sans erreur si la session est introuvable ; jamais de chemin ni de secret dans le résultat. |

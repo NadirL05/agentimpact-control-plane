@@ -57,7 +57,7 @@ N/A : outil interne, non vendu **[DÉDUIT]**. [À CONFIRMER] si une version clie
 ## Indicateurs de succès
 
 | Indicateur | Cible | Échéance |
-|---|---|---|
+| --- | --- | --- |
 | Missions dev-senior visibles dans l'onglet après leur fin | 100 %, en moins de 60 s | 2026-12-04 |
 | Temps pour savoir quelles PR relire | moins de 30 s depuis l'ouverture de la page | 2026-12-04 |
 | Accès non authentifiés aboutis au tableau de bord | 0 sur 30 jours (journaux Cloudflare et API) | 2027-01-04 |
