@@ -28,6 +28,7 @@ const STATIC_FILES: Record<string, string> = {
   '/login.html': 'text/html; charset=utf-8',
   '/app.js': 'application/javascript; charset=utf-8',
   '/login.js': 'application/javascript; charset=utf-8',
+  '/missions.js': 'application/javascript; charset=utf-8',
 };
 
 /** Fichiers servis sans session (la page de connexion et son script). */
