@@ -69,34 +69,32 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function renderCard(result, render, emptyText) {
+  if (!result || result.error) return '<div class="empty">Impossible de charger</div>';
+  if (result.count > 0) return result.items.map(render).join('');
+  return '<div class="empty">' + escapeHtml(emptyText) + '</div>';
+}
+
 async function loadAll() {
   try {
     setStatus('Chargement…');
 
+    // Une erreur de chargement n'est jamais affichée comme une liste vide.
+    const failed = () => ({ error: true });
     const [profiles, policies, workflows] = await Promise.all([
-      fetchJson('/profiles').catch(() => ({ count: 0, items: [] })),
-      fetchJson('/policies').catch(() => ({ count: 0, items: [] })),
-      fetchJson('/workflows').catch(() => ({ count: 0, items: [] })),
+      fetchJson('/profiles').catch(failed),
+      fetchJson('/policies').catch(failed),
+      fetchJson('/workflows').catch(failed),
     ]);
 
-    if (profiles.count > 0) {
-      profilesContent.innerHTML = profiles.items.map(renderProfile).join('');
-    } else {
-      profilesContent.innerHTML = '<div class="empty">Aucun profil</div>';
-    }
+    profilesContent.innerHTML = renderCard(profiles, renderProfile, 'Aucun profil');
+    policiesContent.innerHTML = renderCard(policies, renderPolicy, 'Aucune policy');
+    workflowsContent.innerHTML = renderCard(workflows, renderWorkflow, 'Aucun workflow');
 
-    if (policies.count > 0) {
-      policiesContent.innerHTML = policies.items.map(renderPolicy).join('');
-    } else {
-      policiesContent.innerHTML = '<div class="empty">Aucune policy</div>';
+    if (profiles.error || policies.error || workflows.error) {
+      setStatus('Erreur : une partie n’a pas pu être chargée — ' + new Date().toLocaleTimeString());
+      return;
     }
-
-    if (workflows.count > 0) {
-      workflowsContent.innerHTML = workflows.items.map(renderWorkflow).join('');
-    } else {
-      workflowsContent.innerHTML = '<div class="empty">Aucun workflow</div>';
-    }
-
     setStatus('OK — ' + new Date().toLocaleTimeString());
   } catch (err) {
     setStatus('Erreur: ' + err.message);
@@ -106,4 +104,5 @@ async function loadAll() {
   }
 }
 
+document.getElementById('refresh').addEventListener('click', loadAll);
 loadAll();

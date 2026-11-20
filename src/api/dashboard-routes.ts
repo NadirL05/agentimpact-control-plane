@@ -6,12 +6,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Hono, type Context } from 'hono';
+import { secureHeaders } from 'hono/secure-headers';
 import { constantTimeEqualString } from '../core/secure-compare.js';
 import {
   issueSignedSessionToken,
   sessionCookieHeader,
 } from '../core/signed-session.js';
 import { dashboardSessionSecret, hasValidDashboardSession } from '../core/dashboard-session.js';
+import { createLoginRateLimiter, loginClientKey } from '../core/login-rate-limit.js';
 
 const __dirname_local = fileURLToPath(new URL('.', import.meta.url));
 // src/api → src/dashboard (dev, tests) ; dist/api → dist/dashboard (image Docker).
@@ -20,7 +22,28 @@ const DASHBOARD_ROOT = normalize(join(__dirname_local, '../dashboard'));
 const STATIC_FILES: Record<string, string> = {
   '/login.html': 'text/html; charset=utf-8',
   '/app.js': 'application/javascript; charset=utf-8',
+  '/login.js': 'application/javascript; charset=utf-8',
 };
+
+/** Fichiers servis sans session (la page de connexion et son script). */
+const PUBLIC_FILES = new Set(['/login.html', '/login.js']);
+
+function maxLoginAttempts(): number {
+  const n = Number(process.env.DASHBOARD_LOGIN_MAX_ATTEMPTS);
+  return Number.isInteger(n) && n >= 1 && n <= 50 ? n : 5;
+}
+
+let limiter = createLoginRateLimiter(maxLoginAttempts());
+
+/** Tests uniquement : repart d'un compteur vide. */
+export function resetDashboardLoginLimiter(): void {
+  limiter = createLoginRateLimiter(maxLoginAttempts());
+}
+
+/** Cookie `Secure` en production (servi derrière HTTPS par Cloudflare). */
+function secureCookies(): boolean {
+  return process.env.NODE_ENV === 'production' && process.env.DASHBOARD_COOKIE_SECURE !== '0';
+}
 
 function loadDashboardFile(relativePath: string): string | null {
   const resolved = normalize(join(DASHBOARD_ROOT, relativePath));
@@ -37,25 +60,52 @@ export { hasValidDashboardSession } from '../core/dashboard-session.js';
 
 const app = new Hono();
 
+// En-têtes de sécurité sur tout /dashboard (docs/SECURITY.md) : scripts et
+// connexions du même domaine seulement, pas d'iframe, pas de détection de type.
+app.use('*', secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    imgSrc: ["'self'", 'data:'],
+    connectSrc: ["'self'"],
+    frameAncestors: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+    objectSrc: ["'none'"],
+  },
+  strictTransportSecurity: 'max-age=31536000; includeSubDomains',
+  xFrameOptions: 'DENY',
+  xContentTypeOptions: 'nosniff',
+  referrerPolicy: 'no-referrer',
+}));
+
 app.post('/login', async (c) => {
   const secret = dashboardSecret();
   if (!secret) {
     return c.json({ error: 'dashboard_unavailable' }, 503);
   }
 
+  const key = loginClientKey(c.req.raw.headers);
+  if (limiter.isBlocked(key)) {
+    return c.json({ error: 'too_many_attempts' }, 429);
+  }
+
   const body = await c.req.json().catch(() => null);
-  if (!body || typeof body.password !== 'string' || body.password.length === 0) {
+  if (!body || typeof body.password !== 'string' || body.password.length === 0 || body.password.length > 512) {
     return c.json({ error: 'invalid_body' }, 400);
   }
 
   if (!constantTimeEqualString(body.password, secret)) {
+    limiter.recordFailure(key);
     return c.json({ error: 'unauthorized' }, 401);
   }
 
+  limiter.reset(key);
   const token = issueSignedSessionToken('dashboard', secret);
   c.header(
     'Set-Cookie',
-    sessionCookieHeader('ai_dashboard', token, '/', 8 * 60 * 60),
+    sessionCookieHeader('ai_dashboard', token, '/', 8 * 60 * 60, secureCookies()),
   );
   return c.json({ ok: true });
 });
@@ -85,7 +135,7 @@ app.get('/*', (c) => {
     return c.notFound();
   }
 
-  if (path !== '/login.html' && !hasValidDashboardSession(c.req.header('Cookie'))) {
+  if (!PUBLIC_FILES.has(path) && !hasValidDashboardSession(c.req.header('Cookie'))) {
     return c.redirect('/dashboard/login.html', 302);
   }
 

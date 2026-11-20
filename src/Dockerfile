@@ -11,7 +11,7 @@ RUN npm run build \
  && cp api/public/training.html dist/api/public/training.html \
  && cp registries/*.json dist/registries/ \
  && mkdir -p dist/dashboard \
- && cp dashboard/index.html dashboard/login.html dashboard/app.js dist/dashboard/
+ && cp dashboard/index.html dashboard/login.html dashboard/login.js dashboard/app.js dist/dashboard/
 
 FROM node:22-alpine AS production
 

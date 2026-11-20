@@ -9,11 +9,12 @@ Rédigé le 20/11/2026. Le code existant (API, approbations, missions, Growth OS
   - Fini : `/dashboard/login.html` et `/dashboard/app.js` renvoient 200, `/dashboard/` renvoie 302 vers la connexion sans session ; tests T1 verts.
   - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (6 tests) et `core/auth-scopes.test.ts` verts ; `npm run build` OK. Vérification en production à l'étape 9 (l'image actuelle n'est pas reconstruite).
   - Réf. TRD « Contraintes », APP_FLOW « Connexion ».
-- [ ] 2. Durcir la connexion et les en-têtes.
+- [x] 2. Durcir la connexion et les en-têtes.
   - Cookie `Secure` derrière HTTPS ; limite de 5 essais par 15 min et par IP sur `POST /dashboard/login` ; message générique.
   - En-têtes CSP, HSTS, X-Frame-Options, nosniff sur `/dashboard/*`.
   - Erreur réseau affichée comme erreur, et non comme vide (`app.js:77-79`).
   - Fini : tests T2 verts (6e essai refusé, en-têtes présents).
+  - Preuve 20/11 : `src/api/dashboard-routes.test.ts` (T1 + T2, 12 tests) et `src/api/dashboard-app.test.ts` (2) verts ; script de connexion sorti dans `login.js` et bouton sans `onclick`, pour que la CSP n'accepte aucun script en ligne. Vérification en production à l'étape 9.
   - Réf. TRD « Auth et rôles », SECURITY.
 - [ ] 3. Rapporter la consommation d'IA des missions.
   - Dans squad-agents-config : l'exécuteur ajoute `result.usage` (tokens Codex lus dans la session de la mission ; coût de la relecture Claude via sortie JSON).

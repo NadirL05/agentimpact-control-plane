@@ -19,7 +19,7 @@ Rédigé le 20/11/2026 depuis le code (`main` b9e3089). Une case n'est cochée q
   - À faire (étapes 2 et 4) : réponses génériques sur `/dashboard/*`. Les extraits de logs des tests restent dans l'état de l'exécuteur, jamais dans la page.
 - [ ] **Rate limiting sur connexion, inscription, réinitialisation de mot de passe, OTP et endpoints coûteux (LLM, voix, SMS, e-mails).**
   - État actuel : limite seulement sur operator (60/min) et Grok **[LU]** ; aucune sur `/dashboard/login`, d'où un risque de force brute **[LU]**.
-  - À faire (étape 2) : 5 essais par 15 min et par IP sur la connexion.
+  - Fait pour le tableau de bord (étape 2, 20/11) : 5 échecs par 15 min et par IP (en-tête `cf-connecting-ip` de Cloudflare, sinon clé unique « direct »), 429 générique ; preuve : test « bloque le 6e essai » de `dashboard-routes.test.ts`. Le reste de l'API reste sans limite.
   - Inscription, réinitialisation et OTP : N/A (pas de comptes ; l'OTP e-mail est géré par Cloudflare Access).
   - Envoi Brevo : limité par approbation humaine **[LU]**.
 - [ ] **Signature vérifiée sur chaque webhook entrant (Stripe, n8n, etc.).**
@@ -27,7 +27,7 @@ Rédigé le 20/11/2026 depuis le code (`main` b9e3089). Une case n'est cochée q
   - À faire : passer FullEnrich et Brevo en en-tête ou en signature (hors de ce lot, dette suivie). L'onglet Missions n'ajoute aucun webhook.
 - [ ] **En-têtes de sécurité (CSP, HSTS) ; cookies `HttpOnly`, `Secure`, `SameSite`.**
   - État actuel : aucun en-tête de sécurité ; cookie `ai_dashboard` en HttpOnly et SameSite=Lax mais **sans Secure** **[LU : signed-session.ts:64]**.
-  - À faire (étape 2) : CSP stricte sur `/dashboard/*` (scripts du même domaine seulement), HSTS, X-Frame-Options DENY, nosniff, cookie `Secure`.
+  - Fait pour `/dashboard/*` (étape 2, 20/11) : CSP (`script-src 'self'`, `frame-ancestors 'none'`, styles en ligne seulement), HSTS 1 an, X-Frame-Options DENY, nosniff, Referrer-Policy no-referrer ; cookie `ai_dashboard` avec `Secure` en production. Preuve : tests T2. Le reste de l'API et le cookie `ai_training` restent sans ces protections.
 - [ ] **`npm audit` (ou équivalent) sans vulnérabilité critique.**
   - État actuel : lancé par `infra/deploy/preflight.sh`, absent de la CI **[LU]** ; résultat non mesuré au 20/11.
   - À faire (étape 9) : joindre la sortie de `npm audit --audit-level=critical`.

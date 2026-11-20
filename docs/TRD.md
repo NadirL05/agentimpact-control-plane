@@ -111,6 +111,7 @@ Aucune intégration Linear.
 
 - MISSION_COST_PRICES (JSON de prix par million de tokens et par modèle) [À CONFIRMER : valeurs].
 - DASHBOARD_LOGIN_MAX_ATTEMPTS (défaut 5).
+- DASHBOARD_COOKIE_SECURE (mettre `0` pour désactiver le flag `Secure` en production, par exemple pour un test en HTTP local ; défaut : actif si NODE_ENV=production).
 
 ## Exigences non fonctionnelles
 
